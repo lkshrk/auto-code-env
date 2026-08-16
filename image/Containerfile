@@ -180,9 +180,26 @@ FROM hermes AS runtime
 USER ${HERMES_USER}
 WORKDIR ${HOME}
 
-# Non-secret runtime config only. Secrets are mounted at runtime via the
-# cluster's external-secrets / SOPS wiring, never baked into the image.
-VOLUME ["${HOME}/.hermes"]
+# Non-secret runtime config only. Every credential the gateway needs
+# (OpenRouter key, LiteLLM proxy key, OpenViking key, GitHub token, Coder
+# token, Signal config, etc.) is injected as plaintext env vars by the
+# h-cloud StatefulSet from a SOPS-encrypted Kubernetes Secret - the same
+# pattern every other app in the cluster already uses (openviking, phoenix,
+# litellm-proxy, ...). Considered and rejected two alternatives before
+# landing here: rbw (interactive pinentry-only unlock, not viable for an
+# unattended pod without a genuinely complex custom Assuan pinentry +
+# lock_timeout tuning) and the official Bitwarden CLI's Secrets Manager
+# (Vaultwarden does not implement Bitwarden Secrets Manager compatibility -
+# see https://github.com/dani-garcia/vaultwarden/discussions/3368, open
+# since 2023). rbw stays the right tool for interactive dev hosts
+# (topaz/coder; see lkshrk/dotfiles' env package) - just not this pod.
+#
+# HERMES_HOME set explicitly (matches Hermes' own default of ~/.hermes)
+# so the persisted-state path is a declared contract tied to this ENV,
+# not an inferred side effect of $HOME - the VOLUME mount target below
+# and Hermes' actual data directory are the same named value on purpose.
+ENV HERMES_HOME=${HOME}/.hermes
+VOLUME ["${HERMES_HOME}"]
 
 ENTRYPOINT ["hermes"]
 CMD ["gateway", "run"]
