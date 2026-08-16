@@ -53,19 +53,29 @@ ENV HOME=/home/${HERMES_USER} \
 FROM base AS os-prereqs
 
 ARG HERMES_USER=hermes
+# Off by default: no tool in the hermes Omni host group (core, dev,
+# dev-tooling, go, infra, prereqs, python, shell, test-tooling, ts, hermes)
+# needs a compiler - the only cargo-provider tool in dotfiles (deepwiki-rs)
+# and the only cmake consumer (topaz host) both live outside that group.
+# Verified: dropping build-essential and friends took /usr from 435MB to
+# 200MB with zero install failures across the hermes group's script
+# providers. Set --build-arg INSTALL_BUILD_ESSENTIAL=1 to opt back in for a
+# one-off image build that needs to compile something locally (e.g. cargo
+# install of a tool not covered by dotfiles' hermes host group).
+ARG INSTALL_BUILD_ESSENTIAL=0
 
-# Mirrors scripts/setup-workspace-linux.sh install_apt_packages(). `sudo` is
-# added on top (not present on real workspaces' bootstrap either, but Omni's
-# apt provider shells out to sudo) with passwordless NOPASSWD for the
-# hermes user so RUN steps in later layers can install apt packages as
-# the non-root image user, matching how omni behaves on a real workspace.
+# Mirrors scripts/setup-workspace-linux.sh install_apt_packages(), minus
+# build-essential (see above). `sudo` is added on top (not present on real
+# workspaces' bootstrap either, but Omni's apt provider shells out to sudo)
+# with passwordless NOPASSWD for the hermes user so RUN steps in later
+# layers can install apt packages as the non-root image user, matching how
+# omni behaves on a real workspace.
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
          curl \
          git \
          stow \
          jq \
-         build-essential \
          ca-certificates \
          openssl \
          ncurses-bin \
@@ -75,6 +85,7 @@ RUN apt-get update -qq \
          xz-utils \
          zsh \
          sudo \
+         $( [ "${INSTALL_BUILD_ESSENTIAL}" = "1" ] && echo build-essential ) \
     && rm -rf /var/lib/apt/lists/* \
     && echo "${HERMES_USER} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/90-${HERMES_USER}" \
     && chmod 0440 "/etc/sudoers.d/90-${HERMES_USER}"
