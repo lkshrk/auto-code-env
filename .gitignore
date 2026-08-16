@@ -1,0 +1,9 @@
+# .gitignore for hermes-hq
+# Never commit secrets. This repo stores only secret references.
+
+*.env
+.env.*
+*.pem
+*.key
+secrets/
+.DS_Store

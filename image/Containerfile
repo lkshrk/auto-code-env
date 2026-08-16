@@ -1,0 +1,9 @@
+# Placeholder Containerfile for the Hermes control-hub image.
+# TBD: base image, dependencies, non-secret bootstrap steps.
+
+FROM docker.io/library/debian:bookworm-slim
+
+LABEL org.opencontainers.image.source="https://github.com/lkshrk/hermes-hq"
+LABEL org.opencontainers.image.description="Hermes control-hub base image (placeholder)"
+
+CMD ["/bin/bash"]
