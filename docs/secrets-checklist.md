@@ -51,9 +51,9 @@ https://github.com/dani-garcia/vaultwarden/discussions/3368, open since
 
 Not secrets, but required non-default settings for the same runtime behavior as this session - see `~/.hermes/config.yaml` for the full file:
 
-- `providers.litellm` / `providers.litellm-anthropic` blocks (both point at `http://litellm-proxy.ai.svc.cluster.local:4000`, differ by transport)
-- `model.default: gpt-5.6-terra`, `model.provider: custom:litellm`
-- `fallback.model: claude-sonnet-5`, `fallback.provider: custom:litellm-anthropic`
+- `providers.litellm-anthropic` / `providers.litellm-openai` blocks (both point at `http://litellm-proxy.ai.svc.cluster.local:4000`, differ by transport)
+- `model.default: gpt-5.6-sol`, `model.provider: litellm-openai`
+- `fallback.model: claude-sonnet-5`, `fallback.provider: litellm-anthropic`
 - `image_gen.provider: openrouter`, `image_gen.model: google/gemini-3-pro-image`
 - `memory.provider: openviking`, `memory.openviking.use_ovcli_config: true` (needs its own `ovcli.conf.hermes` file, not just an env var - see OPENVIKING_API_KEY row above)
 - `web.backend: searxng`
