@@ -21,8 +21,9 @@ deployment (`https://coder.h-cloud.io`).
   `local.stacks` (the Omni tool group to install).
 - `hermes-worker-js/` — TypeScript/JS workspace (`stacks = ["ts", "infra"]`).
 - `hermes-worker-py/` — Python workspace (`stacks = ["python", "infra"]`).
+- `hermes-worker-go/` — Go workspace (`stacks = ["go", "infra"]`).
 
-Both are what Hermes provisions and drives via
+All three are what Hermes provisions and drives via
 `coder ssh <workspace> -- ...` to dispatch Claude Code / Codex tasks
 against a target repo (the "hybrid" orchestration model: Hermes itself
 runs only in the control hub, never inside these workspaces). Split by
