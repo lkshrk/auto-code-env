@@ -54,20 +54,26 @@ hermes-hq/
 └── .github/workflows/
     ├── validate.yaml             # PR/push: Containerfile + coder template checks
     ├── coder-templates.yaml      # push Coder templates to the live deployment
-    ├── release.yaml              # calendar-versioned tag on merge to main
-    └── build-image.yaml          # build + push GHCR image, trigger h-cloud deploy
+    └── release.yaml              # tag, build+push GHCR image, trigger h-cloud deploy
 ```
 
 ## Release flow
 
 1. Merge to `main` (via PR).
-2. `release.yaml` cuts a calendar-versioned tag (`YYYY.M.PATCH`, same
-   scheme as h-cloud's own `tag.yaml`).
-3. The new tag triggers `build-image.yaml`: builds `image/Containerfile`,
-   pushes `ghcr.io/lkshrk/hermes-hq:<tag>` (+ `:latest`), then fires a
-   `repository_dispatch` `image-update` event at `lkshrk/h-cloud` with
-   `{app: hermes-hq, image: ghcr.io/lkshrk/hermes-hq, tag: <tag>}`.
-4. h-cloud's own `update-image.yml` (already in production, same
+2. `release.yaml` (single workflow — a tag created with the default
+   `GITHUB_TOKEN` cannot itself trigger another workflow via
+   `push: tags:`, GitHub's anti-recursion safeguard, so tagging and
+   building are chained jobs here rather than separate files):
+   1. Cuts a calendar-versioned tag (`YYYY.M.PATCH`, same scheme as
+      h-cloud's own `tag.yaml`).
+   2. Builds `image/Containerfile` and pushes
+      `ghcr.io/lkshrk/hermes-hq:<tag>` (+ `:latest`) to GHCR.
+   3. Fires a `repository_dispatch` `image-update` event at
+      `lkshrk/h-cloud` with
+      `{app: hermes-hq, image: ghcr.io/lkshrk/hermes-hq, tag: <tag>}`
+      — skipped with a warning (not a failed run) if the
+      `H_CLOUD_DISPATCH_TOKEN` secret isn't set yet.
+3. h-cloud's own `update-image.yml` (already in production, same
    mechanism other apps use) finds every manifest pinning that image,
    bumps the tag, commits, and pushes. Flux reconciles the new tag from
    there — no manual deploy step.
@@ -75,6 +81,9 @@ hermes-hq/
 ## Status
 
 Image, Coder templates, and CI (validate/release/build/deploy-trigger)
-are in place. h-cloud-side HelmRelease/Kustomization/SOPS wiring is
-tracked and owned in `lkshrk/h-cloud` directly.
+are in place. `H_CLOUD_DISPATCH_TOKEN` (a PAT/GitHub App token with
+`contents:write` on `lkshrk/h-cloud`) does not exist yet, so step 3
+above is currently a no-op warning — tags build and publish real
+images regardless. h-cloud-side HelmRelease/Kustomization/SOPS wiring
+is tracked and owned in `lkshrk/h-cloud` directly.
 
