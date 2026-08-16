@@ -44,6 +44,7 @@ hermes-hq/
 │   └── decisions/               # ADRs
 ├── image/
 │   ├── Containerfile
+│   ├── .env.example              # reference for the h-cloud SOPS secret's keys
 │   └── scripts/
 ├── coder/
 │   ├── templates/                # hermes-worker-{js,py,go} + common.tf

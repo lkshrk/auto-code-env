@@ -1,5 +1,9 @@
 # hermes-hq: Secrets & Environment Checklist
 
+Sample file: [`image/.env.example`](../image/.env.example) - copy it and
+fill in real values to build the h-cloud SOPS secret; never commit a
+filled-in copy.
+
 Source of truth: cross-checked against this session's actual live
 `~/.hermes/.env` and `~/.hermes/config.yaml` (real running Hermes
 instance), plus integrations discussed this session that aren't wired up

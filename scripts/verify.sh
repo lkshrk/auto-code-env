@@ -21,7 +21,7 @@ check() {
 }
 
 # 1. Required top-level files/dirs exist.
-for path in README.md image/Containerfile coder/templates/common.tf docs/secrets-checklist.md; do
+for path in README.md image/Containerfile image/.env.example coder/templates/common.tf docs/secrets-checklist.md; do
   if [ -e "$path" ]; then
     echo "PASS: $path exists"
   else
@@ -54,15 +54,24 @@ for dir in coder/templates/*/; do
 done
 echo "PASS: coder/templates structure checked"
 
-# 4. Containerfile references match: HERMES_HOME under VOLUME, no
-# leftover 'custom:litellm' style provider naming leaking into image
-# defaults, no hardcoded secrets.
-if grep -qE '(ghp_|gho_|github_pat_|sk-ant-|sk-or-v1-)' image/Containerfile; then
-  echo "FAIL: image/Containerfile appears to contain a real credential"
+# 4. No hardcoded secrets in the Containerfile or the sample env file.
+# .env.example's secret-key lines must stay empty (KEY=) - a filled-in
+# value there means a real credential almost got committed.
+if grep -qE '(ghp_|gho_|github_pat_|sk-ant-|sk-or-v1-)' image/Containerfile image/.env.example; then
+  echo "FAIL: a real credential pattern was found in image/Containerfile or image/.env.example"
   fail=1
 else
-  echo "PASS: no obvious credential leakage in image/Containerfile"
+  echo "PASS: no obvious credential leakage in image/Containerfile or image/.env.example"
 fi
+
+for key in HERMES_CUSTOM_API_AI_H_CLOUD_LAN_API_KEY OPENROUTER_API_KEY SIGNAL_ACCOUNT \
+           GITHUB_TOKEN CODER_SESSION_TOKEN OPENVIKING_API_KEY; do
+  if grep -qE "^${key}=.+" image/.env.example; then
+    echo "FAIL: image/.env.example has a non-empty value for secret key ${key}"
+    fail=1
+  fi
+done
+echo "PASS: all secret keys in image/.env.example are empty placeholders"
 
 if [ "$fail" -ne 0 ]; then
   echo
