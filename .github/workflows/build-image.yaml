@@ -86,9 +86,12 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::H_CLOUD_DISPATCH_TOKEN secret is not set - cannot trigger h-cloud deploy."
-            echo "::error::Needs a PAT (or GitHub App token) with contents:write on lkshrk/h-cloud, stored as this repo's H_CLOUD_DISPATCH_TOKEN secret."
-            exit 1
+            echo "::warning::H_CLOUD_DISPATCH_TOKEN secret is not set - skipping the h-cloud deploy trigger."
+            echo "::warning::Image ghcr.io/lkshrk/hermes-hq:${TAG} was still built and pushed; h-cloud"
+            echo "::warning::deploy will need a manual repository_dispatch (or wait for"
+            echo "::warning::H_CLOUD_DISPATCH_TOKEN to be added: a PAT/GitHub App token with"
+            echo "::warning::contents:write on lkshrk/h-cloud, stored as this repo's secret)."
+            exit 0
           fi
           curl -fsSL --proto-redir '=https' \
             -X POST \
