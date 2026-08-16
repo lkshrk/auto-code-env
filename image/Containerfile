@@ -1,9 +1,177 @@
-# Placeholder Containerfile for the Hermes control-hub image.
-# TBD: base image, dependencies, non-secret bootstrap steps.
+# hermes-hq control-hub image
+#
+# Builds a reproducible Hermes control-hub image on top of lkshrk/dotfiles'
+# Linux/Omni bootstrap chain (setup-hermes.sh -> setup-workspace.sh), split
+# into logical, independently-cacheable layers:
+#
+#   1. base        - OS image + non-root user
+#   2. os-prereqs  - apt packages from scripts/setup-workspace-linux.sh
+#   3. omni        - Omni package manager itself
+#   4. dotfiles    - clone lkshrk/dotfiles, make it available at ~/dotfiles
+#   5. tools       - `omni tools sync` for the hermes host group
+#                    (core, dev, dev-tooling, go, infra, prereqs, python,
+#                    shell, test-tooling, ts) - deliberately NO ai/ai-plugins
+#   6. dots        - `omni dots sync` (shell, tmux, bashrc, etc.)
+#   7. hermes      - install the Hermes agent itself (hermes host-special
+#                    group: camofox-browser + hermes + rbw)
+#   8. runtime     - entrypoint, workdir, non-secret runtime config
+#
+# Rationale: Coder workspaces get the `ai`/`ai-plugins` Omni groups (Claude
+# Code, Codex, agent plugin/skill marketplaces). The control hub does not -
+# it installs the Hermes agent directly and stays a small, auditable surface.
+# See lkshrk/dotfiles: dotfiles/omni/.config/omni/settings.json (host_settings.hermes)
+# and tests/omni-hermes-profile.sh, which asserts this split in CI.
+#
+# Base OS: Debian trixie (13), the current stable release, via the
+# `debian:trixie-slim` tag (pinned explicitly rather than `stable-slim`, so
+# the base doesn't silently drift to the next Debian release without an
+# intentional bump here). rbw is not in trixie's apt repos as a binary
+# package (only forky/sid have it, and only as a source crate at that -
+# verified via packages.debian.org), so rbw installs via the signed .deb
+# upstream publishes at https://git.tozt.net/rbw/releases/deb/, which does
+# install cleanly on trixie (verified: apt-get install ./rbw_<ver>.deb ->
+# rbw 1.15.0). See tools.json's rbw entry for the script provider.
 
-FROM docker.io/library/debian:bookworm-slim
+# ─── 1. base ────────────────────────────────────────────────────────────────
+FROM docker.io/library/debian:trixie-slim AS base
 
 LABEL org.opencontainers.image.source="https://github.com/lkshrk/hermes-hq"
-LABEL org.opencontainers.image.description="Hermes control-hub base image (placeholder)"
+LABEL org.opencontainers.image.description="Hermes control-hub image"
 
-CMD ["/bin/bash"]
+ARG HERMES_UID=1000
+ARG HERMES_GID=1000
+ARG HERMES_USER=hermes
+
+RUN groupadd --gid "${HERMES_GID}" "${HERMES_USER}" \
+    && useradd --uid "${HERMES_UID}" --gid "${HERMES_GID}" \
+         --create-home --shell /bin/bash "${HERMES_USER}"
+
+ENV HOME=/home/${HERMES_USER} \
+    PATH=/home/${HERMES_USER}/.local/bin:/home/${HERMES_USER}/.bun/bin:/home/${HERMES_USER}/.cargo/bin:$PATH
+
+# ─── 2. os-prereqs ──────────────────────────────────────────────────────────
+FROM base AS os-prereqs
+
+ARG HERMES_USER=hermes
+
+# Mirrors scripts/setup-workspace-linux.sh install_apt_packages(). `sudo` is
+# added on top (not present on real workspaces' bootstrap either, but Omni's
+# apt provider shells out to sudo) with passwordless NOPASSWD for the
+# hermes user so RUN steps in later layers can install apt packages as
+# the non-root image user, matching how omni behaves on a real workspace.
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends \
+         curl \
+         git \
+         stow \
+         jq \
+         build-essential \
+         ca-certificates \
+         openssl \
+         ncurses-bin \
+         pkg-config \
+         libssl-dev \
+         unzip \
+         xz-utils \
+         zsh \
+         sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "${HERMES_USER} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/90-${HERMES_USER}" \
+    && chmod 0440 "/etc/sudoers.d/90-${HERMES_USER}"
+
+# ─── 3. omni ────────────────────────────────────────────────────────────────
+FROM os-prereqs AS omni
+
+USER ${HERMES_USER}
+WORKDIR ${HOME}
+
+# Mirrors scripts/install-omni-latest.sh.
+RUN set -eu; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+      x86_64|amd64) arch=x86_64 ;; \
+      aarch64*|arm64) arch=arm64 ;; \
+      *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"; \
+    mkdir -p "$HOME/.local/bin"; \
+    tmp="$(mktemp -d)"; \
+    curl -fsSL --proto-redir '=https' \
+      "https://github.com/lkshrk/omni/releases/latest/download/omni_${os}_${arch}.tar.gz" \
+      -o "$tmp/omni.tar.gz"; \
+    tar -xzf "$tmp/omni.tar.gz" -C "$tmp" omni; \
+    install -Dm 755 "$tmp/omni" "$HOME/.local/bin/omni"; \
+    rm -rf "$tmp"; \
+    omni --version
+
+# ─── 4. dotfiles ────────────────────────────────────────────────────────────
+FROM omni AS dotfiles
+
+ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
+ARG DOTFILES_REF=main
+# Cache-busting: git clone is cached by command text, not remote HEAD, so a
+# fresh dotfiles commit alone will NOT invalidate this layer. Pass
+# --build-arg DOTFILES_COMMIT=$(git ls-remote ...) (or any changing value)
+# to force a re-clone when dotfiles has moved.
+ARG DOTFILES_COMMIT=unknown
+
+USER ${HERMES_USER}
+WORKDIR ${HOME}
+
+RUN echo "dotfiles ref: ${DOTFILES_REF} @ ${DOTFILES_COMMIT}" \
+    && git clone --depth 1 --branch "${DOTFILES_REF}" "${DOTFILES_REPO}" "${HOME}/dotfiles"
+
+ENV OMNI_CONFIG=${HOME}/dotfiles/dotfiles/omni/.config/omni/settings.json
+ENV OMNI_HOSTNAME=hermes
+
+RUN omni --config "$OMNI_CONFIG" settings show --format json >/dev/null
+
+# ─── 5. tools ───────────────────────────────────────────────────────────────
+FROM dotfiles AS tools
+
+USER ${HERMES_USER}
+WORKDIR ${HOME}
+
+# Installs everything in the hermes host group: core, dev, dev-tooling, go,
+# infra, prereqs, python, shell, test-tooling, ts. No ai / ai-plugins, and
+# no containers group (docker/lazydocker/skopeo) - the hermes host profile
+# in lkshrk/dotfiles deliberately excludes it; a control-hub image has no
+# business running Docker-in-Docker. (The containers group previously lived
+# inside dev-tooling and its apt_repo docker install corrupted apt state for
+# every other tool in the same sync run - fixed upstream in dotfiles commit
+# da70d75, so no image-local workaround is needed here anymore.)
+RUN omni --config "$OMNI_CONFIG" --yes tools sync
+
+# ─── 6. dots ────────────────────────────────────────────────────────────────
+FROM tools AS dots
+
+USER ${HERMES_USER}
+WORKDIR ${HOME}
+
+RUN rm -f "$HOME/.zshrc" \
+    && omni --config "$OMNI_CONFIG" --yes dots sync --use-repo
+
+# ─── 7. hermes ──────────────────────────────────────────────────────────────
+FROM dots AS hermes
+
+USER ${HERMES_USER}
+WORKDIR ${HOME}
+
+ARG HERMES_VERSION=latest
+
+# Installs the hermes host-special group: camofox-browser + hermes itself.
+RUN omni --config "$OMNI_CONFIG" --yes tools sync hermes \
+    && hermes --version
+
+# ─── 8. runtime ─────────────────────────────────────────────────────────────
+FROM hermes AS runtime
+
+USER ${HERMES_USER}
+WORKDIR ${HOME}
+
+# Non-secret runtime config only. Secrets are mounted at runtime via the
+# cluster's external-secrets / SOPS wiring, never baked into the image.
+VOLUME ["${HOME}/.hermes"]
+
+ENTRYPOINT ["hermes"]
+CMD ["gateway", "run"]
