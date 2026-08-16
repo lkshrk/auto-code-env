@@ -53,7 +53,7 @@ Not secrets, but required non-default settings for the same runtime behavior as 
 
 - `providers.litellm-anthropic` / `providers.litellm-openai` blocks (both point at `http://litellm-proxy.ai.svc.cluster.local:4000`, differ by transport)
 - `model.default: gpt-5.6-sol`, `model.provider: litellm-openai`
-- `fallback.model: claude-sonnet-5`, `fallback.provider: litellm-anthropic`
+- `fallback_providers: [{provider: custom:litellm-anthropic, model: claude-opus-5}]` (set via `hermes fallback add`, not a plain YAML edit - the old bare `fallback: {model, provider}` key is dead/unread by this Hermes version and was removed)
 - `image_gen.provider: openrouter`, `image_gen.model: google/gemini-3-pro-image`
 - `memory.provider: openviking`, `memory.openviking.use_ovcli_config: true` (needs its own `ovcli.conf.hermes` file, not just an env var - see OPENVIKING_API_KEY row above)
 - `web.backend: searxng`
