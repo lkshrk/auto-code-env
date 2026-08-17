@@ -151,7 +151,14 @@ WORKDIR ${HOME}
 # inside dev-tooling and its apt_repo docker install corrupted apt state for
 # every other tool in the same sync run - fixed upstream in dotfiles commit
 # da70d75, so no image-local workaround is needed here anymore.)
-RUN omni --config "$OMNI_CONFIG" --yes tools sync
+#
+# os-prereqs wipes /var/lib/apt/lists/* to keep that layer small, so every
+# apt-based tool omni installs here (bat, fd, ripgrep, tmux, tree, ...)
+# needs a fresh index first or every apt-get install fails with "Unable to
+# locate package" - found via a real CI failure log, not by inspection.
+RUN sudo apt-get update -qq \
+    && omni --config "$OMNI_CONFIG" --yes tools sync \
+    && sudo rm -rf /var/lib/apt/lists/*
 
 # ─── 6. dots ────────────────────────────────────────────────────────────────
 FROM tools AS dots
@@ -170,8 +177,12 @@ WORKDIR ${HOME}
 
 ARG HERMES_VERSION=latest
 
-# Installs the hermes host-special group: camofox-browser + hermes itself.
-RUN omni --config "$OMNI_CONFIG" --yes tools sync hermes \
+# Installs the hermes host-special group: camofox-browser + hermes + rbw.
+# rbw installs via a downloaded .deb (apt-based) - same stale-index risk
+# as the tools layer, so refresh first.
+RUN sudo apt-get update -qq \
+    && omni --config "$OMNI_CONFIG" --yes tools sync hermes \
+    && sudo rm -rf /var/lib/apt/lists/* \
     && hermes --version
 
 # ─── 8. runtime ─────────────────────────────────────────────────────────────

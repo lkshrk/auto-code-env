@@ -97,10 +97,21 @@ jobs:
 
       - name: Resolve dotfiles commit (cache-busting build arg)
         id: dotfiles-commit
+        env:
+          # TEMPORARY: dotfiles main still has the broken docker apt-repo
+          # config (fix sits unmerged on fix/omni-containers-group,
+          # pending review) - building against main fails apt-get for
+          # every package in the same omni tools sync run. Pinned to the
+          # combined verification branch release-ready (containers-group
+          # fix + rbw provider + hermes@hermes dots package, all already
+          # tested individually) until the real PRs are reviewed and
+          # merged. Revert DOTFILES_REF to main once that happens.
+          DOTFILES_REF: release-ready
         run: |
           set -euo pipefail
-          COMMIT=$(git ls-remote https://github.com/lkshrk/dotfiles.git refs/heads/main | cut -f1)
+          COMMIT=$(git ls-remote https://github.com/lkshrk/dotfiles.git "refs/heads/${DOTFILES_REF}" | cut -f1)
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "ref=$DOTFILES_REF" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
@@ -110,6 +121,7 @@ jobs:
           push: true
           build-args: |
             DOTFILES_COMMIT=${{ steps.dotfiles-commit.outputs.commit }}
+            DOTFILES_REF=${{ steps.dotfiles-commit.outputs.ref }}
           tags: |
             ${{ env.IMAGE }}:${{ needs.tag.outputs.tag }}
             ${{ env.IMAGE }}:latest

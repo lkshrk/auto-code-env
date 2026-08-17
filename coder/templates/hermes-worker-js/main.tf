@@ -3,5 +3,5 @@
 # directory at template-push time.
 
 locals {
-  stacks = ["ts", "infra"]
+  stacks = ["ts", "dev", "dev-tooling", "infra"]
 }

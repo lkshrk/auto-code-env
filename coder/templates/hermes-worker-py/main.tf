@@ -3,5 +3,5 @@
 # template-push time.
 
 locals {
-  stacks = ["python", "infra"]
+  stacks = ["python", "dev", "dev-tooling", "infra"]
 }
