@@ -1,0 +1,18 @@
+# .gitignore for hermes-hq
+# Never commit secrets. This repo stores only secret references.
+
+*.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+.DS_Store
+
+# Terraform local state/provider cache - never commit; hermes-hq's Coder
+# templates are stateless push targets (coder templates push), not
+# terraform-managed infrastructure with a persisted backend.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
