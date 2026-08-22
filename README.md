@@ -59,10 +59,19 @@ docker run --rm -it \
 ```
 
 On Linux, bind-mount `$SSH_AUTH_SOCK` instead; its socket must be accessible to
-container UID 1000. `rbw-ssh-add <item>` loads a private key returned by
-`rbw get` directly into that agent without writing it to disk. Unlock and
-configure the vault at runtime with `rbw config`, `rbw register`, and
-`rbw unlock`.
+container UID 1000. This forwarded-agent mode expects the key to already be
+loaded on the host.
+
+For an interactive key stored in Bitwarden, run `rbw-ssh-shell <item>`. It
+starts a container-local agent, unlocks rbw through pinentry, loads the
+item's `private_key` field without writing it to disk, and opens a login shell.
+An optional command may replace the shell.
+
+For unattended Pilot or Hermes, mount a dedicated automation key at
+`/run/secrets/ssh_key` and run `ssh-secret-run <command ...>`. It starts a
+container-local agent for only that command. Do not use a personal key or rbw
+master password for unattended workloads. Nothing is loaded automatically by
+the image entrypoint.
 
 ## Runtime contracts
 

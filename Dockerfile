@@ -3,7 +3,7 @@
 ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
 
 FROM scratch AS runtime-files
-COPY --chmod=0755 bin/auto-code-env-dots bin/auto-code-entrypoint bin/docker bin/pnpm bin/pnpx bin/rbw-ssh-add /usr/local/bin/
+COPY --chmod=0755 bin/auto-code-env-dots bin/auto-code-entrypoint bin/docker bin/pnpm bin/pnpx bin/rbw-ssh-shell bin/ssh-secret-run /usr/local/bin/
 
 FROM ${DEBIAN_IMAGE} AS base
 
