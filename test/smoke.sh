@@ -97,6 +97,19 @@ case "$target" in
     ;;
 esac
 
+case "$target" in
+  dev-full)
+    run '! command -v pilot >/dev/null 2>&1 && ! command -v hermes >/dev/null 2>&1 && test ! -e /usr/local/bin/pilot && test ! -d /opt/pilot && test ! -d /opt/auto-code-env/.hermes' \
+      || fail 'plain image contains a persona overlay'
+    ;;
+  dev-pilot)
+    run '! command -v hermes >/dev/null 2>&1 && test ! -d /opt/auto-code-env/.hermes' || fail 'Pilot image contains Hermes'
+    ;;
+  dev-hermes)
+    run '! command -v pilot >/dev/null 2>&1 && test ! -e /usr/local/bin/pilot && test ! -d /opt/pilot' || fail 'Hermes image contains Pilot'
+    ;;
+esac
+
 run_offline '
   set -a
   . /usr/local/share/auto-code-env/versions.env
@@ -111,8 +124,12 @@ run '
   set +a
   test -n "$OMNI_VERSION"
   test -n "$DOTFILES_COMMIT"
+  test "$OMNI_CONFIG" = /opt/dotfiles/dotfiles/omni/.config/omni/settings.json
   test "$(omni --version | sed -nE "s/.*([0-9]+\\.[0-9]+\\.[0-9]+).*/\\1/p")" = "$OMNI_VERSION"
   test "$(git -C /opt/dotfiles rev-parse HEAD)" = "$DOTFILES_COMMIT"
+  test -z "$(git -C /opt/dotfiles status --porcelain)"
+  test ! -e /opt/omni-build
+  test -z "${OMNI_HOSTNAME:-}"
 ' || fail 'configured Omni or dotfiles version does not match versions.env'
 
 # The entrypoint invokes this wrapper. Without a TTY it must be a no-op: image

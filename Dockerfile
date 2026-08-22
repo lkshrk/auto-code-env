@@ -21,10 +21,6 @@ ARG BUILDX_ARM64_SHA256=5d0cafd9d16afe1a0f0d9529885344ace2cc99efdd531b6c783c5455
 ARG COMPOSE_VERSION=2.39.2
 ARG COMPOSE_AMD64_SHA256=a55a8cd4ef103aac282812554e531aac8df7e914a287ee81e14d695556a22902
 ARG COMPOSE_ARM64_SHA256=54488fffb60782f3c8787a48b95ed15f49f5a3a85f4105304bd46db5edd9db61
-ARG PNPM_VERSION=11.22.0
-ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
-ARG DOTFILES_REF=main
-ARG DOTFILES_COMMIT=6342c6edad63dbf35653a354bb920234dca5b0cd
 
 ENV DEBIAN_FRONTEND=noninteractive HOME=/opt/auto-code-env USER=dev \
     AUTO_CODE_DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git AUTO_CODE_DOTFILES_REF=main \
@@ -62,20 +58,49 @@ RUN case "$TARGETARCH" in \
  && echo "$compose_sha  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c - && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose \
  && rm -rf /tmp/omni /tmp/omni.tar.gz /tmp/docker /tmp/docker.tgz \
  && install -d -m 0755 /usr/local/share/auto-code-env \
- && printf '%s\n' "TARGETARCH=${TARGETARCH}" "DEBIAN_IMAGE=${DEBIAN_IMAGE}" "OMNI_VERSION=${OMNI_VERSION}" "DOCKER_VERSION=${DOCKER_VERSION}" "BUILDX_VERSION=${BUILDX_VERSION}" "COMPOSE_VERSION=${COMPOSE_VERSION}" "PNPM_VERSION=${PNPM_VERSION}" "DOTFILES_REPO=${DOTFILES_REPO}" "DOTFILES_REF=${DOTFILES_REF}" "DOTFILES_COMMIT=${DOTFILES_COMMIT}" > /usr/local/share/auto-code-env/versions.env \
+ && printf '%s\n' "TARGETARCH=${TARGETARCH}" "DEBIAN_IMAGE=${DEBIAN_IMAGE}" "OMNI_VERSION=${OMNI_VERSION}" "DOCKER_VERSION=${DOCKER_VERSION}" "BUILDX_VERSION=${BUILDX_VERSION}" "COMPOSE_VERSION=${COMPOSE_VERSION}" > /usr/local/share/auto-code-env/versions.env \
  && chown -R dev:dev /home/dev /opt/auto-code-env
 
 FROM base AS dotfiles
+ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
+ARG DOTFILES_REF=main
+ARG DOTFILES_COMMIT=6342c6edad63dbf35653a354bb920234dca5b0cd
 RUN git init /opt/dotfiles && cd /opt/dotfiles && git remote add origin "$DOTFILES_REPO" \
- && git fetch --depth=1 origin "$DOTFILES_REF" && git fetch --depth=1 origin "$DOTFILES_COMMIT" \
- && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "$DOTFILES_COMMIT" && chown -R dev:dev /opt/dotfiles
+ && git fetch --depth=1 origin "$DOTFILES_COMMIT" \
+ && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "$DOTFILES_COMMIT" \
+ && chown -R dev:dev /opt/dotfiles \
+ && printf '%s\n' "DOTFILES_REPO=${DOTFILES_REPO}" "DOTFILES_REF=${DOTFILES_REF}" "DOTFILES_COMMIT=${DOTFILES_COMMIT}" > /opt/dotfiles-versions.env
 
-FROM base AS persona
-COPY --from=dotfiles --chown=dev:dev /opt/dotfiles /opt/dotfiles
+FROM base AS omni-build-config
+RUN --mount=type=bind,from=dotfiles,source=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json,target=/mnt/settings.json,ro \
+    --mount=type=bind,from=dotfiles,source=/opt/dotfiles/dotfiles/omni/.config/omni/settings.d/tools.json,target=/mnt/tools.json,ro \
+    --mount=type=bind,from=dotfiles,source=/opt/dotfiles/dotfiles/omni/.config/omni/settings.d/groups.json,target=/mnt/groups.json,ro \
+    install -d -o dev -g dev -m 0755 /opt/omni-build/settings.d \
+ && tmp="$(mktemp)" \
+ && jq '."$include" = ["settings.d/tools.json", "settings.d/groups.json"] | .host_settings = {image: .host_settings.coder} | .hosts = {image: ["prereqs", "core", "shell", "dev", "test-tooling", "go", "python", "ts", "dev-tooling", "infra", "secrets"]}' /mnt/settings.json > "$tmp" \
+ && mv "$tmp" /opt/omni-build/settings.json \
+ && tmp="$(mktemp)" \
+ && jq '.groups = ([.groups[] | select(.name as $name | ["prereqs", "core", "shell", "dev", "test-tooling", "go", "python", "ts", "dev-tooling", "infra", "secrets"] | index($name))] + [{"name": "image", "special": "host"}])' /mnt/groups.json > "$tmp" \
+ && mv "$tmp" /opt/omni-build/settings.d/groups.json \
+ && tmp="$(mktemp)" \
+ && jq '.tools.docker.ignore = true' /mnt/tools.json > "$tmp" \
+ && mv "$tmp" /opt/omni-build/settings.d/tools.json \
+ && chown -R dev:dev /opt/omni-build \
+ && touch -d '@0' /opt/omni-build /opt/omni-build/settings.d /opt/omni-build/settings.json /opt/omni-build/settings.d/tools.json /opt/omni-build/settings.d/groups.json \
+ && jq -e '."$include" == ["settings.d/tools.json", "settings.d/groups.json"] and (.hosts | keys == ["image"]) and (.host_settings | keys == ["image"]) and (.host_settings.image | type == "object")' /opt/omni-build/settings.json >/dev/null \
+ && test "$(jq '.groups | length' /opt/omni-build/settings.d/groups.json)" = 12 \
+ && for group in prereqs core shell dev test-tooling go python ts dev-tooling infra secrets image; do jq -e --arg group "$group" 'any(.groups[]; .name == $group)' /opt/omni-build/settings.d/groups.json >/dev/null; done \
+ && jq -e '.tools.docker.ignore == true' /opt/omni-build/settings.d/tools.json >/dev/null \
+ && test ! -e /opt/omni-build/settings.d/agents.json \
+ && test ! -e /opt/omni-build/settings.d/dots.json
+
+FROM omni-build-config AS persona
+ARG PNPM_VERSION=11.22.0
 ENV COREPACK_HOME=/opt/auto-code-env/.local/share/corepack \
-    OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json
+    OMNI_CONFIG=/opt/omni-build/settings.json \
+    OMNI_HOSTNAME=image
 USER dev
-WORKDIR /opt/dotfiles
+WORKDIR /opt/auto-code-env
 RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.npm,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.nvm/.cache,uid=1000,gid=1000 \
@@ -89,6 +114,7 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && corepack install --global "pnpm@${PNPM_VERSION}" \
  && omni tools install --group core --force && omni tools install --group shell --force \
  && printf '\n/usr/local/bin/auto-code-env-dots || true\nif [ -f "$HOME/.config/omni/settings.json" ]; then export OMNI_CONFIG="$HOME/.config/omni/settings.json"; else export OMNI_CONFIG="/opt/dotfiles/dotfiles/omni/.config/omni/settings.json"; fi\n' | sudo tee -a /etc/zsh/zshrc >/dev/null \
+ && printf '%s\n' "PNPM_VERSION=${PNPM_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
  && sudo usermod --shell /usr/bin/zsh dev && sudo rm -rf /var/lib/apt/lists/*
 
 FROM persona AS common-tools
@@ -128,27 +154,13 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
     if [ -f /run/secrets/GITHUB_TOKEN ]; then export GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)"; fi \
  && omni tools install --group ts --force
 
-FROM language-tools AS claude-tools
-ARG CLAUDE_CODE_VERSION=2.1.239
-RUN --mount=type=cache,target=/opt/auto-code-env/.npm,uid=1000,gid=1000 \
-    npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
- && sudo ln -sf "$(npm prefix --global)/bin/claude" /usr/local/bin/claude
-
-FROM claude-tools AS dev-tools
-ARG CODEX_VERSION=0.149.0
-ARG HERDR_VERSION=0.8.2
-ARG HERDR_AMD64_SHA256=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4
-ARG HERDR_ARM64_SHA256=f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d
+FROM language-tools AS dev-tools
 RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.npm,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.nvm/.cache,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.bun/install/cache,uid=1000,gid=1000 \
     --mount=type=secret,id=GITHUB_TOKEN,required=false,uid=1000 \
-    tools_config=/opt/dotfiles/dotfiles/omni/.config/omni/settings.d/tools.json \
- && tmp_config="$(mktemp)" \
- && jq '.tools.docker.ignore = true' "$tools_config" > "$tmp_config" \
- && mv "$tmp_config" "$tools_config" \
- && if [ -f /run/secrets/GITHUB_TOKEN ]; then export GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)"; fi \
+    if [ -f /run/secrets/GITHUB_TOKEN ]; then export GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)"; fi \
  && omni tools install --group dev-tooling --force
 RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.npm,uid=1000,gid=1000 \
@@ -156,7 +168,31 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.bun/install/cache,uid=1000,gid=1000 \
     --mount=type=secret,id=GITHUB_TOKEN,required=false,uid=1000 \
     if [ -f /run/secrets/GITHUB_TOKEN ]; then export GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)"; fi \
- && omni tools install --group infra --force
+ && omni tools install --group infra --force \
+ && sudo rm -rf /var/lib/apt/lists/*
+
+FROM dev-tools AS runtime-system
+ENV HOME=/home/dev \
+    XDG_RUNTIME_DIR=/run/user/1000 \
+    SSH_AUTH_SOCK=/run/user/1000/rbw/ssh-agent-socket \
+    PATH=/home/dev/.local/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+RUN sudo apt-get update \
+ && sudo apt-get install -y --no-install-recommends openssh-server pinentry-curses \
+ && sudo rm -f /etc/ssh/ssh_host_* \
+ && sudo rm -rf /var/lib/apt/lists/* /opt/omni-build \
+ && sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker \
+ && sudo usermod --password '*' dev
+
+FROM runtime-system AS agent-tools
+ARG CLAUDE_CODE_VERSION=2.1.239
+RUN --mount=type=cache,target=/opt/auto-code-env/.npm,uid=1000,gid=1000 \
+    npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+ && sudo ln -sf "$(npm prefix --global)/bin/claude" /usr/local/bin/claude \
+ && printf '%s\n' "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
+ARG CODEX_VERSION=0.149.0
+ARG HERDR_VERSION=0.8.2
+ARG HERDR_AMD64_SHA256=976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4
+ARG HERDR_ARM64_SHA256=f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d
 RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.npm,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.nvm/.cache,uid=1000,gid=1000 \
@@ -169,7 +205,7 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && curl -fsSL "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-${herdr_arch}" -o /tmp/herdr \
  && echo "$herdr_sha  /tmp/herdr" | sha256sum -c - \
  && sudo install -m 0755 /tmp/herdr /usr/local/bin/herdr && rm /tmp/herdr \
- && sudo rm -rf /var/lib/apt/lists/*
+ && printf '%s\n' "CODEX_VERSION=${CODEX_VERSION}" "HERDR_VERSION=${HERDR_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
 
 FROM persona AS rbw-source
 ENV HOME=/home/dev PATH=/home/dev/.cargo/bin:${PATH}
@@ -185,33 +221,13 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && test -x /home/dev/.cargo/bin/rbw \
  && test -x /home/dev/.cargo/bin/rbw-agent
 
-FROM dev-tools AS full-runtime
-ARG CLAUDE_CODE_VERSION=2.1.239
-ARG CODEX_VERSION=0.149.0
-ARG HERDR_VERSION=0.8.2
-ENV HOME=/home/dev \
-    XDG_RUNTIME_DIR=/run/user/1000 \
-    SSH_AUTH_SOCK=/run/user/1000/rbw/ssh-agent-socket \
-    PATH=/home/dev/.local/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
-RUN sudo apt-get update \
- && sudo apt-get install -y --no-install-recommends openssh-server pinentry-curses \
- && sudo rm -f /etc/ssh/ssh_host_* \
- && sudo rm -rf /var/lib/apt/lists/* \
- && sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker \
- && sudo usermod --password '*' dev
+FROM agent-tools AS runtime-core
 COPY --from=rbw-source /home/dev/.cargo/bin/rbw /home/dev/.cargo/bin/rbw-agent /usr/local/bin/
-COPY --from=runtime-files /usr/local/bin/ /usr/local/bin/
-COPY --chmod=0644 config/ssh_config /etc/ssh/ssh_config.d/99-auto-code-env.conf
-COPY --chmod=0644 config/sshd_config /etc/ssh/sshd_config.d/99-auto-code-env.conf
 RUN rbw_version="$(rbw --version | awk '{print $2}')" \
- && printf '%s\n' "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}" "CODEX_VERSION=${CODEX_VERSION}" "HERDR_VERSION=${HERDR_VERSION}" "RBW_VERSION=${rbw_version}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
+ && printf '%s\n' "RBW_VERSION=${rbw_version}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
  && sudo chown -R dev:dev /home/dev
 WORKDIR /home/dev
 EXPOSE 22
-ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
-CMD ["zsh"]
-
-FROM full-runtime AS dev-full
 
 FROM base AS lazygit-source
 ARG TARGETARCH
@@ -238,14 +254,14 @@ COPY --from=pilot-source /usr/local/bin/pilot /usr/local/bin/pilot
 COPY --from=lazygit-source /usr/local/bin/lazygit /usr/local/bin/lazygit
 COPY --chmod=0755 pilot/bin/ /opt/pilot/bin/
 
-FROM full-runtime AS dev-pilot
+FROM runtime-core AS pilot-runtime
 ARG PILOT_VERSION=2.264.0-fork.1
 ARG LAZYGIT_VERSION=0.64.1
 ENV PATH=/opt/pilot/bin:${PATH} REAL_GH=/usr/bin/gh
-COPY --from=pilot-files / /
+COPY --link --from=pilot-files / /
 RUN printf '%s\n' "PILOT_VERSION=${PILOT_VERSION}" "LAZYGIT_VERSION=${LAZYGIT_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
 
-FROM full-runtime AS hermes-runtime
+FROM runtime-core AS hermes-runtime
 ARG HERMES_VERSION=0.18.2
 ARG HERMES_REF=v2026.7.7.2
 ARG HERMES_COMMIT=9de9c25f620ff7f1ce0fd5457d596052d5159596
@@ -261,11 +277,56 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && printf '%s\n' "HERMES_VERSION=${HERMES_VERSION}" "HERMES_REF=${HERMES_REF}" "HERMES_COMMIT=${HERMES_COMMIT}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
 ENV HERMES_HOME=/home/dev/.hermes
 
-FROM hermes-runtime AS dev-hermes
-
-FROM hermes-runtime AS dev-both
+FROM hermes-runtime AS both-runtime
 ARG PILOT_VERSION=2.264.0-fork.1
 ARG LAZYGIT_VERSION=0.64.1
 ENV PATH=/opt/pilot/bin:${PATH} REAL_GH=/usr/bin/gh
-COPY --from=pilot-files / /
+COPY --link --from=pilot-files / /
 RUN printf '%s\n' "PILOT_VERSION=${PILOT_VERSION}" "LAZYGIT_VERSION=${LAZYGIT_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
+
+FROM scratch AS final-files
+COPY --from=dotfiles --chown=1000:1000 /opt/dotfiles /opt/dotfiles
+COPY --from=dotfiles /opt/dotfiles-versions.env /usr/local/share/auto-code-env/dotfiles.env
+COPY --from=runtime-files /usr/local/bin/ /usr/local/bin/
+COPY --chmod=0644 config/ssh_config /etc/ssh/ssh_config.d/99-auto-code-env.conf
+COPY --chmod=0644 config/sshd_config /etc/ssh/sshd_config.d/99-auto-code-env.conf
+
+FROM runtime-core AS dev-full
+ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
+ARG DOTFILES_REF=main
+ENV AUTO_CODE_DOTFILES_REPO=${DOTFILES_REPO} AUTO_CODE_DOTFILES_REF=${DOTFILES_REF} \
+    OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
+COPY --link --from=final-files / /
+RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
+CMD ["zsh"]
+
+FROM pilot-runtime AS dev-pilot
+ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
+ARG DOTFILES_REF=main
+ENV AUTO_CODE_DOTFILES_REPO=${DOTFILES_REPO} AUTO_CODE_DOTFILES_REF=${DOTFILES_REF} \
+    OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
+COPY --link --from=final-files / /
+RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
+CMD ["zsh"]
+
+FROM hermes-runtime AS dev-hermes
+ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
+ARG DOTFILES_REF=main
+ENV AUTO_CODE_DOTFILES_REPO=${DOTFILES_REPO} AUTO_CODE_DOTFILES_REF=${DOTFILES_REF} \
+    OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
+COPY --link --from=final-files / /
+RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
+CMD ["zsh"]
+
+FROM both-runtime AS dev-both
+ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
+ARG DOTFILES_REF=main
+ENV AUTO_CODE_DOTFILES_REPO=${DOTFILES_REPO} AUTO_CODE_DOTFILES_REF=${DOTFILES_REF} \
+    OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
+COPY --link --from=final-files / /
+RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
+CMD ["zsh"]
