@@ -37,19 +37,17 @@ jobs:
   test:
     name: Test ${{ matrix.target }} (${{ matrix.platform }})
     needs: check
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { target: dev-full, platform: linux/amd64, arch: amd64, nested: 1 }
-          - { target: dev-full, platform: linux/arm64, arch: arm64, nested: 0 }
-          - { target: agent-pilot, platform: linux/amd64, arch: amd64, nested: 0 }
-          - { target: agent-pilot, platform: linux/arm64, arch: arm64, nested: 1 }
+          - { target: dev-full, platform: linux/amd64, arch: amd64, nested: 1, runner: ubuntu-latest }
+          - { target: dev-full, platform: linux/arm64, arch: arm64, nested: 0, runner: ubuntu-24.04-arm }
+          - { target: agent-pilot, platform: linux/amd64, arch: amd64, nested: 0, runner: ubuntu-latest }
+          - { target: agent-pilot, platform: linux/arm64, arch: arm64, nested: 1, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v5
-
-      - uses: docker/setup-qemu-action@v4
 
       - uses: docker/setup-buildx-action@v4
 
