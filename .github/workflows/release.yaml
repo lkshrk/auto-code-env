@@ -54,6 +54,7 @@ jobs:
             docker buildx bake --push \
               --set "${target}.platform=${PLATFORM}" \
               --set "${target}.tags=${image}" \
+              --set "${target}.secrets=id=GITHUB_TOKEN,env=GITHUB_TOKEN" \
               --set "${target}.cache-from=type=gha,scope=full-${ARCH}" \
               --set "${target}.cache-to=type=gha,mode=max,scope=full-${ARCH}" \
               "$target"

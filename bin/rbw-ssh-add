@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+[ "$#" -gt 0 ] || { echo "usage: rbw-ssh-add <item selector>" >&2; exit 2; }
+[ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ] \
+  || { echo "rbw-ssh-add: SSH_AUTH_SOCK is not available" >&2; exit 1; }
+
+rbw get --field=private_key "$@" | ssh-add -

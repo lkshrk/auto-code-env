@@ -21,8 +21,18 @@ docker image inspect "$image" >/dev/null || fail "image not found: $image"
 run 'test "$(id -u)" = 1000 && test "$(id -g)" = 1000 && test "$USER" = pilot && test "$HOME" = /home/pilot' \
   || fail 'pilot identity is not uid/gid 1000 with /home/pilot'
 
-run 'for tool in bash git curl jq make omni; do command -v "$tool" >/dev/null || exit 1; done' \
+run 'for tool in bash git curl jq make omni ssh ssh-add rbw rbw-agent rbw-ssh-add pinentry-curses; do command -v "$tool" >/dev/null || exit 1; done' \
   || fail 'core tools are missing'
+
+run '
+  . /usr/local/share/auto-code-env/versions.env
+  test "$(rbw --version | awk "{print \$2}")" = "$RBW_VERSION"
+  ssh -G github.com 2>/dev/null | grep -qx "forwardagent no"
+  ssh -G github.com 2>/dev/null | grep -qx "hashknownhosts yes"
+  ssh -G github.com 2>/dev/null | grep -qx "stricthostkeychecking accept-new"
+  ! grep -R -l -- "BEGIN OPENSSH PRIVATE KEY" /home/pilot /opt/dotfiles >/dev/null 2>&1
+  test "$(rbw-ssh-add fake 2>&1 || true)" = "rbw-ssh-add: SSH_AUTH_SOCK is not available"
+' || fail 'rbw or hardened SSH client contract is broken'
 
 run 'for tool in go node python3 uv pnpm bun claude codex herdr; do command -v "$tool" >/dev/null || exit 1; done' \
   || fail 'full language and development toolchain is incomplete'

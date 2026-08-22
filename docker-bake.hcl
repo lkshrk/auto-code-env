@@ -1,6 +1,6 @@
 variable "REGISTRY" { default = "ghcr.io/lkshrk/auto-code-env" }
 variable "DEBIAN_IMAGE" { default = "debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258" }
-variable "DOTFILES_COMMIT" { default = "dac6c4c7d3910950c4a03d57764850eae263d5cd" }
+variable "DOTFILES_COMMIT" { default = "6342c6edad63dbf35653a354bb920234dca5b0cd" }
 variable "DOTFILES_REF" { default = "main" }
 variable "OMNI_VERSION" { default = "0.9.32" }
 variable "OMNI_AMD64_SHA256" { default = "9d2369d5f73622834fb8cf7f15baf2ac5417274a9f49856cf380a8758ad8dbaf" }
@@ -31,7 +31,6 @@ target "common" {
   context = "."
   dockerfile = "Dockerfile"
   platforms = ["linux/amd64", "linux/arm64"]
-  secret = ["id=GITHUB_TOKEN,env=GITHUB_TOKEN"]
   args = {
     DEBIAN_IMAGE = DEBIAN_IMAGE
     DOTFILES_REF = DOTFILES_REF

@@ -3,7 +3,7 @@
 ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
 
 FROM scratch AS runtime-files
-COPY --chmod=0755 bin/auto-code-env-dots bin/auto-code-entrypoint bin/docker bin/pnpm bin/pnpx /usr/local/bin/
+COPY --chmod=0755 bin/auto-code-env-dots bin/auto-code-entrypoint bin/docker bin/pnpm bin/pnpx bin/rbw-ssh-add /usr/local/bin/
 
 FROM ${DEBIAN_IMAGE} AS base
 
@@ -24,7 +24,7 @@ ARG COMPOSE_ARM64_SHA256=54488fffb60782f3c8787a48b95ed15f49f5a3a85f4105304bd46db
 ARG PNPM_VERSION=11.22.0
 ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
 ARG DOTFILES_REF=main
-ARG DOTFILES_COMMIT=dac6c4c7d3910950c4a03d57764850eae263d5cd
+ARG DOTFILES_COMMIT=6342c6edad63dbf35653a354bb920234dca5b0cd
 
 ENV DEBIAN_FRONTEND=noninteractive HOME=/opt/auto-code-env USER=pilot \
     AUTO_CODE_DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git AUTO_CODE_DOTFILES_REF=main \
@@ -171,15 +171,35 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && sudo install -m 0755 /tmp/herdr /usr/local/bin/herdr && rm /tmp/herdr \
  && sudo rm -rf /var/lib/apt/lists/*
 
+FROM persona AS rbw-source
+ENV HOME=/home/pilot PATH=/home/pilot/.cargo/bin:${PATH}
+RUN sudo apt-get update \
+ && sudo apt-get install -y --no-install-recommends build-essential \
+ && sudo rm -rf /var/lib/apt/lists/* \
+ && mkdir -p "$HOME/.cargo/bin" "$HOME/.rustup"
+RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/pilot/.cargo/registry,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/pilot/.cargo/git,uid=1000,gid=1000 \
+    omni tools install cargo --force --provider script \
+ && CARGO_TARGET_DIR=/opt/auto-code-env/.cache/cargo-target omni tools install --group secrets --force \
+ && test -x /home/pilot/.cargo/bin/rbw \
+ && test -x /home/pilot/.cargo/bin/rbw-agent
+
 FROM dev-tools AS full-runtime
 ARG CLAUDE_CODE_VERSION=2.1.239
 ARG CODEX_VERSION=0.149.0
 ARG HERDR_VERSION=0.8.2
 ENV HOME=/home/pilot \
     PATH=/home/pilot/.local/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
-RUN sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker
+RUN sudo apt-get update \
+ && sudo apt-get install -y --no-install-recommends pinentry-curses \
+ && sudo rm -rf /var/lib/apt/lists/* \
+ && sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker
+COPY --from=rbw-source /home/pilot/.cargo/bin/rbw /home/pilot/.cargo/bin/rbw-agent /usr/local/bin/
 COPY --from=runtime-files /usr/local/bin/ /usr/local/bin/
-RUN printf '%s\n' "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}" "CODEX_VERSION=${CODEX_VERSION}" "HERDR_VERSION=${HERDR_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
+COPY --chmod=0644 config/ssh_config /etc/ssh/ssh_config.d/99-auto-code-env.conf
+RUN rbw_version="$(rbw --version | awk '{print $2}')" \
+ && printf '%s\n' "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}" "CODEX_VERSION=${CODEX_VERSION}" "HERDR_VERSION=${HERDR_VERSION}" "RBW_VERSION=${rbw_version}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
  && sudo chown -R pilot:pilot /home/pilot
 WORKDIR /home/pilot
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]

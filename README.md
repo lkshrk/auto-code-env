@@ -2,7 +2,7 @@
 
 Multi-architecture Linux development images. Every variant includes the same
 language stack: Go, Python, Node/TypeScript, pnpm, Bun, uv, Claude Code, Codex,
-Docker CLI/Buildx/Compose, and the common Omni tooling.
+Docker CLI/Buildx/Compose, `rbw`, and the common Omni tooling.
 
 | Bake target | Adds |
 | --- | --- |
@@ -19,7 +19,9 @@ Build and load one architecture-native image, then smoke it:
 
 ```sh
 export GITHUB_TOKEN="$(gh auth token)"
-docker buildx bake --load --set dev-full.tags=auto-code-env:dev-full dev-full
+docker buildx bake --load \
+  --set dev-full.secrets=id=GITHUB_TOKEN,env=GITHUB_TOKEN \
+  --set dev-full.tags=auto-code-env:dev-full dev-full
 test/smoke.sh dev-full auto-code-env:dev-full
 docker run --rm -it auto-code-env:dev-full
 ```
@@ -39,6 +41,28 @@ directory. Mount or persist the user's home when that state should survive a
 container replacement. Credentials are supplied at runtime, never baked into
 an image layer; GitHub credentials reach build steps only through BuildKit's
 `GITHUB_TOKEN` secret mount.
+
+## SSH and rbw
+
+Every variant includes `rbw`, `rbw-agent`, `pinentry-curses`, and hardened SSH
+client defaults: hashed known hosts, `accept-new` host-key policy, keepalives,
+and agent forwarding disabled to downstream hosts. Private keys and rbw vault
+credentials are never stored in an image layer.
+
+On Docker Desktop, expose the key already loaded in the host SSH agent:
+
+```sh
+docker run --rm -it \
+  --mount type=bind,src=/run/host-services/ssh-auth.sock,target=/run/host-services/ssh-auth.sock \
+  -e SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock \
+  ghcr.io/lkshrk/auto-code-env:dev-full-latest
+```
+
+On Linux, bind-mount `$SSH_AUTH_SOCK` instead; its socket must be accessible to
+container UID 1000. `rbw-ssh-add <item>` loads a private key returned by
+`rbw get` directly into that agent without writing it to disk. Unlock and
+configure the vault at runtime with `rbw config`, `rbw register`, and
+`rbw unlock`.
 
 ## Runtime contracts
 

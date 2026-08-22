@@ -1,0 +1,8 @@
+Host *
+    AddKeysToAgent no
+    ForwardAgent no
+    HashKnownHosts yes
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    StrictHostKeyChecking accept-new
+    UpdateHostKeys yes

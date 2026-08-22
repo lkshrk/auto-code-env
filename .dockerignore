@@ -2,6 +2,8 @@
 !Dockerfile
 !bin/
 !bin/**
+!config/
+!config/**
 !pilot/
 !pilot/bin/
 !pilot/bin/**
