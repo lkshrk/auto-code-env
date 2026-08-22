@@ -1,0 +1,29 @@
+Port 22
+AddressFamily any
+ListenAddress 0.0.0.0
+ListenAddress ::
+
+HostKey /var/lib/auto-code-env/sshd/ssh_host_ed25519_key
+PidFile /run/auto-code-env/sshd.pid
+
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+AuthorizedKeysFile .ssh/authorized_keys
+AllowUsers pilot
+
+SetEnv XDG_RUNTIME_DIR=/run/user/1000 SSH_AUTH_SOCK=/run/user/1000/rbw/ssh-agent-socket PATH=/home/pilot/.local/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding yes
+GatewayPorts no
+PermitTunnel no
+
+LoginGraceTime 30
+MaxAuthTries 3
+ClientAliveInterval 60
+ClientAliveCountMax 3

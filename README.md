@@ -62,16 +62,89 @@ On Linux, bind-mount `$SSH_AUTH_SOCK` instead; its socket must be accessible to
 container UID 1000. This forwarded-agent mode expects the key to already be
 loaded on the host.
 
-For an interactive key stored in Bitwarden, run `rbw-ssh-shell <item>`. It
-starts a container-local agent, unlocks rbw through pinentry, loads the
-item's `private_key` field without writing it to disk, and opens a login shell.
-An optional command may replace the shell.
+For keys stored as Bitwarden SSH Key items, use rbw's native SSH agent. The
+image already points `SSH_AUTH_SOCK` at its dedicated socket:
+
+```sh
+rbw unlock
+ssh-add -L
+```
+
+Save only each public key locally so OpenSSH can select the matching identity
+from rbw's agent:
+
+```sh
+install -d -m 0700 ~/.ssh/rbw
+rbw get --field=public_key 'tower' > ~/.ssh/rbw/tower.pub
+```
+
+```sshconfig
+Host towerr-dev
+    HostName 172.16.20.195
+    User lkshrk
+    IdentityAgent SSH_AUTH_SOCK
+    IdentityFile ~/.ssh/rbw/tower.pub
+    IdentitiesOnly yes
+```
+
+The public-key filename is arbitrary; use stable names based on the key or
+host. No private key is written to disk.
 
 For unattended Pilot or Hermes, mount a dedicated automation key at
 `/run/secrets/ssh_key` and run `ssh-secret-run <command ...>`. It starts a
 container-local agent for only that command. Do not use a personal key or rbw
-master password for unattended workloads. Nothing is loaded automatically by
-the image entrypoint.
+master password for unattended workloads. The image starts neither agent
+automatically; `rbw unlock` starts rbw's agent when needed.
+
+## SSH server
+
+Every variant includes a public-key-only SSH server for the `pilot` user.
+Host keys are generated at runtime, not baked into the image. Persist
+`/var/lib/auto-code-env/sshd` to keep the server identity stable across
+container replacement.
+
+```yaml
+services:
+  dev:
+    image: ghcr.io/lkshrk/auto-code-env:dev-both-latest
+    command: sleep infinity
+    environment:
+      AUTO_CODE_SSHD: "1"
+      AUTO_CODE_AUTHORIZED_KEYS: ${AUTO_CODE_AUTHORIZED_KEYS:?set public key}
+    ports:
+      - "127.0.0.1:2222:22"
+    volumes:
+      - home:/home/pilot
+      - workspace:/workspace
+      - ssh-host:/var/lib/auto-code-env/sshd
+
+volumes:
+  home:
+  workspace:
+  ssh-host:
+```
+
+For VLAN access, replace the port mapping with the Windows VLAN address, for
+example `172.16.20.195:2222:22`, and allow TCP port 2222 from the VLAN subnet
+in Windows Firewall.
+
+Set the public key before starting Compose:
+
+```powershell
+$env:AUTO_CODE_AUTHORIZED_KEYS = Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub -Raw
+docker compose up -d
+ssh -p 2222 pilot@localhost
+```
+
+Additional keys can be added without rebuilding:
+
+```sh
+auto-code-sshd authorize < ~/.ssh/id_ed25519.pub
+```
+
+Root login, passwords, keyboard-interactive authentication, X11 forwarding,
+agent forwarding, and tunnels are disabled. TCP forwarding remains enabled for
+normal remote-development port forwarding.
 
 ## Runtime contracts
 

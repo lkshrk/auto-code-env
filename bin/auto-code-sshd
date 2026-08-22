@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=/var/lib/auto-code-env/sshd
+authorized_keys=$HOME/.ssh/authorized_keys
+pid_file=/run/auto-code-env/sshd.pid
+
+authorize() (
+  local input key_file key
+  input=$(mktemp)
+  key_file=$(mktemp)
+  trap 'rm -f "$input" "$key_file"' EXIT
+  cat > "$input"
+  [[ -s "$input" ]] || { echo "auto-code-sshd: no public key provided" >&2; return 1; }
+  install -d -m 0700 "$HOME/.ssh"
+  touch "$authorized_keys"
+  chmod 0600 "$authorized_keys"
+  while IFS= read -r key || [[ -n "$key" ]]; do
+    [[ -n "$key" && "$key" != \#* ]] || continue
+    printf '%s\n' "$key" > "$key_file"
+    ssh-keygen -l -f "$key_file" >/dev/null
+    grep -qxF "$key" "$authorized_keys" || printf '%s\n' "$key" >> "$authorized_keys"
+  done < "$input"
+  [[ -s "$authorized_keys" ]] || { echo "auto-code-sshd: no valid public key provided" >&2; return 1; }
+)
+
+prepare() {
+  sudo install -d -o root -g root -m 0700 "$state_dir"
+  sudo install -d -o root -g root -m 0755 /run/auto-code-env
+  if ! sudo test -s "$state_dir/ssh_host_ed25519_key"; then
+    sudo ssh-keygen -q -t ed25519 -N '' -f "$state_dir/ssh_host_ed25519_key"
+    sudo chmod 0600 "$state_dir/ssh_host_ed25519_key"
+  fi
+  if [[ -n "${AUTO_CODE_AUTHORIZED_KEYS:-}" ]]; then
+    authorize <<< "$AUTO_CODE_AUTHORIZED_KEYS"
+  fi
+  local source=${AUTO_CODE_AUTHORIZED_KEYS_FILE:-/run/secrets/authorized_keys}
+  if sudo test -f "$source"; then
+    sudo cat "$source" | authorize
+  fi
+  [[ -s "$authorized_keys" ]] || {
+    echo "auto-code-sshd: add a key with 'auto-code-sshd authorize' or set AUTO_CODE_AUTHORIZED_KEYS" >&2
+    return 1
+  }
+  sudo /usr/sbin/sshd -t
+}
+
+case ${1:-} in
+  authorize)
+    authorize
+    ;;
+  start)
+    prepare
+    if [[ -s "$pid_file" ]] && sudo kill -0 "$(sudo cat "$pid_file")" 2>/dev/null; then
+      exit 0
+    fi
+    sudo /usr/sbin/sshd
+    ;;
+  foreground)
+    prepare
+    exec sudo /usr/sbin/sshd -D -e
+    ;;
+  stop)
+    if [[ -s "$pid_file" ]]; then
+      sudo kill "$(sudo cat "$pid_file")" 2>/dev/null || true
+      sudo rm -f "$pid_file"
+    fi
+    ;;
+  *)
+    echo "usage: auto-code-sshd <authorize|start|foreground|stop>" >&2
+    exit 2
+    ;;
+esac

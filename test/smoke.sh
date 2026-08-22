@@ -21,17 +21,18 @@ docker image inspect "$image" >/dev/null || fail "image not found: $image"
 run 'test "$(id -u)" = 1000 && test "$(id -g)" = 1000 && test "$USER" = pilot && test "$HOME" = /home/pilot' \
   || fail 'pilot identity is not uid/gid 1000 with /home/pilot'
 
-run 'for tool in bash git curl jq make omni ssh ssh-add rbw rbw-agent rbw-ssh-shell ssh-secret-run pinentry-curses; do command -v "$tool" >/dev/null || exit 1; done' \
+run 'for tool in bash git curl jq make omni ssh ssh-add sshd auto-code-sshd rbw rbw-agent ssh-secret-run pinentry-curses; do command -v "$tool" >/dev/null || exit 1; done' \
   || fail 'core tools are missing'
 
 run '
   . /usr/local/share/auto-code-env/versions.env
   test "$(rbw --version | awk "{print \$2}")" = "$RBW_VERSION"
+  test "$XDG_RUNTIME_DIR" = /run/user/1000
+  test "$SSH_AUTH_SOCK" = /run/user/1000/rbw/ssh-agent-socket
   ssh -G github.com 2>/dev/null | grep -qx "forwardagent no"
   ssh -G github.com 2>/dev/null | grep -qx "hashknownhosts yes"
   ssh -G github.com 2>/dev/null | grep -qx "stricthostkeychecking accept-new"
   ! grep -R -l -- "BEGIN OPENSSH PRIVATE KEY" /home/pilot /opt/dotfiles >/dev/null 2>&1
-  test "$(rbw-ssh-shell 2>&1 || true)" = "usage: rbw-ssh-shell <item selector> [command ...]"
   test "$(AUTO_CODE_SSH_KEY_FILE=/missing ssh-secret-run 2>&1 || true)" = "ssh-secret-run: key not found: /missing"
 ' || fail 'rbw or hardened SSH client contract is broken'
 
@@ -41,24 +42,41 @@ run '
   trap "rm -rf \"$tmp\"" EXIT
   ssh-keygen -q -t ed25519 -N "" -f "$tmp/key"
   AUTO_CODE_SSH_KEY_FILE="$tmp/key" ssh-secret-run ssh-add -l | grep -q ED25519
-  mkdir "$tmp/bin"
-  cat > "$tmp/bin/rbw" <<"EOF"
-#!/bin/sh
-case "$1" in
-  unlock) exit 0 ;;
-  get) test "${RBW_FAIL:-0}" != 1 || exit 1; cat "$RBW_TEST_KEY" ;;
-  lock) exit 0 ;;
-  *) exit 2 ;;
-esac
-EOF
-  chmod 0755 "$tmp/bin/rbw"
-  PATH="$tmp/bin:$PATH" RBW_TEST_KEY="$tmp/key" rbw-ssh-shell test-item ssh-add -l | grep -q ED25519
   printf bad > "$tmp/bad-key"
   if AUTO_CODE_SSH_KEY_FILE="$tmp/bad-key" ssh-secret-run touch "$tmp/secret-payload" >/dev/null 2>&1; then exit 1; fi
   test ! -e "$tmp/secret-payload"
-  if PATH="$tmp/bin:$PATH" RBW_TEST_KEY="$tmp/key" RBW_FAIL=1 rbw-ssh-shell test-item touch "$tmp/rbw-payload" >/dev/null 2>&1; then exit 1; fi
-  test ! -e "$tmp/rbw-payload"
-' || fail 'explicit SSH secret or rbw shell failed to create an isolated agent'
+' || fail 'explicit SSH secret failed to create an isolated agent'
+
+run '
+  set -eu
+  test ! -e /etc/ssh/ssh_host_ed25519_key
+  tmp=$(mktemp -d)
+  trap "auto-code-sshd stop; rm -rf \"$tmp\"" EXIT
+  ssh-keygen -q -t ed25519 -N "" -f "$tmp/client"
+  AUTO_CODE_AUTHORIZED_KEYS="$(cat "$tmp/client.pub")" auto-code-sshd start
+  auto-code-sshd start
+  sudo sshd -T | grep -qx "permitrootlogin no"
+  sudo sshd -T | grep -qx "passwordauthentication no"
+  sudo sshd -T | grep -qx "kbdinteractiveauthentication no"
+  sudo sshd -T | grep -qx "authenticationmethods publickey"
+  sudo sshd -T | grep -qx "allowusers pilot"
+  sudo test -s /var/lib/auto-code-env/sshd/ssh_host_ed25519_key
+  test "$(sudo stat -c %a /var/lib/auto-code-env/sshd/ssh_host_ed25519_key)" = 600
+  ssh-keyscan -q -p 22 127.0.0.1 > "$tmp/known_hosts"
+  ssh -p 22 -i "$tmp/client" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="$tmp/known_hosts" pilot@127.0.0.1 \
+    "test \"\$(id -u)\" = 1000 &&
+     test \"\$XDG_RUNTIME_DIR\" = /run/user/1000 &&
+     test \"\$SSH_AUTH_SOCK\" = /run/user/1000/rbw/ssh-agent-socket &&
+     command -v go rbw omni >/dev/null"
+
+  auto-code-sshd stop
+  sudo rm -f /home/pilot/.ssh/authorized_keys
+  printf %s "$(cat "$tmp/client.pub")" > "$tmp/authorized_keys"
+  AUTO_CODE_AUTHORIZED_KEYS_FILE="$tmp/authorized_keys" auto-code-sshd start
+  ssh -p 22 -i "$tmp/client" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="$tmp/known_hosts" pilot@127.0.0.1 true
+' || fail 'public-key SSH server contract or real login failed'
 
 run 'for tool in go node python3 uv pnpm bun claude codex herdr; do command -v "$tool" >/dev/null || exit 1; done' \
   || fail 'full language and development toolchain is incomplete'

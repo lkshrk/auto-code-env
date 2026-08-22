@@ -3,7 +3,7 @@
 ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
 
 FROM scratch AS runtime-files
-COPY --chmod=0755 bin/auto-code-env-dots bin/auto-code-entrypoint bin/docker bin/pnpm bin/pnpx bin/rbw-ssh-shell bin/ssh-secret-run /usr/local/bin/
+COPY --chmod=0755 bin/auto-code-env-dots bin/auto-code-entrypoint bin/auto-code-sshd bin/docker bin/pnpm bin/pnpx bin/ssh-secret-run /usr/local/bin/
 
 FROM ${DEBIAN_IMAGE} AS base
 
@@ -190,18 +190,24 @@ ARG CLAUDE_CODE_VERSION=2.1.239
 ARG CODEX_VERSION=0.149.0
 ARG HERDR_VERSION=0.8.2
 ENV HOME=/home/pilot \
+    XDG_RUNTIME_DIR=/run/user/1000 \
+    SSH_AUTH_SOCK=/run/user/1000/rbw/ssh-agent-socket \
     PATH=/home/pilot/.local/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN sudo apt-get update \
- && sudo apt-get install -y --no-install-recommends pinentry-curses \
+ && sudo apt-get install -y --no-install-recommends openssh-server pinentry-curses \
+ && sudo rm -f /etc/ssh/ssh_host_* \
  && sudo rm -rf /var/lib/apt/lists/* \
- && sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker
+ && sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker \
+ && sudo usermod --password '*' pilot
 COPY --from=rbw-source /home/pilot/.cargo/bin/rbw /home/pilot/.cargo/bin/rbw-agent /usr/local/bin/
 COPY --from=runtime-files /usr/local/bin/ /usr/local/bin/
 COPY --chmod=0644 config/ssh_config /etc/ssh/ssh_config.d/99-auto-code-env.conf
+COPY --chmod=0644 config/sshd_config /etc/ssh/sshd_config.d/99-auto-code-env.conf
 RUN rbw_version="$(rbw --version | awk '{print $2}')" \
  && printf '%s\n' "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}" "CODEX_VERSION=${CODEX_VERSION}" "HERDR_VERSION=${HERDR_VERSION}" "RBW_VERSION=${rbw_version}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
  && sudo chown -R pilot:pilot /home/pilot
 WORKDIR /home/pilot
+EXPOSE 22
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
