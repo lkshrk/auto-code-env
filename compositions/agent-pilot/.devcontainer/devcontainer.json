@@ -1,0 +1,10 @@
+{
+  "name": "auto-code-env agent-pilot",
+  "image": "ghcr.io/lkshrk/auto-code-env:agent-pilot-latest",
+  "containerUser": "pilot",
+  "remoteUser": "pilot",
+  "updateRemoteUserUID": false,
+  "mounts": [
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+  ]
+}

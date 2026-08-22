@@ -1,84 +1,69 @@
----
-# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: validate
 
 on:
-  push:
-    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  containerfile:
-    name: Containerfile syntax
+  check:
+    name: Check Docker and shell files
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/setup-buildx-action@v4
 
-      - name: docker build --check
-        run: docker build --check -f image/Containerfile image
-
-  coder-templates:
-    name: Coder templates
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Terraform
+      - name: Check Dockerfile
         run: |
-          set -euo pipefail
-          TERRAFORM_VERSION="1.15.5"
-          TERRAFORM_ASSET="terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
-          curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/${TERRAFORM_ASSET}" -o /tmp/terraform.zip
-          curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS" -o /tmp/terraform.SHA256SUMS
-          TERRAFORM_SHA256=$(awk -v f="$TERRAFORM_ASSET" '$2 == f { print $1; exit }' /tmp/terraform.SHA256SUMS)
-          echo "$TERRAFORM_SHA256  /tmp/terraform.zip" | sha256sum -c -
-          unzip -q /tmp/terraform.zip -d /tmp/terraform
-          sudo install /tmp/terraform/terraform /usr/local/bin/terraform
+          docker build --check --platform linux/amd64 --target dev-full .
+          docker build --check --platform linux/arm64 --target agent-pilot .
 
-      - name: Validate every template
+      - name: Check Bake definition
+        run: docker buildx bake --print dev-full agent-pilot
+
+      - name: Check shell syntax
         run: |
-          set -euo pipefail
-          TEMPLATE_DIR="coder/templates"
-          for dir in "$TEMPLATE_DIR"/*/; do
-            name=$(basename "$dir")
-            echo "Validating template: $name"
-            tmpdir=$(mktemp -d)
-            cp "$TEMPLATE_DIR/common.tf" "$tmpdir/common.tf"
-            cp "$dir"*.tf "$tmpdir/"
-            terraform -chdir="$tmpdir" fmt -check -diff
-            terraform -chdir="$tmpdir" init -backend=false -input=false
-            terraform -chdir="$tmpdir" validate
-            rm -rf "$tmpdir"
-          done
+          find . -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+          sh -n bin/*
+          bash -n pilot/bin/gh pilot/bin/pilot-ask pilot/bin/pilot-entrypoint pilot/bin/pilot-notify pilot/bin/pilot-retry
+          python3 -c 'import ast; ast.parse(open("pilot/bin/pr-summary.py").read())'
 
-  yaml-lint:
-    name: YAML lint
-    runs-on: ubuntu-latest
+      - name: Check Pilot shims
+        run: pilot/test/shim_test.sh
+
+  smoke:
+    name: Build and smoke ${{ matrix.target }} (${{ matrix.platform }})
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: dev-full, platform: linux/amd64, arch: amd64, nested: 1, runner: ubuntu-latest }
+          - { target: dev-full, platform: linux/arm64, arch: arm64, nested: 0, runner: ubuntu-24.04-arm }
+          - { target: agent-pilot, platform: linux/amd64, arch: amd64, nested: 0, runner: ubuntu-latest }
+          - { target: agent-pilot, platform: linux/arm64, arch: arm64, nested: 1, runner: ubuntu-24.04-arm }
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: yamllint
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          pipx install yamllint
-          yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, truthy: {check-keys: false}}}" \
-            .github/workflows
+          docker buildx bake --load \
+            --set '${{ matrix.target }}.platform=${{ matrix.platform }}' \
+            --set '${{ matrix.target }}.tags=auto-code-env-ci:${{ matrix.target }}-${{ matrix.arch }}' \
+            --set '${{ matrix.target }}.secrets=id=GITHUB_TOKEN,env=GITHUB_TOKEN' \
+            --set '${{ matrix.target }}.cache-from=type=gha,scope=${{ matrix.target }}-${{ matrix.arch }}' \
+            --set '${{ matrix.target }}.cache-to=type=gha,mode=max,scope=${{ matrix.target }}-${{ matrix.arch }}' \
+            '${{ matrix.target }}'
 
-  verify-script:
-    name: verify.sh
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Run verify script
-        run: bash scripts/verify.sh
+      - name: Smoke test
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          NESTED_DOCKER: ${{ matrix.nested }}
+        run: test/smoke.sh '${{ matrix.target }}' 'auto-code-env-ci:${{ matrix.target }}-${{ matrix.arch }}'

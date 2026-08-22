@@ -1,89 +1,131 @@
-# hermes-hq
+# auto-code-env
 
-A central control hub for agent based software development.
+Linux development images for a complete local toolbox and the smaller Pilot
+agent runtime. The images deliberately install the tool groups already owned by
+the dotfiles repository; this repository does not duplicate their recipes.
 
-`hermes-hq` owns the Hermes control-hub image, documentation, operational
-policy, and Coder template definitions for a persistent central Hermes
-control hub with Coder-provisioned isolated project workspaces running in
-Kubernetes.
+## Images
 
-## Scope
+| Bake target | Intended use |
+| --- | --- |
+| `dev-full` | General-purpose development environment. |
+| `agent-pilot` | Pilot-compatible agent environment. |
 
-- **This repo** — how Hermes and the personal platform should operate:
-  image build, non-secret configuration, skills, Coder template
-  definitions, and docs. Publishes the versioned control-hub image to
-  GHCR; does **not** own any Kubernetes/Helm manifests.
-- **`lkshrk/dotfiles`** — persistent-home bootstrap and dotfile
-  provisioning (`setup.sh`, `setup-hermes.sh`, `setup-coder.sh`,
-  `setup-workspace.sh`). The control-hub image invokes this repo's
-  bootstrap scripts rather than duplicating them here.
-- **`lkshrk/h-cloud`** — what is actually deployed in the cluster
-  (GitOps source of truth, reconciled by Flux): the HelmRelease/
-  Kustomization, SOPS secrets, and every other manifest for the
-  hermes-hq StatefulSet. References a released/pinned hub image tag
-  published by this repo's `release`/`build-image` workflows. Owned
-  and maintained directly in h-cloud, not here.
-- **Project repositories** — how each individual project is built;
-  own their own `AGENTS.md`, toolchain, and test/build instructions.
+Both targets publish multi-architecture manifests for `linux/amd64` and
+`linux/arm64`.
 
-Secrets never live in this repository. Only secret references (SOPS
-pointers, credential names) are documented here (`docs/secrets-checklist.md`).
+## Local use
 
-## Layout
+Build either target with Bake:
 
-```text
-hermes-hq/
-├── README.md
-├── docs/
-│   ├── architecture.md
-│   ├── threat-model.md
-│   ├── operations-runbook.md
-│   ├── backup-and-restore.md
-│   ├── workspace-dispatch.md
-│   ├── secrets-checklist.md
-│   └── decisions/               # ADRs
-├── image/
-│   ├── Containerfile
-│   ├── .env.example              # reference for the h-cloud SOPS secret's keys
-│   └── scripts/
-├── coder/
-│   ├── templates/                # hermes-worker-{js,py,go} + common.tf
-│   └── README.md
-├── scripts/
-│   └── verify.sh
-└── .github/workflows/
-    ├── validate.yaml             # PR/push: Containerfile + coder template checks
-    ├── coder-templates.yaml      # push Coder templates to the live deployment
-    └── release.yaml              # tag, build+push GHCR image, trigger h-cloud deploy
+```sh
+export GITHUB_TOKEN="$(gh auth token)"
+export PLATFORM="${PLATFORM:-linux/amd64}"
+docker buildx bake --load \
+  --set dev-full.platform="$PLATFORM" \
+  --set dev-full.secrets=id=GITHUB_TOKEN,env=GITHUB_TOKEN \
+  --set dev-full.tags=auto-code-env:dev-full dev-full
+docker buildx bake --load \
+  --set agent-pilot.platform="$PLATFORM" \
+  --set agent-pilot.secrets=id=GITHUB_TOKEN,env=GITHUB_TOKEN \
+  --set agent-pilot.tags=auto-code-env:agent-pilot agent-pilot
 ```
 
-## Release flow
+`--load` loads one platform into the local Docker daemon. For a published
+multi-architecture image, use `--push` and set
+`<target>.platform=linux/amd64,linux/arm64`.
 
-1. Merge to `main` (via PR).
-2. `release.yaml` (single workflow — a tag created with the default
-   `GITHUB_TOKEN` cannot itself trigger another workflow via
-   `push: tags:`, GitHub's anti-recursion safeguard, so tagging and
-   building are chained jobs here rather than separate files):
-   1. Cuts a calendar-versioned tag (`YYYY.M.PATCH`, same scheme as
-      h-cloud's own `tag.yaml`).
-   2. Builds `image/Containerfile` and pushes
-      `ghcr.io/lkshrk/hermes-hq:<tag>` (+ `:latest`) to GHCR.
-   3. Fires a `repository_dispatch` `image-update` event at
-      `lkshrk/h-cloud` with
-      `{app: hermes-hq, image: ghcr.io/lkshrk/hermes-hq, tag: <tag>}`
-      — skipped with a warning (not a failed run) if the
-      `H_CLOUD_DISPATCH_TOKEN` secret isn't set yet.
-3. h-cloud's own `update-image.yml` (already in production, same
-   mechanism other apps use) finds every manifest pinning that image,
-   bumps the tag, commits, and pushes. Flux reconciles the new tag from
-   there — no manual deploy step.
+Run either loaded image:
 
-## Status
+```sh
+docker run --rm -it auto-code-env:dev-full
+docker run --rm -it --entrypoint zsh auto-code-env:agent-pilot
+```
 
-Image, Coder templates, and CI (validate/release/build/deploy-trigger)
-are in place. `H_CLOUD_DISPATCH_TOKEN` (a PAT/GitHub App token with
-`contents:write` on `lkshrk/h-cloud`) does not exist yet, so step 3
-above is currently a no-op warning — tags build and publish real
-images regardless. h-cloud-side HelmRelease/Kustomization/SOPS wiring
-is tracked and owned in `lkshrk/h-cloud` directly.
+Run the smoke check against an image tag:
 
+```sh
+PLATFORM=linux/amd64 NESTED_DOCKER=1 test/smoke.sh dev-full auto-code-env:dev-full
+```
+
+On Docker Desktop, set `DOCKER_SOCKET` to the Unix socket reported by
+`docker context inspect --format '{{(index .Endpoints "docker").Host}}'`.
+
+## Tooling and dotfiles
+
+The Dockerfile invokes `omni tools install --group … --force` for explicit
+groups. Both images share `prereqs`, `core`, `shell`, `dev`, and
+`test-tooling`. `dev-full` adds `dev-tooling`, `go`, `python`, `ts`, and
+`infra`, then installs Claude Code, Codex, and Herdr individually.
+`agent-pilot` adds `go`, `python`, and `ts`, then installs Claude Code and
+Lazygit. The group definitions and
+tool-version choices live in
+[`lkshrk/dotfiles`](https://github.com/lkshrk/dotfiles), so updating a tool
+means updating dotfiles then pinning its commit here. Omni group selection is
+intentional: image targets do not depend on host detection or synthetic Omni
+hosts.
+
+Dotfiles sync runs only from an interactive container startup, once per home
+directory. It syncs an explicit universal dot list, not a workstation host
+profile. User state
+remains under the container user's home directory and should be mounted or
+persisted by the caller when needed. Baked tools live under
+`/opt/auto-code-env`, so mounting `/home/pilot` never hides the toolchain.
+
+## Pilot contract
+
+`agent-pilot` runs as the shared `pilot` persona (UID/GID 1000), has a writable
+home at `/home/pilot`, and keeps persistent runtime state there. Pilot adapters are under
+`/opt/pilot/bin`; the `gh` shim delegates to `REAL_GH=/usr/bin/gh`. Consumers
+must mount project work at the working directory and provide credentials at
+runtime (for example, by a secret mount); credentials are never built into an
+image layer. The image supplies the environment Pilot needs, not
+project-specific dependencies or source.
+
+## Docker from inside an image
+
+The images contain the Docker CLI, Buildx, and Compose plugins, not a Docker
+daemon. For local development, mount the host socket:
+
+```sh
+docker_socket=$(docker context inspect --format '{{(index .Endpoints "docker").Host}}')
+docker_socket=${docker_socket#unix://}
+docker run --rm -it \
+  -v "$docker_socket:/var/run/docker.sock" \
+  auto-code-env:dev-full docker info
+```
+
+The included Dev Container compositions mount `/var/run/docker.sock`. Docker
+Desktop users must enable its default socket (or point that host path at the
+socket reported above). The image's Docker wrapper uses the existing
+passwordless `sudo` only when the mounted Unix socket rejects UID 1000; TCP
+and already-accessible sockets run without elevation.
+
+Socket access effectively grants root-equivalent control of the host Docker
+daemon; use it only for trusted containers.
+
+Kubernetes has no host Docker socket. Run a privileged DinD sidecar with an
+isolated `emptyDir` Docker data directory and set
+`DOCKER_HOST=tcp://localhost:2375`; see
+[`examples/kubernetes/agent-pilot-dind.yaml`](examples/kubernetes/agent-pilot-dind.yaml).
+The sidecar binds its unauthenticated API to the Pod's loopback interface only.
+
+## Image size
+
+Build dependencies use BuildKit cache mounts where possible. The resulting
+images retain installed toolchains under `/opt/auto-code-env`, but package,
+language, and installer caches are excluded from final layers. Docker is
+client-only in the images; DinD storage belongs to the runtime volume.
+
+## Publishing and deployment boundary
+
+Pull requests run Dockerfile/Bake/shell checks and build plus smoke-test both
+targets. Pushes to `main` publish `<target>-sha-<commit>` and
+`<target>-latest`; version tags publish `<target>-sha-<commit>` and the
+matching `<target>-<release>` tag. Publishing happens only after both targets
+pass smoke tests on both architectures. The GitHub token is supplied to BuildKit as a secret, never as a
+Docker build argument.
+
+[`lkshrk/h-cloud`](https://github.com/lkshrk/h-cloud) owns deployment and image
+promotion into the cluster. This repository publishes images only; changing
+which image a workload runs is an h-cloud migration.
