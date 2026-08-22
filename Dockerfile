@@ -171,11 +171,12 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && sudo install -m 0755 /tmp/herdr /usr/local/bin/herdr && rm /tmp/herdr \
  && sudo rm -rf /var/lib/apt/lists/*
 
-FROM dev-tools AS dev-full
+FROM dev-tools AS full-runtime
 ARG CLAUDE_CODE_VERSION=2.1.239
 ARG CODEX_VERSION=0.149.0
 ARG HERDR_VERSION=0.8.2
-ENV HOME=/home/pilot
+ENV HOME=/home/pilot \
+    PATH=/home/pilot/.local/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker
 COPY --from=runtime-files /usr/local/bin/ /usr/local/bin/
 RUN printf '%s\n' "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}" "CODEX_VERSION=${CODEX_VERSION}" "HERDR_VERSION=${HERDR_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
@@ -184,22 +185,18 @@ WORKDIR /home/pilot
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
-FROM claude-tools AS agent-tools
+FROM full-runtime AS dev-full
+
+FROM base AS lazygit-source
+ARG TARGETARCH
 ARG LAZYGIT_VERSION=0.64.1
 ARG LAZYGIT_AMD64_SHA256=f8ea237c41f194cd799b48505518bfdaae4edf5a2ad6bd3d898e939785ee4532
 ARG LAZYGIT_ARM64_SHA256=8b7ca3b344e60340ad1f89f29b9868ee39bcaba5bb92ee818bbe65476bb8b6e7
-RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
-    --mount=type=cache,target=/opt/auto-code-env/.npm,uid=1000,gid=1000 \
-    --mount=type=cache,target=/opt/auto-code-env/.nvm/.cache,uid=1000,gid=1000 \
-    --mount=type=cache,target=/opt/auto-code-env/.bun/install/cache,uid=1000,gid=1000 \
-    --mount=type=secret,id=GITHUB_TOKEN,required=false,uid=1000 \
-    if [ -f /run/secrets/GITHUB_TOKEN ]; then export GITHUB_TOKEN="$(cat /run/secrets/GITHUB_TOKEN)"; fi \
- && case "$TARGETARCH" in amd64) lazygit_arch=x86_64; lazygit_sha="$LAZYGIT_AMD64_SHA256" ;; arm64) lazygit_arch=arm64; lazygit_sha="$LAZYGIT_ARM64_SHA256" ;; *) exit 1 ;; esac \
+RUN case "$TARGETARCH" in amd64) lazygit_arch=x86_64; lazygit_sha="$LAZYGIT_AMD64_SHA256" ;; arm64) lazygit_arch=arm64; lazygit_sha="$LAZYGIT_ARM64_SHA256" ;; *) exit 1 ;; esac \
  && curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_linux_${lazygit_arch}.tar.gz" -o /tmp/lazygit.tar.gz \
  && echo "$lazygit_sha  /tmp/lazygit.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/lazygit.tar.gz -C /tmp lazygit \
- && sudo install -m 0755 /tmp/lazygit /usr/local/bin/lazygit && rm /tmp/lazygit /tmp/lazygit.tar.gz \
- && sudo rm -rf /var/lib/apt/lists/*
+ && install -m 0755 /tmp/lazygit /usr/local/bin/lazygit && rm /tmp/lazygit /tmp/lazygit.tar.gz
 
 FROM base AS pilot-source
 ARG TARGETARCH
@@ -210,19 +207,39 @@ RUN case "$TARGETARCH" in amd64) pilot_arch=amd64; pilot_sha="$PILOT_AMD64_SHA25
  && curl -fsSL "https://github.com/lkshrk/pilot/releases/download/v${PILOT_VERSION}/pilot-linux-${pilot_arch}.tar.gz" -o /tmp/pilot.tar.gz \
  && echo "$pilot_sha  /tmp/pilot.tar.gz" | sha256sum -c - && tar -xzf /tmp/pilot.tar.gz -C /usr/local/bin pilot && chmod 0755 /usr/local/bin/pilot && rm /tmp/pilot.tar.gz
 
-FROM agent-tools AS agent-pilot
-ARG PILOT_VERSION=2.264.0-fork.1
-ARG CLAUDE_CODE_VERSION=2.1.239
-ARG LAZYGIT_VERSION=0.64.1
-ENV HOME=/home/pilot PATH=/opt/pilot/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin REAL_GH=/usr/bin/gh
-USER root
+FROM scratch AS pilot-files
 COPY --from=pilot-source /usr/local/bin/pilot /usr/local/bin/pilot
-RUN install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker
-COPY --from=runtime-files /usr/local/bin/ /usr/local/bin/
-COPY --chown=pilot:pilot pilot/bin/ /opt/pilot/bin/
-RUN chmod 0755 /opt/pilot/bin/* \
- && printf '%s\n' "PILOT_VERSION=${PILOT_VERSION}" "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}" "LAZYGIT_VERSION=${LAZYGIT_VERSION}" >> /usr/local/share/auto-code-env/versions.env \
- && chown -R pilot:pilot /home/pilot
-USER pilot
-WORKDIR /home/pilot
-ENTRYPOINT ["/opt/pilot/bin/pilot-entrypoint"]
+COPY --from=lazygit-source /usr/local/bin/lazygit /usr/local/bin/lazygit
+COPY --chmod=0755 pilot/bin/ /opt/pilot/bin/
+
+FROM full-runtime AS dev-pilot
+ARG PILOT_VERSION=2.264.0-fork.1
+ARG LAZYGIT_VERSION=0.64.1
+ENV PATH=/opt/pilot/bin:${PATH} REAL_GH=/usr/bin/gh
+COPY --from=pilot-files / /
+RUN printf '%s\n' "PILOT_VERSION=${PILOT_VERSION}" "LAZYGIT_VERSION=${LAZYGIT_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
+
+FROM full-runtime AS hermes-runtime
+ARG HERMES_VERSION=0.18.2
+ARG HERMES_REF=v2026.7.7.2
+ARG HERMES_COMMIT=9de9c25f620ff7f1ce0fd5457d596052d5159596
+ARG HERMES_INSTALLER_SHA256=a93c65b01ea392e179cf872e182bd01a2b65c0c15f17833e9f9569033ef10e07
+RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
+    curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_REF}/scripts/install.sh" -o /tmp/hermes-install.sh \
+ && echo "$HERMES_INSTALLER_SHA256  /tmp/hermes-install.sh" | sha256sum -c - \
+ && HOME=/opt/auto-code-env HERMES_HOME=/opt/auto-code-env/.hermes bash /tmp/hermes-install.sh \
+      --branch "$HERMES_REF" --commit "$HERMES_COMMIT" --hermes-home /opt/auto-code-env/.hermes --skip-setup --non-interactive \
+ && rm /tmp/hermes-install.sh \
+ && test "$(git -C /opt/auto-code-env/.hermes/hermes-agent rev-parse HEAD)" = "$HERMES_COMMIT" \
+ && test "$(hermes --version 2>/dev/null | grep -Eo 'v?[0-9]+(\.[0-9]+){2,3}' | head -1 | sed 's/^v//')" = "$HERMES_VERSION" \
+ && printf '%s\n' "HERMES_VERSION=${HERMES_VERSION}" "HERMES_REF=${HERMES_REF}" "HERMES_COMMIT=${HERMES_COMMIT}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
+ENV HERMES_HOME=/home/pilot/.hermes
+
+FROM hermes-runtime AS dev-hermes
+
+FROM hermes-runtime AS dev-both
+ARG PILOT_VERSION=2.264.0-fork.1
+ARG LAZYGIT_VERSION=0.64.1
+ENV PATH=/opt/pilot/bin:${PATH} REAL_GH=/usr/bin/gh
+COPY --from=pilot-files / /
+RUN printf '%s\n' "PILOT_VERSION=${PILOT_VERSION}" "LAZYGIT_VERSION=${LAZYGIT_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null

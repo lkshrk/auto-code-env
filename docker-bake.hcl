@@ -18,6 +18,10 @@ variable "PNPM_VERSION" { default = "11.22.0" }
 variable "CLAUDE_CODE_VERSION" { default = "2.1.239" }
 variable "CODEX_VERSION" { default = "0.149.0" }
 variable "HERDR_VERSION" { default = "0.8.2" }
+variable "HERMES_VERSION" { default = "0.18.2" }
+variable "HERMES_REF" { default = "v2026.7.7.2" }
+variable "HERMES_COMMIT" { default = "9de9c25f620ff7f1ce0fd5457d596052d5159596" }
+variable "HERMES_INSTALLER_SHA256" { default = "a93c65b01ea392e179cf872e182bd01a2b65c0c15f17833e9f9569033ef10e07" }
 variable "LAZYGIT_VERSION" { default = "0.64.1" }
 variable "PILOT_VERSION" { default = "2.264.0-fork.1" }
 variable "PILOT_AMD64_SHA256" { default = "501709602b6620cef58b29d32fb38c988af782623615a25a554081b2984b3e69" }
@@ -27,6 +31,7 @@ target "common" {
   context = "."
   dockerfile = "Dockerfile"
   platforms = ["linux/amd64", "linux/arm64"]
+  secret = ["id=GITHUB_TOKEN,env=GITHUB_TOKEN"]
   args = {
     DEBIAN_IMAGE = DEBIAN_IMAGE
     DOTFILES_REF = DOTFILES_REF
@@ -47,6 +52,10 @@ target "common" {
     CLAUDE_CODE_VERSION = CLAUDE_CODE_VERSION
     CODEX_VERSION = CODEX_VERSION
     HERDR_VERSION = HERDR_VERSION
+    HERMES_VERSION = HERMES_VERSION
+    HERMES_REF = HERMES_REF
+    HERMES_COMMIT = HERMES_COMMIT
+    HERMES_INSTALLER_SHA256 = HERMES_INSTALLER_SHA256
     LAZYGIT_VERSION = LAZYGIT_VERSION
     PILOT_VERSION = PILOT_VERSION
     PILOT_AMD64_SHA256 = PILOT_AMD64_SHA256
@@ -60,10 +69,22 @@ target "dev-full" {
   tags = ["${REGISTRY}:dev-full"]
 }
 
-target "agent-pilot" {
+target "dev-pilot" {
   inherits = ["common"]
-  target = "agent-pilot"
-  tags = ["${REGISTRY}:agent-pilot"]
+  target = "dev-pilot"
+  tags = ["${REGISTRY}:dev-pilot"]
 }
 
-group "default" { targets = ["dev-full", "agent-pilot"] }
+target "dev-hermes" {
+  inherits = ["common"]
+  target = "dev-hermes"
+  tags = ["${REGISTRY}:dev-hermes"]
+}
+
+target "dev-both" {
+  inherits = ["common"]
+  target = "dev-both"
+  tags = ["${REGISTRY}:dev-both"]
+}
+
+group "default" { targets = ["dev-full", "dev-pilot", "dev-hermes", "dev-both"] }

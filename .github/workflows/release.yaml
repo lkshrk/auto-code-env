@@ -17,35 +17,19 @@ env:
   IMAGE: ghcr.io/lkshrk/auto-code-env
 
 jobs:
-  check:
-    name: Check Docker, shell, and Pilot adapters
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v4
-      - run: |
-          docker build --check --platform linux/amd64 --target dev-full .
-          docker build --check --platform linux/arm64 --target agent-pilot .
-      - run: docker buildx bake --print dev-full agent-pilot
-      - run: |
-          find . -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
-          sh -n bin/*
-          bash -n pilot/bin/gh pilot/bin/pilot-ask pilot/bin/pilot-entrypoint pilot/bin/pilot-notify pilot/bin/pilot-retry
-          python3 -c 'import ast; ast.parse(open("pilot/bin/pr-summary.py").read())'
-          pilot/test/shim_test.sh
-
-  test:
-    name: Test ${{ matrix.target }} (${{ matrix.platform }})
-    needs: check
+  candidate:
+    name: Candidate ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { target: dev-full, platform: linux/amd64, arch: amd64, nested: 1, runner: ubuntu-latest }
-          - { target: dev-full, platform: linux/arm64, arch: arm64, nested: 0, runner: ubuntu-24.04-arm }
-          - { target: agent-pilot, platform: linux/amd64, arch: amd64, nested: 0, runner: ubuntu-latest }
-          - { target: agent-pilot, platform: linux/arm64, arch: arm64, nested: 1, runner: ubuntu-24.04-arm }
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
 
@@ -57,40 +41,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build candidate
+      - name: Build and smoke all candidates
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          TARGET: ${{ matrix.target }}
-          PLATFORM: ${{ matrix.platform }}
           ARCH: ${{ matrix.arch }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-        run: |
-          candidate="${IMAGE}:${TARGET}-candidate-${GITHUB_SHA}-${RUN_ID}-${RUN_ATTEMPT}-${ARCH}"
-          docker buildx bake --push \
-            --set "${TARGET}.platform=${PLATFORM}" \
-            --set "${TARGET}.tags=${candidate}" \
-            --set "${TARGET}.secrets=id=GITHUB_TOKEN,env=GITHUB_TOKEN" \
-            --set "${TARGET}.cache-from=type=gha,scope=${TARGET}-${ARCH}" \
-            --set "${TARGET}.cache-to=type=gha,mode=max,scope=${TARGET}-${ARCH}" \
-            "$TARGET"
-          docker pull --platform "$PLATFORM" "$candidate"
-
-      - name: Smoke test
-        env:
           PLATFORM: ${{ matrix.platform }}
-          NESTED_DOCKER: ${{ matrix.nested }}
-          CANDIDATE: ${{ env.IMAGE }}:${{ matrix.target }}-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
-        run: test/smoke.sh '${{ matrix.target }}' "$CANDIDATE"
+          RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for target in dev-full dev-pilot dev-hermes dev-both; do
+            image="${IMAGE}:${target}-candidate-${RUN_ID}-${ARCH}"
+            docker buildx bake --push \
+              --set "${target}.platform=${PLATFORM}" \
+              --set "${target}.tags=${image}" \
+              --set "${target}.cache-from=type=gha,scope=full-${ARCH}" \
+              --set "${target}.cache-to=type=gha,mode=max,scope=full-${ARCH}" \
+              "$target"
+            docker pull --platform "$PLATFORM" "$image"
+            nested=0
+            [ "$target" != dev-both ] || nested=1
+            PLATFORM="$PLATFORM" NESTED_DOCKER="$nested" test/smoke.sh "$target" "$image"
+          done
 
-  publish:
-    name: Publish ${{ matrix.target }}
-    needs: test
+  promote:
+    name: Promote ${{ matrix.target }}
+    needs: candidate
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [dev-full, agent-pilot]
+        target: [dev-full, dev-pilot, dev-hermes, dev-both]
     steps:
       - uses: docker/setup-buildx-action@v4
 
@@ -100,33 +80,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set tags
-        id: tags
+      - name: Create release manifest
         env:
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
-          SHA: ${{ github.sha }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          short_sha=${SHA::12}
-          tags="${IMAGE}:${TARGET}-sha-${short_sha}"
-          if [ "$REF_TYPE" = tag ]; then
-            tags="$tags,${IMAGE}:${TARGET}-${REF_NAME}"
-          else
-            tags="$tags,${IMAGE}:${TARGET}-latest"
-          fi
-          echo "tags=$tags" >> "$GITHUB_OUTPUT"
-
-      - name: Assemble tested manifest
-        env:
-          TAGS: ${{ steps.tags.outputs.tags }}
-          TARGET: ${{ matrix.target }}
-          SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SHA: ${{ github.sha }}
+          TARGET: ${{ matrix.target }}
         run: |
-          sources="${IMAGE}:${TARGET}-candidate-${SHA}-${RUN_ID}-${RUN_ATTEMPT}-amd64 ${IMAGE}:${TARGET}-candidate-${SHA}-${RUN_ID}-${RUN_ATTEMPT}-arm64"
-          IFS=, read -r -a tags <<< "$TAGS"
-          for tag in "${tags[@]}"; do
-            docker buildx imagetools create --tag "$tag" $sources
-          done
+          set -euo pipefail
+          if [ "$REF_TYPE" = tag ]; then
+            tags=(--tag "${IMAGE}:${TARGET}-${REF_NAME}")
+          else
+            tags=(--tag "${IMAGE}:${TARGET}-sha-${SHA::12}" --tag "${IMAGE}:${TARGET}-latest")
+          fi
+          docker buildx imagetools create "${tags[@]}" \
+            "${IMAGE}:${TARGET}-candidate-${RUN_ID}-amd64" \
+            "${IMAGE}:${TARGET}-candidate-${RUN_ID}-arm64"

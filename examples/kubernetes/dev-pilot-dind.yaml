@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: agent-pilot-dind
+  name: dev-pilot-dind
 spec:
   containers:
-    - name: agent-pilot
-      image: ghcr.io/lkshrk/auto-code-env:agent-pilot-latest
+      - name: dev-pilot
+        image: ghcr.io/lkshrk/auto-code-env:dev-pilot-latest
       command: ["sleep", "infinity"]
       env:
         - name: DOCKER_HOST
