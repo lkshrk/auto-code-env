@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+host=${DOCKER_HOST:-unix:///var/run/docker.sock}
+case "$host" in
+  unix://*)
+    socket=${host#unix://}
+    if [ -S "$socket" ] && { [ ! -r "$socket" ] || [ ! -w "$socket" ]; }; then
+      uid=$(id -u)
+      gid=$(id -g)
+      groups=$(id -G | tr ' ' ',')
+      socket_gid=$(stat -c %g "$socket")
+      case ",$groups," in *",$socket_gid,"*) ;; *) groups="$groups,$socket_gid" ;; esac
+      exec sudo -E setpriv --reuid="$uid" --regid="$gid" --groups="$groups" /usr/local/libexec/docker "$@"
+    fi
+    ;;
+esac
+
+exec /usr/local/libexec/docker "$@"

@@ -1,0 +1,71 @@
+name: validate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check Docker and shell files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Check Dockerfile
+        run: |
+          docker build --check --platform linux/amd64 --target dev-full .
+          docker build --check --platform linux/arm64 --target agent-pilot .
+
+      - name: Check Bake definition
+        run: docker buildx bake --print dev-full agent-pilot
+
+      - name: Check shell syntax
+        run: |
+          find . -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+          sh -n bin/*
+          bash -n pilot/bin/gh pilot/bin/pilot-ask pilot/bin/pilot-entrypoint pilot/bin/pilot-notify pilot/bin/pilot-retry
+          python3 -c 'import ast; ast.parse(open("pilot/bin/pr-summary.py").read())'
+
+      - name: Check Pilot shims
+        run: pilot/test/shim_test.sh
+
+  smoke:
+    name: Build and smoke ${{ matrix.target }} (${{ matrix.platform }})
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: dev-full, platform: linux/amd64, arch: amd64, nested: 1 }
+          - { target: dev-full, platform: linux/arm64, arch: arm64, nested: 0 }
+          - { target: agent-pilot, platform: linux/amd64, arch: amd64, nested: 0 }
+          - { target: agent-pilot, platform: linux/arm64, arch: arm64, nested: 1 }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          docker buildx bake --load \
+            --set '${{ matrix.target }}.platform=${{ matrix.platform }}' \
+            --set '${{ matrix.target }}.tags=auto-code-env-ci:${{ matrix.target }}-${{ matrix.arch }}' \
+            --set '${{ matrix.target }}.secrets=id=GITHUB_TOKEN,env=GITHUB_TOKEN' \
+            --set '${{ matrix.target }}.cache-from=type=gha,scope=${{ matrix.target }}-${{ matrix.arch }}' \
+            --set '${{ matrix.target }}.cache-to=type=gha,mode=max,scope=${{ matrix.target }}-${{ matrix.arch }}' \
+            '${{ matrix.target }}'
+
+      - name: Smoke test
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          NESTED_DOCKER: ${{ matrix.nested }}
+        run: test/smoke.sh '${{ matrix.target }}' 'auto-code-env-ci:${{ matrix.target }}-${{ matrix.arch }}'

@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Re-arms a Linear issue for Pilot after it was answered.
+# Usage: pilot-retry ROU-123
+set -euo pipefail
+
+key="${LINEAR_API_KEY:?LINEAR_API_KEY is required}"
+DB="${PILOT_DB:-$HOME/.pilot/data/pilot.db}"
+ident="${1:-}"
+
+if [[ -z "$ident" ]]; then
+  echo "usage: pilot-retry <ROU-123>" >&2
+  exit 2
+fi
+
+python3 - "$key" "$ident" "$DB" <<'PY'
+import json, os, sqlite3, sys, urllib.parse, urllib.request
+
+key, ident, db = sys.argv[1], sys.argv[2], sys.argv[3]
+
+def gql(query, variables=None):
+    body = json.dumps({"query": query, "variables": variables or {}}).encode()
+    req = urllib.request.Request("https://api.linear.app/graphql", data=body,
+                                 headers={"Authorization": key, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        payload = json.load(r)
+    if payload.get("errors"):
+        raise RuntimeError(f"Linear GraphQL error: {payload['errors']}")
+    return payload
+
+db_uri = "file:" + urllib.parse.quote(os.path.abspath(db), safe="/") + "?mode=rw"
+try:
+    con = sqlite3.connect(db_uri, uri=True)
+except sqlite3.Error as exc:
+    sys.exit(f"pilot-retry: cannot open existing Pilot DB {db}: {exc}")
+
+if not con.execute(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='adapter_processed'"
+).fetchone():
+    con.close()
+    sys.exit(f"pilot-retry: {db} has no adapter_processed table")
+
+d = gql("query($id:String!){ issue(id:$id){ id identifier labels(first:50){ nodes { id name } } } }",
+        {"id": ident})
+issue = (d.get("data") or {}).get("issue")
+if not issue:
+    sys.exit(f"pilot-retry: {ident} not found: {d.get('errors')}")
+
+for label in issue["labels"]["nodes"]:
+    if label["name"] in ("pilot-in-progress", "pilot-done", "pilot-failed"):
+        result = gql(
+            "mutation($id:String!,$label:String!){ issueRemoveLabel(id:$id, labelId:$label){ success } }",
+            {"id": issue["id"], "label": label["id"]},
+        )
+        success = ((result.get("data") or {}).get("issueRemoveLabel") or {}).get("success")
+        if success is not True:
+            con.close()
+            sys.exit(f"pilot-retry: failed to remove label {label['name']}")
+        print(f"removed label {label['name']}")
+
+n = con.execute("DELETE FROM adapter_processed WHERE adapter='linear' AND issue_id=?",
+                (issue["id"],)).rowcount
+con.commit(); con.close()
+print(f"cleared {n} processed row(s) for {issue['identifier']}")
+print("re-dispatch happens on the next poll (30s) if the issue still carries llm-pilot")
+print()
+print("THE DAEMON MUST BE RESTARTED: kubectl -n pilot rollout restart deploy/<owner>")
+print("The poller loads the processed set into memory at startup and only clears entries")
+print("during orphan recovery, so a running daemon keeps ignoring this issue until restart.")
+PY

@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+state_dir="$HOME/.local/state/auto-code-env"
+lock_file="$state_dir/dots.lock"
+repo_dir="$HOME/dotfiles"
+# Keep container homes useful without selecting a machine-specific Omni host.
+# Override this when a persona needs a different, explicitly scoped dot set.
+dot_names="${AUTO_CODE_DOT_NAMES:-nvim omni tmux vim gh lazygit git zsh zshenv bashrc zshrc env nvm zprofile}"
+
+if { [ -t 0 ] || [ -t 1 ]; } && [ ! -e "$state_dir/dots.succeeded" ]; then
+  mkdir -p "$state_dir"
+  (
+    flock -n 9 || exit 0
+    if [ ! -e "$state_dir/dots.succeeded" ]; then
+      : > "$state_dir/dots.attempted"
+      if [ ! -d "$repo_dir/.git" ]; then
+        git clone --depth=1 --branch "$AUTO_CODE_DOTFILES_REF" \
+          "$AUTO_CODE_DOTFILES_REPO" "$repo_dir" || exit 0
+      fi
+      if unset OMNI_HOSTNAME; \
+         OMNI_CONFIG="$repo_dir/dotfiles/omni/.config/omni/settings.json" \
+         && export OMNI_CONFIG \
+         && omni -y settings set dots_repo "$repo_dir" \
+         && for dot_name in $dot_names; do omni -y dots sync --use-repo "$dot_name" || exit 1; done; then
+        : > "$state_dir/dots.succeeded"
+      fi
+    fi
+  ) 9>"$lock_file"
+fi

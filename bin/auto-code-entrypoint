@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+/usr/local/bin/auto-code-env-dots
+if [ -f "$HOME/.config/omni/settings.json" ]; then
+  export OMNI_CONFIG="$HOME/.config/omni/settings.json"
+else
+  export OMNI_CONFIG="${OMNI_CONFIG:-/opt/dotfiles/dotfiles/omni/.config/omni/settings.json}"
+fi
+exec "$@"
