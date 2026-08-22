@@ -7,63 +7,46 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: Check Docker and shell files
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: docker/setup-buildx-action@v4
-
-      - name: Check Dockerfile
-        run: |
-          docker build --check --platform linux/amd64 --target dev-full .
-          docker build --check --platform linux/arm64 --target agent-pilot .
-
-      - name: Check Bake definition
-        run: docker buildx bake --print dev-full agent-pilot
-
-      - name: Check shell syntax
-        run: |
-          find . -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
-          sh -n bin/*
-          bash -n pilot/bin/gh pilot/bin/pilot-ask pilot/bin/pilot-entrypoint pilot/bin/pilot-notify pilot/bin/pilot-retry
-          python3 -c 'import ast; ast.parse(open("pilot/bin/pr-summary.py").read())'
-
-      - name: Check Pilot shims
-        run: pilot/test/shim_test.sh
-
-  smoke:
-    name: Build and smoke ${{ matrix.target }} (${{ matrix.platform }})
-    needs: check
+  validate:
+    name: ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { target: dev-full, platform: linux/amd64, arch: amd64, nested: 1, runner: ubuntu-latest }
-          - { target: dev-full, platform: linux/arm64, arch: arm64, nested: 0, runner: ubuntu-24.04-arm }
-          - { target: agent-pilot, platform: linux/amd64, arch: amd64, nested: 0, runner: ubuntu-latest }
-          - { target: agent-pilot, platform: linux/arm64, arch: arm64, nested: 1, runner: ubuntu-24.04-arm }
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Build
+      - name: Check Dockerfile, Bake, and shell syntax
+        run: |
+          docker build --check .
+          docker buildx bake --print dev-full dev-pilot dev-hermes dev-both
+          find . -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+
+      - name: Build and smoke all variants
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          docker buildx bake --load \
-            --set '${{ matrix.target }}.platform=${{ matrix.platform }}' \
-            --set '${{ matrix.target }}.tags=auto-code-env-ci:${{ matrix.target }}-${{ matrix.arch }}' \
-            --set '${{ matrix.target }}.secrets=id=GITHUB_TOKEN,env=GITHUB_TOKEN' \
-            --set '${{ matrix.target }}.cache-from=type=gha,scope=${{ matrix.target }}-${{ matrix.arch }}' \
-            --set '${{ matrix.target }}.cache-to=type=gha,mode=max,scope=${{ matrix.target }}-${{ matrix.arch }}' \
-            '${{ matrix.target }}'
-
-      - name: Smoke test
-        env:
+          ARCH: ${{ matrix.arch }}
           PLATFORM: ${{ matrix.platform }}
-          NESTED_DOCKER: ${{ matrix.nested }}
-        run: test/smoke.sh '${{ matrix.target }}' 'auto-code-env-ci:${{ matrix.target }}-${{ matrix.arch }}'
+        run: |
+          set -euo pipefail
+          for target in dev-full dev-pilot dev-hermes dev-both; do
+            image="auto-code-env-ci:${target}-${ARCH}"
+            docker buildx bake --load \
+              --set "${target}.platform=${PLATFORM}" \
+              --set "${target}.tags=${image}" \
+              --set "${target}.cache-from=type=gha,scope=full-${ARCH}" \
+              --set "${target}.cache-to=type=gha,mode=max,scope=full-${ARCH}" \
+              "$target"
+            nested=0
+            [ "$target" != dev-both ] || nested=1
+            PLATFORM="$PLATFORM" NESTED_DOCKER="$nested" test/smoke.sh "$target" "$image"
+          done

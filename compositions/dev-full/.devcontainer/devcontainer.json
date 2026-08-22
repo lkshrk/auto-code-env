@@ -3,8 +3,5 @@
   "image": "ghcr.io/lkshrk/auto-code-env:dev-full-latest",
   "containerUser": "pilot",
   "remoteUser": "pilot",
-  "updateRemoteUserUID": false,
-  "mounts": [
-    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
-  ]
+  "updateRemoteUserUID": false
 }

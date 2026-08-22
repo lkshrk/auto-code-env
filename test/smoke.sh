@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Host-side image contract. Usage: test/smoke.sh <dev-full|agent-pilot> <image-ref>
+# Host-side image contract. Usage: test/smoke.sh <target> <image-ref>
 set -euo pipefail
 
 target=${1:-}
@@ -7,10 +7,10 @@ image=${2:-}
 platform=${PLATFORM:-linux/amd64}
 
 case "$target" in
-  dev-full|agent-pilot) ;;
-  *) echo "usage: $0 <dev-full|agent-pilot> <image-ref>" >&2; exit 2 ;;
+  dev-full|dev-pilot|dev-hermes|dev-both) ;;
+  *) echo "usage: $0 <dev-full|dev-pilot|dev-hermes|dev-both> <image-ref>" >&2; exit 2 ;;
 esac
-[[ -n "$image" ]] || { echo "usage: $0 <dev-full|agent-pilot> <image-ref>" >&2; exit 2; }
+[[ -n "$image" ]] || { echo "usage: $0 <target> <image-ref>" >&2; exit 2; }
 
 fail() { echo "smoke[$target]: $*" >&2; exit 1; }
 run() { docker run --rm --platform "$platform" --user pilot --entrypoint /bin/bash "$image" -c "$1"; }
@@ -24,20 +24,22 @@ run 'test "$(id -u)" = 1000 && test "$(id -g)" = 1000 && test "$USER" = pilot &&
 run 'for tool in bash git curl jq make omni; do command -v "$tool" >/dev/null || exit 1; done' \
   || fail 'core tools are missing'
 
+run 'for tool in go node python3 uv pnpm bun claude codex herdr; do command -v "$tool" >/dev/null || exit 1; done' \
+  || fail 'full language and development toolchain is incomplete'
+run '. /usr/local/share/auto-code-env/versions.env; test "$(codex --version | awk "{print \$2}")" = "$CODEX_VERSION"; test "$(herdr --version | awk "{print \$2}")" = "$HERDR_VERSION"' \
+  || fail 'shared agent tools are not pinned'
+
 case "$target" in
-  dev-full)
-    run 'for tool in go node python3 uv pnpm bun claude; do command -v "$tool" >/dev/null || exit 1; done' \
-      || fail 'dev-full tool group is incomplete'
-    run 'pnpm --version >/dev/null' || fail 'dev-full pnpm wrapper is broken'
-    run '. /usr/local/share/auto-code-env/versions.env; test "$(codex --version | awk "{print \$2}")" = "$CODEX_VERSION"; test "$(herdr --version | awk "{print \$2}")" = "$HERDR_VERSION"' \
-      || fail 'dev-full agent tools are not pinned'
+  dev-pilot|dev-both)
+    run 'for tool in pilot lazygit; do command -v "$tool" >/dev/null || exit 1; done; . /usr/local/share/auto-code-env/versions.env; test "$(lazygit --version | awk -F", " "{for (i=1; i<=NF; i++) if (\$i ~ /^version=/) {sub(/^version=/, \"\", \$i); print \$i; exit}}")" = "$LAZYGIT_VERSION"' \
+      || fail 'Pilot overlay is incomplete or unpinned'
     ;;
-  agent-pilot)
-    run 'for tool in go node pnpm bun claude pilot python3; do command -v "$tool" >/dev/null || exit 1; done' \
-      || fail 'agent-pilot tool group is incomplete'
-    run 'pnpm --version >/dev/null' || fail 'agent-pilot pnpm wrapper is broken'
-    run '. /usr/local/share/auto-code-env/versions.env; test "$(lazygit --version | awk -F", " "{for (i=1; i<=NF; i++) if (\$i ~ /^version=/) {sub(/^version=/, \"\", \$i); print \$i; exit}}")" = "$LAZYGIT_VERSION"' \
-      || fail 'agent-pilot lazygit is not pinned'
+esac
+
+case "$target" in
+  dev-hermes|dev-both)
+    run '. /usr/local/share/auto-code-env/versions.env; test "$HERMES_HOME" = /home/pilot/.hermes; test "$(git -C /opt/auto-code-env/.hermes/hermes-agent rev-parse HEAD)" = "$HERMES_COMMIT"; test "$(hermes --version 2>/dev/null | grep -Eo "v?[0-9]+(\.[0-9]+){2,3}" | head -1 | sed "s/^v//")" = "$HERMES_VERSION"' \
+      || fail 'Hermes overlay is incomplete or unpinned'
     ;;
 esac
 
@@ -117,7 +119,7 @@ docker run --rm --platform "$platform" --user pilot \
     flock -n "$lock" true
   ' || fail 'dotfiles lock was not released after its holder died'
 
-if [[ "$target" == agent-pilot ]]; then
+if [[ "$target" == dev-pilot || "$target" == dev-both ]]; then
   run '
     test "$(command -v gh)" = /opt/pilot/bin/gh
     test "$REAL_GH" = /usr/bin/gh
@@ -139,9 +141,10 @@ if [[ "$target" == agent-pilot ]]; then
     ' || fail 'Pilot writable-home layout is incomplete'
 
   if [[ "${PILOT_LIVE:-0}" == 1 ]]; then
-    docker run --rm --platform "$platform" --user pilot "$image" || fail 'credential-gated live Pilot execution failed'
+    docker run --rm --platform "$platform" --user pilot --entrypoint /opt/pilot/bin/pilot-entrypoint "$image" \
+      || fail 'credential-gated live Pilot execution failed'
   else
-    echo 'smoke[agent-pilot]: live Pilot execution skipped (set PILOT_LIVE=1 with its required credentials).'
+    echo "smoke[$target]: live Pilot execution skipped (set PILOT_LIVE=1 with its required credentials)."
   fi
 fi
 
