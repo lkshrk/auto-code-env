@@ -3,7 +3,7 @@
 ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
 
 FROM scratch AS runtime-files
-COPY --chmod=0755 bin/auto-code-env-dots bin/auto-code-entrypoint bin/auto-code-sshd bin/docker bin/pnpm bin/pnpx bin/ssh-secret-run /usr/local/bin/
+COPY --chmod=0755 bin/auto-code-entrypoint bin/auto-code-health bin/auto-code-init bin/auto-code-sshd bin/docker bin/pnpm bin/pnpx bin/ssh-secret-run /usr/local/bin/
 
 FROM ${DEBIAN_IMAGE} AS base
 
@@ -23,7 +23,6 @@ ARG COMPOSE_AMD64_SHA256=a55a8cd4ef103aac282812554e531aac8df7e914a287ee81e14d695
 ARG COMPOSE_ARM64_SHA256=54488fffb60782f3c8787a48b95ed15f49f5a3a85f4105304bd46db5edd9db61
 
 ENV DEBIAN_FRONTEND=noninteractive HOME=/opt/auto-code-env USER=dev \
-    AUTO_CODE_DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git AUTO_CODE_DOTFILES_REF=main \
     PATH=/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN case "$TARGETARCH" in \
@@ -64,7 +63,7 @@ RUN case "$TARGETARCH" in \
 FROM base AS dotfiles
 ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
 ARG DOTFILES_REF=main
-ARG DOTFILES_COMMIT=6342c6edad63dbf35653a354bb920234dca5b0cd
+ARG DOTFILES_COMMIT=67b905ccad896ef1ff93b050ba733b6a754f5fe7
 RUN git init /opt/dotfiles && cd /opt/dotfiles && git remote add origin "$DOTFILES_REPO" \
  && git fetch --depth=1 origin "$DOTFILES_COMMIT" \
  && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "$DOTFILES_COMMIT" \
@@ -113,7 +112,7 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && node_root="$(dirname "$node_dir")" && for tool in pnpm pnpx; do sudo ln -sf "$node_root/lib/node_modules/corepack/shims/$tool" "/usr/local/bin/$tool"; done \
  && corepack install --global "pnpm@${PNPM_VERSION}" \
  && omni tools install --group core --force && omni tools install --group shell --force \
- && printf '\n/usr/local/bin/auto-code-env-dots || true\nif [ -f "$HOME/.config/omni/settings.json" ]; then export OMNI_CONFIG="$HOME/.config/omni/settings.json"; else export OMNI_CONFIG="/opt/dotfiles/dotfiles/omni/.config/omni/settings.json"; fi\n' | sudo tee -a /etc/zsh/zshrc >/dev/null \
+ && printf '\nif [ -f "$HOME/.config/omni/settings.json" ]; then export OMNI_CONFIG="$HOME/.config/omni/settings.json"; else export OMNI_CONFIG="/opt/dotfiles/dotfiles/omni/.config/omni/settings.json"; fi\n' | sudo tee -a /etc/zsh/zshrc >/dev/null \
  && printf '%s\n' "PNPM_VERSION=${PNPM_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
  && sudo usermod --shell /usr/bin/zsh dev && sudo rm -rf /var/lib/apt/lists/*
 
@@ -292,40 +291,28 @@ COPY --chmod=0644 config/ssh_config /etc/ssh/ssh_config.d/99-auto-code-env.conf
 COPY --chmod=0644 config/sshd_config /etc/ssh/sshd_config.d/99-auto-code-env.conf
 
 FROM runtime-core AS dev-full
-ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
-ARG DOTFILES_REF=main
-ENV AUTO_CODE_DOTFILES_REPO=${DOTFILES_REPO} AUTO_CODE_DOTFILES_REF=${DOTFILES_REF} \
-    OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
+ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
 RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
 FROM pilot-runtime AS dev-pilot
-ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
-ARG DOTFILES_REF=main
-ENV AUTO_CODE_DOTFILES_REPO=${DOTFILES_REPO} AUTO_CODE_DOTFILES_REF=${DOTFILES_REF} \
-    OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
+ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
 RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
 FROM hermes-runtime AS dev-hermes
-ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
-ARG DOTFILES_REF=main
-ENV AUTO_CODE_DOTFILES_REPO=${DOTFILES_REPO} AUTO_CODE_DOTFILES_REF=${DOTFILES_REF} \
-    OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
+ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
 RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
 FROM both-runtime AS dev-both
-ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
-ARG DOTFILES_REF=main
-ENV AUTO_CODE_DOTFILES_REPO=${DOTFILES_REPO} AUTO_CODE_DOTFILES_REF=${DOTFILES_REF} \
-    OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
+ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
 RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]

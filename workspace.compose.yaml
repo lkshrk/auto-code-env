@@ -1,0 +1,32 @@
+services:
+  dev:
+    image: ${AUTO_CODE_IMAGE:?set AUTO_CODE_IMAGE to an immutable image tag or digest}
+    command: ["auto-code-sshd", "foreground"]
+    working_dir: /home/dev/workspace
+    init: true
+    restart: unless-stopped
+    environment:
+      AUTO_CODE_REQUIRE_DOCKER: "1"
+    ports:
+      - "${AUTO_CODE_SSH_BIND:-127.0.0.1}:${AUTO_CODE_SSH_PORT:-2222}:22"
+    secrets:
+      - authorized_keys
+    volumes:
+      - home:/home/dev
+      - ssh-host:/var/lib/auto-code-env/sshd
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "auto-code-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    stop_grace_period: 10s
+
+secrets:
+  authorized_keys:
+    file: ${AUTO_CODE_AUTHORIZED_KEYS_FILE:?set AUTO_CODE_AUTHORIZED_KEYS_FILE to a public-key file outside the repo}
+
+volumes:
+  home:
+  ssh-host:

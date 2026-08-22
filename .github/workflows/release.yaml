@@ -62,6 +62,12 @@ jobs:
             nested=0
             [ "$target" != dev-both ] || nested=1
             PLATFORM="$PLATFORM" NESTED_DOCKER="$nested" test/smoke.sh "$target" "$image"
+            old_image="${IMAGE}:${target}-latest"
+            docker pull --platform "$PLATFORM" "$old_image"
+            if ! docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$old_image" -c 'command -v auto-code-health >/dev/null'; then
+              old_image="$image"
+            fi
+            test/workspace.sh "$target" "$old_image" "$image"
           done
 
   promote:

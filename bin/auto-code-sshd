@@ -3,25 +3,54 @@ set -euo pipefail
 
 state_dir=/var/lib/auto-code-env/sshd
 authorized_keys=$HOME/.ssh/authorized_keys
+managed_keys=$HOME/.ssh/authorized_keys.d/auto-code
 pid_file=/run/auto-code-env/sshd.pid
 
-authorize() (
-  local input key_file key
+validate_keys() (
+  local target=$1 input key_file output key
   input=$(mktemp)
   key_file=$(mktemp)
-  trap 'rm -f "$input" "$key_file"' EXIT
+  install -d -m 0700 "$(dirname "$target")"
+  output=$(mktemp "$(dirname "$target")/.authorized_keys.XXXXXX")
+  trap 'rm -f "$input" "$key_file" "$output"' EXIT
   cat > "$input"
   [[ -s "$input" ]] || { echo "auto-code-sshd: no public key provided" >&2; return 1; }
-  install -d -m 0700 "$HOME/.ssh"
-  touch "$authorized_keys"
-  chmod 0600 "$authorized_keys"
   while IFS= read -r key || [[ -n "$key" ]]; do
     [[ -n "$key" && "$key" != \#* ]] || continue
     printf '%s\n' "$key" > "$key_file"
     ssh-keygen -l -f "$key_file" >/dev/null
-    grep -qxF "$key" "$authorized_keys" || printf '%s\n' "$key" >> "$authorized_keys"
+    grep -qxF "$key" "$output" || printf '%s\n' "$key" >> "$output"
   done < "$input"
-  [[ -s "$authorized_keys" ]] || { echo "auto-code-sshd: no valid public key provided" >&2; return 1; }
+  [[ -s "$output" ]] || { echo "auto-code-sshd: no valid public key provided" >&2; return 1; }
+  chmod 0600 "$output"
+  mv -f "$output" "$target"
+)
+
+authorize() (
+  local input
+  input=$(mktemp)
+  trap 'rm -f "$input"' EXIT
+  cat > "$input"
+  if [[ -s "$authorized_keys" ]]; then
+    cat "$authorized_keys" >> "$input"
+  fi
+  validate_keys "$authorized_keys" < "$input"
+)
+
+sync_managed_keys() (
+  local input source
+  input=$(mktemp)
+  trap 'rm -f "$input"' EXIT
+  [[ -z "${AUTO_CODE_AUTHORIZED_KEYS:-}" ]] || printf '%s\n' "$AUTO_CODE_AUTHORIZED_KEYS" >> "$input"
+  source=${AUTO_CODE_AUTHORIZED_KEYS_FILE:-/run/secrets/authorized_keys}
+  if sudo test -f "$source"; then
+    sudo cat "$source" >> "$input"
+  fi
+  if [[ -s "$input" ]]; then
+    validate_keys "$managed_keys" < "$input"
+  else
+    rm -f "$managed_keys"
+  fi
 )
 
 prepare() {
@@ -31,15 +60,9 @@ prepare() {
     sudo ssh-keygen -q -t ed25519 -N '' -f "$state_dir/ssh_host_ed25519_key"
     sudo chmod 0600 "$state_dir/ssh_host_ed25519_key"
   fi
-  if [[ -n "${AUTO_CODE_AUTHORIZED_KEYS:-}" ]]; then
-    authorize <<< "$AUTO_CODE_AUTHORIZED_KEYS"
-  fi
-  local source=${AUTO_CODE_AUTHORIZED_KEYS_FILE:-/run/secrets/authorized_keys}
-  if sudo test -f "$source"; then
-    sudo cat "$source" | authorize
-  fi
-  [[ -s "$authorized_keys" ]] || {
-    echo "auto-code-sshd: add a key with 'auto-code-sshd authorize' or set AUTO_CODE_AUTHORIZED_KEYS" >&2
+  sync_managed_keys
+  [[ -s "$authorized_keys" || -s "$managed_keys" ]] || {
+    echo "auto-code-sshd: provide /run/secrets/authorized_keys or add a manual key with 'auto-code-sshd authorize'" >&2
     return 1
   }
   sudo /usr/sbin/sshd -t

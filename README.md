@@ -75,15 +75,16 @@ from rbw's agent:
 
 ```sh
 install -d -m 0700 ~/.ssh/rbw
-rbw get --field=public_key 'tower' > ~/.ssh/rbw/tower.pub
+rbw get --field=public_key '<ssh-key-item>' > ~/.ssh/rbw/dev-host.pub
 ```
 
 ```sshconfig
-Host towerr-dev
-    HostName 172.16.20.195
-    User lkshrk
+Host dev-host
+    HostName <workspace-address>
+    Port 2222
+    User dev
     IdentityAgent SSH_AUTH_SOCK
-    IdentityFile ~/.ssh/rbw/tower.pub
+    IdentityFile ~/.ssh/rbw/dev-host.pub
     IdentitiesOnly yes
 ```
 
@@ -103,44 +104,40 @@ Host keys are generated at runtime, not baked into the image. Persist
 `/var/lib/auto-code-env/sshd` to keep the server identity stable across
 container replacement.
 
-```yaml
-services:
-  dev:
-    image: ghcr.io/lkshrk/auto-code-env:dev-both-latest
-    command: sleep infinity
-    environment:
-      AUTO_CODE_SSHD: "1"
-      AUTO_CODE_AUTHORIZED_KEYS: ${AUTO_CODE_AUTHORIZED_KEYS:?set public key}
-    ports:
-      - "127.0.0.1:2222:22"
-    volumes:
-      - home:/home/dev
-      - workspace:/workspace
-      - ssh-host:/var/lib/auto-code-env/sshd
+The canonical [`workspace.compose.yaml`](workspace.compose.yaml) runs sshd in the foreground,
+persists `/home/dev` and the SSH host identity, mounts the Docker socket, and
+reports healthy only after strict workspace initialization succeeds.
 
-volumes:
-  home:
-  workspace:
-  ssh-host:
-```
-
-For VLAN access, replace the port mapping with the Windows VLAN address, for
-example `172.16.20.195:2222:22`, and allow TCP port 2222 from the VLAN subnet
-in Windows Firewall.
-
-Set the public key before starting Compose:
+Set an immutable image reference, the VLAN bind address, and a public-key file
+outside this repository:
 
 ```powershell
-$env:AUTO_CODE_AUTHORIZED_KEYS = Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub -Raw
-docker compose up -d
-ssh -p 2222 dev@localhost
+$env:AUTO_CODE_IMAGE = "ghcr.io/lkshrk/auto-code-env:dev-both-sha-<commit>"
+$env:AUTO_CODE_SSH_BIND = "172.16.20.195"
+$env:AUTO_CODE_AUTHORIZED_KEYS_FILE = "$env:USERPROFILE\.ssh\dev-host.pub"
+docker compose -f workspace.compose.yaml up -d --wait
+ssh -p 2222 dev@172.16.20.195
 ```
 
-Additional keys can be added without rebuilding:
+Allow TCP port 2222 from the VLAN subnet in Windows Firewall. The public key
+is mounted as a Compose secret and is never stored in this repository.
+
+Compose-managed keys are replaced on recreation, so removed keys are revoked.
+Manual keys can be maintained separately:
 
 ```sh
 auto-code-sshd authorize < ~/.ssh/id_ed25519.pub
 ```
+
+Back up or restore the persistent home and SSH identity while the workspace is
+stopped:
+
+```sh
+scripts/workspace-state.sh backup /secure/path/workspace.tar.gz
+scripts/workspace-state.sh restore /secure/path/workspace.tar.gz
+```
+
+The archive contains credentials and must be stored on encrypted media.
 
 Root login, passwords, keyboard-interactive authentication, X11 forwarding,
 agent forwarding, and tunnels are disabled. TCP forwarding remains enabled for
@@ -155,7 +152,7 @@ interactive shell, and have writable home `/home/dev`. `dev-pilot` and
 `dev-hermes` and `dev-both` provide Hermes. Service deployments explicitly
 run `/opt/pilot/bin/pilot-entrypoint` or `hermes gateway run`; the combined
 image does not hide a process supervisor.
-Project source and project-specific dependencies remain caller-owned mounts.
+Projects live under the persistent `/home/dev/workspace` directory.
 
 ## Dev Containers
 
