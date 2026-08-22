@@ -26,7 +26,7 @@ ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
 ARG DOTFILES_REF=main
 ARG DOTFILES_COMMIT=6342c6edad63dbf35653a354bb920234dca5b0cd
 
-ENV DEBIAN_FRONTEND=noninteractive HOME=/opt/auto-code-env USER=pilot \
+ENV DEBIAN_FRONTEND=noninteractive HOME=/opt/auto-code-env USER=dev \
     AUTO_CODE_DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git AUTO_CODE_DOTFILES_REF=main \
     PATH=/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -37,8 +37,8 @@ RUN case "$TARGETARCH" in \
  && apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl gh git jq libssl-dev make ncurses-bin openssh-client openssl pkg-config stow sudo tar unzip util-linux xz-utils zsh \
  && rm -rf /var/lib/apt/lists/* \
- && groupadd --gid 1000 pilot && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash pilot \
- && install -d -o pilot -g pilot -m 0755 \
+ && groupadd --gid 1000 dev && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash dev \
+ && install -d -o dev -g dev -m 0755 \
       /opt/auto-code-env \
       /opt/auto-code-env/.cache \
       /opt/auto-code-env/.npm \
@@ -51,7 +51,7 @@ RUN case "$TARGETARCH" in \
       /opt/auto-code-env/go/pkg \
       /opt/auto-code-env/go/pkg/mod \
  && install -d -m 0755 /usr/local/lib/docker/cli-plugins \
- && printf 'pilot ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/pilot && chmod 0440 /etc/sudoers.d/pilot \
+ && printf 'dev ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/dev && chmod 0440 /etc/sudoers.d/dev \
  && curl -fsSL "https://github.com/lkshrk/omni/releases/download/v${OMNI_VERSION}/omni_linux_${omni_arch}.tar.gz" -o /tmp/omni.tar.gz \
  && echo "$omni_sha  /tmp/omni.tar.gz" | sha256sum -c - && tar -xzf /tmp/omni.tar.gz -C /tmp && install -m 0755 /tmp/omni /usr/local/bin/omni \
  && curl -fsSL "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_VERSION}.tgz" -o /tmp/docker.tgz \
@@ -63,18 +63,18 @@ RUN case "$TARGETARCH" in \
  && rm -rf /tmp/omni /tmp/omni.tar.gz /tmp/docker /tmp/docker.tgz \
  && install -d -m 0755 /usr/local/share/auto-code-env \
  && printf '%s\n' "TARGETARCH=${TARGETARCH}" "DEBIAN_IMAGE=${DEBIAN_IMAGE}" "OMNI_VERSION=${OMNI_VERSION}" "DOCKER_VERSION=${DOCKER_VERSION}" "BUILDX_VERSION=${BUILDX_VERSION}" "COMPOSE_VERSION=${COMPOSE_VERSION}" "PNPM_VERSION=${PNPM_VERSION}" "DOTFILES_REPO=${DOTFILES_REPO}" "DOTFILES_REF=${DOTFILES_REF}" "DOTFILES_COMMIT=${DOTFILES_COMMIT}" > /usr/local/share/auto-code-env/versions.env \
- && chown -R pilot:pilot /home/pilot /opt/auto-code-env
+ && chown -R dev:dev /home/dev /opt/auto-code-env
 
 FROM base AS dotfiles
 RUN git init /opt/dotfiles && cd /opt/dotfiles && git remote add origin "$DOTFILES_REPO" \
  && git fetch --depth=1 origin "$DOTFILES_REF" && git fetch --depth=1 origin "$DOTFILES_COMMIT" \
- && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "$DOTFILES_COMMIT" && chown -R pilot:pilot /opt/dotfiles
+ && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "$DOTFILES_COMMIT" && chown -R dev:dev /opt/dotfiles
 
 FROM base AS persona
-COPY --from=dotfiles --chown=pilot:pilot /opt/dotfiles /opt/dotfiles
+COPY --from=dotfiles --chown=dev:dev /opt/dotfiles /opt/dotfiles
 ENV COREPACK_HOME=/opt/auto-code-env/.local/share/corepack \
     OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json
-USER pilot
+USER dev
 WORKDIR /opt/dotfiles
 RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
     --mount=type=cache,target=/opt/auto-code-env/.npm,uid=1000,gid=1000 \
@@ -89,7 +89,7 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && corepack install --global "pnpm@${PNPM_VERSION}" \
  && omni tools install --group core --force && omni tools install --group shell --force \
  && printf '\n/usr/local/bin/auto-code-env-dots || true\nif [ -f "$HOME/.config/omni/settings.json" ]; then export OMNI_CONFIG="$HOME/.config/omni/settings.json"; else export OMNI_CONFIG="/opt/dotfiles/dotfiles/omni/.config/omni/settings.json"; fi\n' | sudo tee -a /etc/zsh/zshrc >/dev/null \
- && sudo usermod --shell /usr/bin/zsh pilot && sudo rm -rf /var/lib/apt/lists/*
+ && sudo usermod --shell /usr/bin/zsh dev && sudo rm -rf /var/lib/apt/lists/*
 
 FROM persona AS common-tools
 RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
@@ -172,41 +172,41 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && sudo rm -rf /var/lib/apt/lists/*
 
 FROM persona AS rbw-source
-ENV HOME=/home/pilot PATH=/home/pilot/.cargo/bin:${PATH}
+ENV HOME=/home/dev PATH=/home/dev/.cargo/bin:${PATH}
 RUN sudo apt-get update \
  && sudo apt-get install -y --no-install-recommends build-essential \
  && sudo rm -rf /var/lib/apt/lists/* \
  && mkdir -p "$HOME/.cargo/bin" "$HOME/.rustup"
 RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
-    --mount=type=cache,target=/home/pilot/.cargo/registry,uid=1000,gid=1000 \
-    --mount=type=cache,target=/home/pilot/.cargo/git,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/dev/.cargo/registry,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/dev/.cargo/git,uid=1000,gid=1000 \
     omni tools install cargo --force --provider script \
  && CARGO_TARGET_DIR=/opt/auto-code-env/.cache/cargo-target omni tools install --group secrets --force \
- && test -x /home/pilot/.cargo/bin/rbw \
- && test -x /home/pilot/.cargo/bin/rbw-agent
+ && test -x /home/dev/.cargo/bin/rbw \
+ && test -x /home/dev/.cargo/bin/rbw-agent
 
 FROM dev-tools AS full-runtime
 ARG CLAUDE_CODE_VERSION=2.1.239
 ARG CODEX_VERSION=0.149.0
 ARG HERDR_VERSION=0.8.2
-ENV HOME=/home/pilot \
+ENV HOME=/home/dev \
     XDG_RUNTIME_DIR=/run/user/1000 \
     SSH_AUTH_SOCK=/run/user/1000/rbw/ssh-agent-socket \
-    PATH=/home/pilot/.local/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/home/dev/.local/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN sudo apt-get update \
  && sudo apt-get install -y --no-install-recommends openssh-server pinentry-curses \
  && sudo rm -f /etc/ssh/ssh_host_* \
  && sudo rm -rf /var/lib/apt/lists/* \
  && sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker \
- && sudo usermod --password '*' pilot
-COPY --from=rbw-source /home/pilot/.cargo/bin/rbw /home/pilot/.cargo/bin/rbw-agent /usr/local/bin/
+ && sudo usermod --password '*' dev
+COPY --from=rbw-source /home/dev/.cargo/bin/rbw /home/dev/.cargo/bin/rbw-agent /usr/local/bin/
 COPY --from=runtime-files /usr/local/bin/ /usr/local/bin/
 COPY --chmod=0644 config/ssh_config /etc/ssh/ssh_config.d/99-auto-code-env.conf
 COPY --chmod=0644 config/sshd_config /etc/ssh/sshd_config.d/99-auto-code-env.conf
 RUN rbw_version="$(rbw --version | awk '{print $2}')" \
  && printf '%s\n' "CLAUDE_CODE_VERSION=${CLAUDE_CODE_VERSION}" "CODEX_VERSION=${CODEX_VERSION}" "HERDR_VERSION=${HERDR_VERSION}" "RBW_VERSION=${rbw_version}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
- && sudo chown -R pilot:pilot /home/pilot
-WORKDIR /home/pilot
+ && sudo chown -R dev:dev /home/dev
+WORKDIR /home/dev
 EXPOSE 22
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
@@ -259,7 +259,7 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
  && test "$(git -C /opt/auto-code-env/.hermes/hermes-agent rev-parse HEAD)" = "$HERMES_COMMIT" \
  && test "$(hermes --version 2>/dev/null | grep -Eo 'v?[0-9]+(\.[0-9]+){2,3}' | head -1 | sed 's/^v//')" = "$HERMES_VERSION" \
  && printf '%s\n' "HERMES_VERSION=${HERMES_VERSION}" "HERMES_REF=${HERMES_REF}" "HERMES_COMMIT=${HERMES_COMMIT}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
-ENV HERMES_HOME=/home/pilot/.hermes
+ENV HERMES_HOME=/home/dev/.hermes
 
 FROM hermes-runtime AS dev-hermes
 

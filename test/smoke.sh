@@ -13,13 +13,13 @@ esac
 [[ -n "$image" ]] || { echo "usage: $0 <target> <image-ref>" >&2; exit 2; }
 
 fail() { echo "smoke[$target]: $*" >&2; exit 1; }
-run() { docker run --rm --platform "$platform" --user pilot --entrypoint /bin/bash "$image" -c "$1"; }
-run_offline() { docker run --rm --network none --platform "$platform" --user pilot --entrypoint /bin/bash "$image" -c "$1"; }
+run() { docker run --rm --platform "$platform" --user dev --entrypoint /bin/bash "$image" -c "$1"; }
+run_offline() { docker run --rm --network none --platform "$platform" --user dev --entrypoint /bin/bash "$image" -c "$1"; }
 
 docker image inspect "$image" >/dev/null || fail "image not found: $image"
 
-run 'test "$(id -u)" = 1000 && test "$(id -g)" = 1000 && test "$USER" = pilot && test "$HOME" = /home/pilot' \
-  || fail 'pilot identity is not uid/gid 1000 with /home/pilot'
+run 'test "$(id -u)" = 1000 && test "$(id -g)" = 1000 && test "$USER" = dev && test "$HOME" = /home/dev' \
+  || fail 'dev identity is not uid/gid 1000 with /home/dev'
 
 run 'for tool in bash git curl jq make omni ssh ssh-add sshd auto-code-sshd rbw rbw-agent ssh-secret-run pinentry-curses; do command -v "$tool" >/dev/null || exit 1; done' \
   || fail 'core tools are missing'
@@ -32,7 +32,7 @@ run '
   ssh -G github.com 2>/dev/null | grep -qx "forwardagent no"
   ssh -G github.com 2>/dev/null | grep -qx "hashknownhosts yes"
   ssh -G github.com 2>/dev/null | grep -qx "stricthostkeychecking accept-new"
-  ! grep -R -l -- "BEGIN OPENSSH PRIVATE KEY" /home/pilot /opt/dotfiles >/dev/null 2>&1
+  ! grep -R -l -- "BEGIN OPENSSH PRIVATE KEY" /home/dev /opt/dotfiles >/dev/null 2>&1
   test "$(AUTO_CODE_SSH_KEY_FILE=/missing ssh-secret-run 2>&1 || true)" = "ssh-secret-run: key not found: /missing"
 ' || fail 'rbw or hardened SSH client contract is broken'
 
@@ -59,23 +59,23 @@ run '
   sudo sshd -T | grep -qx "passwordauthentication no"
   sudo sshd -T | grep -qx "kbdinteractiveauthentication no"
   sudo sshd -T | grep -qx "authenticationmethods publickey"
-  sudo sshd -T | grep -qx "allowusers pilot"
+  sudo sshd -T | grep -qx "allowusers dev"
   sudo test -s /var/lib/auto-code-env/sshd/ssh_host_ed25519_key
   test "$(sudo stat -c %a /var/lib/auto-code-env/sshd/ssh_host_ed25519_key)" = 600
   ssh-keyscan -q -p 22 127.0.0.1 > "$tmp/known_hosts"
   ssh -p 22 -i "$tmp/client" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-    -o UserKnownHostsFile="$tmp/known_hosts" pilot@127.0.0.1 \
+    -o UserKnownHostsFile="$tmp/known_hosts" dev@127.0.0.1 \
     "test \"\$(id -u)\" = 1000 &&
      test \"\$XDG_RUNTIME_DIR\" = /run/user/1000 &&
      test \"\$SSH_AUTH_SOCK\" = /run/user/1000/rbw/ssh-agent-socket &&
      command -v go rbw omni >/dev/null"
 
   auto-code-sshd stop
-  sudo rm -f /home/pilot/.ssh/authorized_keys
+  sudo rm -f /home/dev/.ssh/authorized_keys
   printf %s "$(cat "$tmp/client.pub")" > "$tmp/authorized_keys"
   AUTO_CODE_AUTHORIZED_KEYS_FILE="$tmp/authorized_keys" auto-code-sshd start
   ssh -p 22 -i "$tmp/client" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-    -o UserKnownHostsFile="$tmp/known_hosts" pilot@127.0.0.1 true
+    -o UserKnownHostsFile="$tmp/known_hosts" dev@127.0.0.1 true
 ' || fail 'public-key SSH server contract or real login failed'
 
 run 'for tool in go node python3 uv pnpm bun claude codex herdr; do command -v "$tool" >/dev/null || exit 1; done' \
@@ -92,7 +92,7 @@ esac
 
 case "$target" in
   dev-hermes|dev-both)
-    run '. /usr/local/share/auto-code-env/versions.env; test "$HERMES_HOME" = /home/pilot/.hermes; test "$(git -C /opt/auto-code-env/.hermes/hermes-agent rev-parse HEAD)" = "$HERMES_COMMIT"; test "$(hermes --version 2>/dev/null | grep -Eo "v?[0-9]+(\.[0-9]+){2,3}" | head -1 | sed "s/^v//")" = "$HERMES_VERSION"' \
+    run '. /usr/local/share/auto-code-env/versions.env; test "$HERMES_HOME" = /home/dev/.hermes; test "$(git -C /opt/auto-code-env/.hermes/hermes-agent rev-parse HEAD)" = "$HERMES_COMMIT"; test "$(hermes --version 2>/dev/null | grep -Eo "v?[0-9]+(\.[0-9]+){2,3}" | head -1 | sed "s/^v//")" = "$HERMES_VERSION"' \
       || fail 'Hermes overlay is incomplete or unpinned'
     ;;
 esac
@@ -135,20 +135,20 @@ cleanup() {
 }
 trap cleanup EXIT
 docker volume create "$dots_volume" >/dev/null
-docker run --rm --platform "$platform" --user root --mount "source=$dots_volume,target=/home/pilot" \
-  --entrypoint /bin/bash "$image" -c 'chown pilot:pilot /home/pilot'
-docker run --rm --platform "$platform" --user pilot --mount "source=$dots_volume,target=/home/pilot" \
+docker run --rm --platform "$platform" --user root --mount "source=$dots_volume,target=/home/dev" \
+  --entrypoint /bin/bash "$image" -c 'chown dev:dev /home/dev'
+docker run --rm --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
   --entrypoint /bin/bash "$image" -c 'auto-code-env-dots; test ! -e "$HOME/.local/state/auto-code-env/dots.attempted"' \
   || fail 'noninteractive dots attempted a sync'
 
 # Two TTY-backed attempts share a home. Exactly one may acquire the atomic lock;
 # both must leave a completed state and no stale lock.
 for _ in 1 2; do
-  docker run --rm --platform "$platform" -t --user pilot --mount "source=$dots_volume,target=/home/pilot" \
+  docker run --rm --platform "$platform" -t --user dev --mount "source=$dots_volume,target=/home/dev" \
     --entrypoint /bin/bash "$image" -c auto-code-env-dots &
 done
 wait
-docker run --rm --platform "$platform" --user pilot --mount "source=$dots_volume,target=/home/pilot" \
+docker run --rm --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
   --entrypoint /bin/bash "$image" -c '
     test -f "$HOME/.local/state/auto-code-env/dots.attempted" &&
     test -f "$HOME/.local/state/auto-code-env/dots.succeeded" &&
@@ -156,14 +156,14 @@ docker run --rm --platform "$platform" --user pilot --mount "source=$dots_volume
     flock -n "$HOME/.local/state/auto-code-env/dots.lock" true
   ' || fail 'concurrent interactive dots did not leave a clean completed state'
 
-docker run --rm --platform "$platform" --user pilot --mount "source=$dots_volume,target=/home/pilot" \
+docker run --rm --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
   --entrypoint /usr/bin/zsh "$image" -ic '
     test "$OMNI_CONFIG" = "$HOME/.config/omni/settings.json"
     test -L "$HOME/.config/omni/settings.json"
   ' || fail 'interactive shell did not select the synced Omni config'
 
-docker run --rm --platform "$platform" --user pilot \
-  --mount "source=$dots_volume,target=/home/pilot" --entrypoint /bin/bash "$image" -c '
+docker run --rm --platform "$platform" --user dev \
+  --mount "source=$dots_volume,target=/home/dev" --entrypoint /bin/bash "$image" -c '
     lock="$HOME/.local/state/auto-code-env/dots.lock"
     bash -c '\''exec 9>"$1"; flock 9; while :; do :; done'\'' _ "$lock" & holder=$!
     sleep 1
@@ -183,19 +183,19 @@ if [[ "$target" == dev-pilot || "$target" == dev-both ]]; then
   ' || fail 'Pilot PATH, real gh, backend, or version is broken'
 
   # Exercise the real entrypoint without launching credential-gated Pilot.
-  docker run --rm --platform "$platform" --user root --mount "source=$dots_volume,target=/home/pilot" \
+  docker run --rm --platform "$platform" --user root --mount "source=$dots_volume,target=/home/dev" \
     --entrypoint /bin/bash "$image" -c '
       printf "%s\\n" "#!/bin/sh" "exit 0" > /usr/local/bin/pilot
       chmod 0755 /usr/local/bin/pilot
       exec /opt/pilot/bin/pilot-entrypoint --version
     ' || fail 'Pilot entrypoint could not initialize its writable-home layout'
-  docker run --rm --platform "$platform" --user pilot --mount "source=$dots_volume,target=/home/pilot" \
+  docker run --rm --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
     --entrypoint /bin/bash "$image" -c '
       for path in "$HOME/tmp" "$HOME/repos" "$HOME/.pilot/data" "$HOME/.cache" "$HOME/.local/share"; do test -d "$path"; done
     ' || fail 'Pilot writable-home layout is incomplete'
 
   if [[ "${PILOT_LIVE:-0}" == 1 ]]; then
-    docker run --rm --platform "$platform" --user pilot --entrypoint /opt/pilot/bin/pilot-entrypoint "$image" \
+    docker run --rm --platform "$platform" --user dev --entrypoint /opt/pilot/bin/pilot-entrypoint "$image" \
       || fail 'credential-gated live Pilot execution failed'
   else
     echo "smoke[$target]: live Pilot execution skipped (set PILOT_LIVE=1 with its required credentials)."
@@ -207,7 +207,7 @@ if [[ "${NESTED_DOCKER:-0}" == 1 ]]; then
   docker_socket=${docker_socket#unix://}
   [[ -S "$docker_socket" ]] || fail "nested Docker requested but $docker_socket is unavailable"
   nested_project="auto-code-env-smoke-docker-$RANDOM-$RANDOM"
-  docker run --rm --platform "$platform" --user pilot \
+  docker run --rm --platform "$platform" --user dev \
     --mount "type=bind,source=$docker_socket,target=/var/run/docker.sock" \
     -e COMPOSE_PROJECT_NAME="$nested_project" --entrypoint /bin/bash "$image" -ceu '
       test "$(command -v docker)" = /usr/local/bin/docker

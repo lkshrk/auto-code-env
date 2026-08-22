@@ -98,7 +98,7 @@ automatically; `rbw unlock` starts rbw's agent when needed.
 
 ## SSH server
 
-Every variant includes a public-key-only SSH server for the `pilot` user.
+Every variant includes a public-key-only SSH server for the `dev` user.
 Host keys are generated at runtime, not baked into the image. Persist
 `/var/lib/auto-code-env/sshd` to keep the server identity stable across
 container replacement.
@@ -114,7 +114,7 @@ services:
     ports:
       - "127.0.0.1:2222:22"
     volumes:
-      - home:/home/pilot
+      - home:/home/dev
       - workspace:/workspace
       - ssh-host:/var/lib/auto-code-env/sshd
 
@@ -133,7 +133,7 @@ Set the public key before starting Compose:
 ```powershell
 $env:AUTO_CODE_AUTHORIZED_KEYS = Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub -Raw
 docker compose up -d
-ssh -p 2222 pilot@localhost
+ssh -p 2222 dev@localhost
 ```
 
 Additional keys can be added without rebuilding:
@@ -148,8 +148,8 @@ normal remote-development port forwarding.
 
 ## Runtime contracts
 
-All variants use the unprivileged `pilot` user (UID/GID 1000), default to an
-interactive shell, and have writable home `/home/pilot`. `dev-pilot` and
+All variants use the unprivileged `dev` user (UID/GID 1000), default to an
+interactive shell, and have writable home `/home/dev`. `dev-pilot` and
 `dev-both` provide Pilot adapters under
 `/opt/pilot/bin`, with the `gh` shim delegating to `REAL_GH=/usr/bin/gh`.
 `dev-hermes` and `dev-both` provide Hermes. Service deployments explicitly
