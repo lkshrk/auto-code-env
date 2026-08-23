@@ -284,7 +284,7 @@ Each phase-2 step is its own PR and independently revertible.
 ## Dependencies outside this repo
 
 - **dotfiles**: add `devbox` host entry, groups `agent-hermes` and
-  `agent-pilot`, `pilot` tool, per-tool `bin_dir` where needed.
+  `agent-pilot`, `pilot` tool.
 - **h-cloud**: delete Coder templates dir; point hermes-hq and pilot
   workloads at `devbox` image with `command`; Renovate for the tag.
 
