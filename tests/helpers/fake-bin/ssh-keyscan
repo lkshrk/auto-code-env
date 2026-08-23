@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+echo "ssh-keyscan $*" >> "$FAKE_LOG"
+echo "github.com ssh-ed25519 AAAA"
+exit 0

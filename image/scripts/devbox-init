@@ -3,6 +3,7 @@ set -euo pipefail
 
 : "${DEVBOX_DOTFILES_URL:=https://github.com/lkshrk/dotfiles.git}"
 : "${DEVBOX_DOTS:=1}"
+: "${DEVBOX_OPT:=/opt/devbox}"
 dotfiles="$HOME/dotfiles"
 
 umask 077
@@ -33,11 +34,11 @@ if [ "$DEVBOX_DOTS" = "1" ]; then
   omni --yes dots sync --use-repo
 fi
 
-for d in "$HOME/.local/bin" "$HOME/.bun/bin"; do
+for d in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/go/bin" "$HOME/.cargo/bin"; do
   [ -d "$d" ] || continue
   for f in "$d"/*; do
     [ -x "$f" ] || continue
-    img="/opt/devbox/${d#"$HOME"/}/$(basename "$f")"
+    img="$DEVBOX_OPT/${d#"$HOME"/}/$(basename "$f")"
     [ -x "$img" ] && echo "devbox-init: $(basename "$f") from $d shadows image copy $img" >&2
   done
 done
