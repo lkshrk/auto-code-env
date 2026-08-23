@@ -266,7 +266,14 @@ ARG HERMES_REF=v2026.7.7.2
 ARG HERMES_COMMIT=9de9c25f620ff7f1ce0fd5457d596052d5159596
 ARG HERMES_INSTALLER_SHA256=a93c65b01ea392e179cf872e182bd01a2b65c0c15f17833e9f9569033ef10e07
 RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
-    curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_REF}/scripts/install.sh" -o /tmp/hermes-install.sh \
+    --mount=type=secret,id=GITHUB_TOKEN,required=false,uid=1000 \
+    token="$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null || true)" \
+ && if [ -n "$token" ]; then \
+      curl -fsSL -H 'Accept: application/vnd.github.raw+json' -H "Authorization: Bearer $token" \
+        "https://api.github.com/repos/NousResearch/hermes-agent/contents/scripts/install.sh?ref=${HERMES_COMMIT}" -o /tmp/hermes-install.sh; \
+    else \
+      curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_REF}/scripts/install.sh" -o /tmp/hermes-install.sh; \
+    fi \
  && echo "$HERMES_INSTALLER_SHA256  /tmp/hermes-install.sh" | sha256sum -c - \
  && HOME=/opt/auto-code-env HERMES_HOME=/opt/auto-code-env/.hermes bash /tmp/hermes-install.sh \
       --branch "$HERMES_REF" --commit "$HERMES_COMMIT" --hermes-home /opt/auto-code-env/.hermes --skip-setup --non-interactive \
