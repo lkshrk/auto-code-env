@@ -190,6 +190,48 @@ devbox stop|rm NAME
 Works with docker or podman. k8s one-shot = plain Job manifest example in
 `docs/`.
 
+## Secrets
+
+Contract, identical for every launcher: **the image contains no secrets
+and reads them only from the environment at start.** Build needs none
+(all sources public), so no `--secret` mounts, no registry login at build.
+
+Common env, consumed by tools directly:
+
+| env                                          | consumer                       |
+|----------------------------------------------|--------------------------------|
+| `GH_TOKEN` (+ `GITHUB_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN` aliases) | gh, generic tools, github-mcp |
+| `CLAUDE_CODE_OAUTH_TOKEN`                    | claude                         |
+| `CODEX_AUTH_JSON`                            | codex (file-shaped, see below) |
+| `LITELLM_API`                                | in-cluster LLM proxy           |
+
+`devbox-init` materialises file-shaped secrets from env and nothing else:
+`CODEX_AUTH_JSON` -> `~/.codex/auth.json` (0600). It never prints env.
+Tool-side credential caches (`~/.claude`, `~/.config/gh`) live in home
+and therefore persist per workspace/volume, never in the image.
+
+Per launcher:
+
+- **Coder**: unchanged mechanism. `coder-workspace-secrets` via `envFrom`,
+  per-preset extras via `<preset>-workspace-env` (optional, was
+  `<template>-workspace-env`; presets replace templates as the key), git
+  SSH through Coder's per-user key and `GIT_SSH_COMMAND`, kube access via
+  the mounted service-account token. All of that stays in h-cloud SOPS.
+- **Agent pods**: SOPS Secret -> env, as the hub does today. Hermes keeps
+  its existing key list (`docs/secrets-checklist.md`); pilot gets its
+  GitHub App key and Signal config the same way.
+- **Local**: `scripts/devbox` passes `--env-file ~/.config/devbox/env`
+  (0600, gitignored, template in `scripts/devbox.env.example`) and mounts
+  the host ssh-agent socket instead of keys. Optional `rbw`-backed
+  `devbox env` helper fills that file from Bitwarden. Never `-e` on the
+  command line (shell history).
+- **k8s one-shot Jobs**: `envFrom` the same `coder-workspace-secrets`.
+
+Public image guard: the `devbox` omni host excludes `priv`; `validate.yaml`
+runs gitleaks on the repo and a `grep` for token patterns over `/opt/devbox`
+and `/etc` in each built variant; `image/.env.example` stays the only
+env file in the repo.
+
 ## Release / CI
 
 - `validate.yaml` (PR): `docker buildx bake` all variants (no push) + per-variant smoke test:
