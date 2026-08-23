@@ -23,9 +23,9 @@ variable "HERMES_REF" { default = "v2026.7.7.2" }
 variable "HERMES_COMMIT" { default = "9de9c25f620ff7f1ce0fd5457d596052d5159596" }
 variable "HERMES_INSTALLER_SHA256" { default = "a93c65b01ea392e179cf872e182bd01a2b65c0c15f17833e9f9569033ef10e07" }
 variable "LAZYGIT_VERSION" { default = "0.64.1" }
-variable "PILOT_VERSION" { default = "2.264.0-fork.1" }
-variable "PILOT_AMD64_SHA256" { default = "501709602b6620cef58b29d32fb38c988af782623615a25a554081b2984b3e69" }
-variable "PILOT_ARM64_SHA256" { default = "de6e305f4a2aec4cc0652da524dcf4f440617e5a947dbfebc1539655f497adab" }
+variable "PILOT_VERSION" { default = "2.266.0-fork.1" }
+variable "PILOT_AMD64_SHA256" { default = "478e9f77e1931641446caf798cec377e4785b017cb7eb3a4789a0918d9b7a063" }
+variable "PILOT_ARM64_SHA256" { default = "c29904a968da4f5c0f8b00b2199bf37cdd70a1f663e6adbb12c0f1869411fcd9" }
 
 target "common" {
   context = "."

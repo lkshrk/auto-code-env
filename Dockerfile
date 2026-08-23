@@ -241,9 +241,9 @@ RUN case "$TARGETARCH" in amd64) lazygit_arch=x86_64; lazygit_sha="$LAZYGIT_AMD6
 
 FROM base AS pilot-source
 ARG TARGETARCH
-ARG PILOT_VERSION=2.264.0-fork.1
-ARG PILOT_AMD64_SHA256=501709602b6620cef58b29d32fb38c988af782623615a25a554081b2984b3e69
-ARG PILOT_ARM64_SHA256=de6e305f4a2aec4cc0652da524dcf4f440617e5a947dbfebc1539655f497adab
+ARG PILOT_VERSION=2.266.0-fork.1
+ARG PILOT_AMD64_SHA256=478e9f77e1931641446caf798cec377e4785b017cb7eb3a4789a0918d9b7a063
+ARG PILOT_ARM64_SHA256=c29904a968da4f5c0f8b00b2199bf37cdd70a1f663e6adbb12c0f1869411fcd9
 RUN case "$TARGETARCH" in amd64) pilot_arch=amd64; pilot_sha="$PILOT_AMD64_SHA256" ;; arm64) pilot_arch=arm64; pilot_sha="$PILOT_ARM64_SHA256" ;; *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; esac \
  && curl -fsSL "https://github.com/lkshrk/pilot/releases/download/v${PILOT_VERSION}/pilot-linux-${pilot_arch}.tar.gz" -o /tmp/pilot.tar.gz \
  && echo "$pilot_sha  /tmp/pilot.tar.gz" | sha256sum -c - && tar -xzf /tmp/pilot.tar.gz -C /usr/local/bin pilot && chmod 0755 /usr/local/bin/pilot && rm /tmp/pilot.tar.gz
@@ -254,7 +254,7 @@ COPY --from=lazygit-source /usr/local/bin/lazygit /usr/local/bin/lazygit
 COPY --chmod=0755 pilot/bin/ /opt/pilot/bin/
 
 FROM runtime-core AS pilot-runtime
-ARG PILOT_VERSION=2.264.0-fork.1
+ARG PILOT_VERSION=2.266.0-fork.1
 ARG LAZYGIT_VERSION=0.64.1
 ENV PATH=/opt/pilot/bin:${PATH} REAL_GH=/usr/bin/gh
 COPY --link --from=pilot-files / /
@@ -277,7 +277,7 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
 ENV HERMES_HOME=/home/dev/.hermes
 
 FROM hermes-runtime AS both-runtime
-ARG PILOT_VERSION=2.264.0-fork.1
+ARG PILOT_VERSION=2.266.0-fork.1
 ARG LAZYGIT_VERSION=0.64.1
 ENV PATH=/opt/pilot/bin:${PATH} REAL_GH=/usr/bin/gh
 COPY --link --from=pilot-files / /
