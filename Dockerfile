@@ -179,8 +179,7 @@ RUN sudo apt-get update \
  && sudo apt-get install -y --no-install-recommends openssh-server pinentry-curses \
  && sudo rm -f /etc/ssh/ssh_host_* \
  && sudo rm -rf /var/lib/apt/lists/* /opt/omni-build \
- && sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker \
- && sudo usermod --password '*' dev
+ && sudo install -D -m 0755 /usr/local/bin/docker /usr/local/libexec/docker
 
 FROM runtime-system AS agent-tools
 ARG CLAUDE_CODE_VERSION=2.1.239
@@ -295,7 +294,8 @@ FROM runtime-core AS dev-full
 ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
 RUN sudo chmod 0755 /etc /etc/ssh /etc/ssh/ssh_config.d /etc/ssh/sshd_config.d \
- && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+ && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env' \
+ && sudo usermod --password '*' dev
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
@@ -303,7 +303,8 @@ FROM pilot-runtime AS dev-pilot
 ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
 RUN sudo chmod 0755 /etc /etc/ssh /etc/ssh/ssh_config.d /etc/ssh/sshd_config.d \
- && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+ && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env' \
+ && sudo usermod --password '*' dev
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
@@ -311,7 +312,8 @@ FROM hermes-runtime AS dev-hermes
 ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
 RUN sudo chmod 0755 /etc /etc/ssh /etc/ssh/ssh_config.d /etc/ssh/sshd_config.d \
- && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+ && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env' \
+ && sudo usermod --password '*' dev
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
@@ -319,6 +321,7 @@ FROM both-runtime AS dev-both
 ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
 RUN sudo chmod 0755 /etc /etc/ssh /etc/ssh/ssh_config.d /etc/ssh/sshd_config.d \
- && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+ && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env' \
+ && sudo usermod --password '*' dev
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
