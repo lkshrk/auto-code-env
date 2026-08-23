@@ -79,25 +79,24 @@ Rules:
 
 Coder mounts a PVC over `/home/dev`, so nothing baked may live in home.
 
-During build only, provider env vars redirect installs:
+Dotfiles' script providers hardcode `$HOME` (`~/.local/bin`, `~/.bun`,
+`~/.hermes`, `~/.local/share/uv`), so redirecting per provider is
+fragile. Instead every tool stage runs with **`HOME=/opt/devbox`**; the
+installers then write under `/opt/devbox/{.local,.bun,.hermes,.cargo,go,
+.nvm,...}` unmodified. Build-time dotfiles clone lives at
+`/opt/devbox/dotfiles` (omni config source only).
+
+At runtime `HOME=/home/dev`. `/opt/devbox` is root-owned, read-only for
+`dev`. `PATH` (via `/etc/profile.d/devbox.sh`, also set as image `ENV`):
 
 ```
-BUN_INSTALL=/opt/devbox/bun
-UV_TOOL_DIR=/opt/devbox/uv/tools   UV_TOOL_BIN_DIR=/opt/devbox/bin
-PNPM_HOME=/opt/devbox/pnpm          npm_config_prefix=/opt/devbox/npm
-CARGO_HOME=/opt/devbox/cargo        GOBIN=/opt/devbox/bin
-omni settings.fallback_bin_dir=/opt/devbox/bin
+~/.local/bin:~/.bun/bin:~/go/bin:~/.cargo/bin:
+/opt/devbox/.local/bin:/opt/devbox/.bun/bin:/opt/devbox/go/bin:/opt/devbox/.cargo/bin:
+/usr/local/bin:/usr/bin:/bin
 ```
 
-Tools that ignore these and hardcode `~/.local/bin` get a per-tool
-`bin_dir` in `tools.json`. The first build verifies the list.
-
-At runtime those vars are **unset**. `/opt/devbox` is root-owned,
-read-only for `dev`. `PATH` (via `/etc/profile.d/devbox.sh`):
-
-```
-~/.local/bin:~/.bun/bin:~/go/bin:~/.cargo/bin:/opt/devbox/bin:/opt/devbox/bun/bin:...:/usr/bin
-```
+Node comes from nvm; the build symlinks `node npm npx corepack` into
+`/opt/devbox/.local/bin` (same as dotfiles' `sync_nvm_local_bin_links`).
 
 Consequences:
 
@@ -309,8 +308,9 @@ variants under 2 GB, `full` under 3 GB.
 
 ## Risks
 
-- Script-provider tools hardcoding `~/.local/bin` at build. Mitigation:
-  first build lists them, `bin_dir` overrides.
+- A tool resolving its install dir via `$HOME` at runtime instead of an
+  absolute path (suspect: hermes launcher vs `HERMES_HOME`). Mitigation:
+  smoke test runs every variant's binaries with `HOME=/tmp/x`.
 - Image size (~4 GB). Accepted; node image cache amortises it.
 - Home-shadowing stale tools after image bump. Mitigation: warning in
   `devbox-init`.
