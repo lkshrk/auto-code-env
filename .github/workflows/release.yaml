@@ -62,6 +62,14 @@ jobs:
             nested=0
             [ "$target" != dev-both ] || nested=1
             PLATFORM="$PLATFORM" NESTED_DOCKER="$nested" test/smoke.sh "$target" "$image"
+            old_image="${IMAGE}:${target}-latest"
+            docker pull --platform "$PLATFORM" "$old_image"
+            if ! docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$old_image" -c \
+              'test "$(id -u dev)" = 1000 && command -v auto-code-init auto-code-health auto-code-sshd >/dev/null'; then
+              echo "${old_image} lacks the workspace lifecycle contract; using the candidate for bootstrap coverage"
+              old_image="$image"
+            fi
+            test/workspace.sh "$target" "$old_image" "$image"
           done
 
   promote:

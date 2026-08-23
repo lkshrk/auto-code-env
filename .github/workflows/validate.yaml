@@ -6,6 +6,9 @@ on:
 permissions:
   contents: read
 
+env:
+  IMAGE: ghcr.io/lkshrk/auto-code-env
+
 jobs:
   validate:
     name: ${{ matrix.arch }}
@@ -30,6 +33,10 @@ jobs:
           docker build --check .
           docker buildx bake --print dev-full dev-pilot dev-hermes dev-both
           find . -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+          test/init.sh
+          test/health.sh
+          test/sshd.sh
+          test/workspace-state.sh
 
       - name: Build and smoke all variants
         env:
@@ -50,4 +57,12 @@ jobs:
             nested=0
             [ "$target" != dev-both ] || nested=1
             PLATFORM="$PLATFORM" NESTED_DOCKER="$nested" test/smoke.sh "$target" "$image"
+            old_image="${IMAGE}:${target}-latest"
+            docker pull --platform "$PLATFORM" "$old_image"
+            if ! docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$old_image" -c \
+              'test "$(id -u dev)" = 1000 && command -v auto-code-init auto-code-health auto-code-sshd >/dev/null'; then
+              echo "${old_image} lacks the workspace lifecycle contract; using the candidate for bootstrap coverage"
+              old_image="$image"
+            fi
+            test/workspace.sh "$target" "$old_image" "$image"
           done

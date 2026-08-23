@@ -21,7 +21,7 @@ docker image inspect "$image" >/dev/null || fail "image not found: $image"
 run 'test "$(id -u)" = 1000 && test "$(id -g)" = 1000 && test "$USER" = dev && test "$HOME" = /home/dev' \
   || fail 'dev identity is not uid/gid 1000 with /home/dev'
 
-run 'for tool in bash git curl jq make omni ssh ssh-add sshd auto-code-sshd rbw rbw-agent ssh-secret-run pinentry-curses; do command -v "$tool" >/dev/null || exit 1; done' \
+run 'for tool in bash git curl jq make omni ssh ssh-add sshd auto-code-health auto-code-init auto-code-sshd rbw rbw-agent ssh-secret-run pinentry-curses; do command -v "$tool" >/dev/null || exit 1; done' \
   || fail 'core tools are missing'
 
 run '
@@ -53,8 +53,9 @@ run '
   tmp=$(mktemp -d)
   trap "auto-code-sshd stop; rm -rf \"$tmp\"" EXIT
   ssh-keygen -q -t ed25519 -N "" -f "$tmp/client"
+  ssh-keygen -q -t ed25519 -N "" -f "$tmp/client-rotated"
   AUTO_CODE_AUTHORIZED_KEYS="$(cat "$tmp/client.pub")" auto-code-sshd start
-  auto-code-sshd start
+  AUTO_CODE_AUTHORIZED_KEYS="$(cat "$tmp/client.pub")" auto-code-sshd start
   sudo sshd -T | grep -qx "permitrootlogin no"
   sudo sshd -T | grep -qx "passwordauthentication no"
   sudo sshd -T | grep -qx "kbdinteractiveauthentication no"
@@ -62,7 +63,7 @@ run '
   sudo sshd -T | grep -qx "allowusers dev"
   sudo test -s /var/lib/auto-code-env/sshd/ssh_host_ed25519_key
   test "$(sudo stat -c %a /var/lib/auto-code-env/sshd/ssh_host_ed25519_key)" = 600
-  ssh-keyscan -q -p 22 127.0.0.1 > "$tmp/known_hosts"
+  ssh-keyscan -p 22 127.0.0.1 > "$tmp/known_hosts" 2>/dev/null
   ssh -p 22 -i "$tmp/client" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
     -o UserKnownHostsFile="$tmp/known_hosts" dev@127.0.0.1 \
     "test \"\$(id -u)\" = 1000 &&
@@ -71,10 +72,11 @@ run '
      command -v go rbw omni >/dev/null"
 
   auto-code-sshd stop
-  sudo rm -f /home/dev/.ssh/authorized_keys
-  printf %s "$(cat "$tmp/client.pub")" > "$tmp/authorized_keys"
+  printf %s "$(cat "$tmp/client-rotated.pub")" > "$tmp/authorized_keys"
   AUTO_CODE_AUTHORIZED_KEYS_FILE="$tmp/authorized_keys" auto-code-sshd start
-  ssh -p 22 -i "$tmp/client" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+  if ssh -p 22 -i "$tmp/client" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="$tmp/known_hosts" dev@127.0.0.1 true >/dev/null 2>&1; then exit 1; fi
+  ssh -p 22 -i "$tmp/client-rotated" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
     -o UserKnownHostsFile="$tmp/known_hosts" dev@127.0.0.1 true
 ' || fail 'public-key SSH server contract or real login failed'
 
@@ -97,6 +99,19 @@ case "$target" in
     ;;
 esac
 
+case "$target" in
+  dev-full)
+    run '! command -v pilot >/dev/null 2>&1 && ! command -v hermes >/dev/null 2>&1 && test ! -e /usr/local/bin/pilot && test ! -d /opt/pilot && test ! -d /opt/auto-code-env/.hermes' \
+      || fail 'plain image contains a persona overlay'
+    ;;
+  dev-pilot)
+    run '! command -v hermes >/dev/null 2>&1 && test ! -d /opt/auto-code-env/.hermes' || fail 'Pilot image contains Hermes'
+    ;;
+  dev-hermes)
+    run '! command -v pilot >/dev/null 2>&1 && test ! -e /usr/local/bin/pilot && test ! -d /opt/pilot' || fail 'Hermes image contains Pilot'
+    ;;
+esac
+
 run_offline '
   set -a
   . /usr/local/share/auto-code-env/versions.env
@@ -111,12 +126,16 @@ run '
   set +a
   test -n "$OMNI_VERSION"
   test -n "$DOTFILES_COMMIT"
+  test "$OMNI_CONFIG" = /opt/dotfiles/dotfiles/omni/.config/omni/settings.json
   test "$(omni --version | sed -nE "s/.*([0-9]+\\.[0-9]+\\.[0-9]+).*/\\1/p")" = "$OMNI_VERSION"
   test "$(git -C /opt/dotfiles rev-parse HEAD)" = "$DOTFILES_COMMIT"
+  test -z "$(git -C /opt/dotfiles status --porcelain)"
+  test ! -e /opt/omni-build
+  test -z "${OMNI_HOSTNAME:-}"
 ' || fail 'configured Omni or dotfiles version does not match versions.env'
 
-# The entrypoint invokes this wrapper. Without a TTY it must be a no-op: image
-# startup must never mutate a mounted home directory or attempt a dots sync.
+# The entrypoint must strictly initialize a fresh persistent home without
+# network access before executing the requested process.
 dots_volume="auto-code-env-smoke-dots-$RANDOM-$RANDOM"
 nested_project=""
 cleanup_nested() {
@@ -137,41 +156,38 @@ trap cleanup EXIT
 docker volume create "$dots_volume" >/dev/null
 docker run --rm --platform "$platform" --user root --mount "source=$dots_volume,target=/home/dev" \
   --entrypoint /bin/bash "$image" -c 'chown dev:dev /home/dev'
-docker run --rm --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
-  --entrypoint /bin/bash "$image" -c 'auto-code-env-dots; test ! -e "$HOME/.local/state/auto-code-env/dots.attempted"' \
-  || fail 'noninteractive dots attempted a sync'
+docker run --rm --network none --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
+  --entrypoint /usr/local/bin/auto-code-entrypoint "$image" /bin/bash -c '
+    test -s /run/auto-code-env/ready
+    test -d "$HOME/dotfiles/.git"
+    test -d "$HOME/workspace"
+    test -L "$HOME/.zshrc"
+    test -L "$HOME/.config/omni/settings.json"
+    test "$OMNI_CONFIG" = "$HOME/.config/omni/settings.json"
+  ' || fail 'fresh persistent home did not initialize offline'
 
-# Two TTY-backed attempts share a home. Exactly one may acquire the atomic lock;
-# both must leave a completed state and no stale lock.
+docker run --rm --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
+  --entrypoint /bin/bash "$image" -c 'printf "preserve me\n" > "$HOME/workspace/sentinel"; printf "local change\n" > "$HOME/dotfiles/local-change"'
+
+# Concurrent boots share one persistent lock. Both must wait for reconciliation,
+# preserve local state, and leave the lock reusable.
 for _ in 1 2; do
-  docker run --rm --platform "$platform" -t --user dev --mount "source=$dots_volume,target=/home/dev" \
-    --entrypoint /bin/bash "$image" -c auto-code-env-dots &
+  docker run --rm --network none --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
+    --entrypoint /usr/local/bin/auto-code-entrypoint "$image" /bin/true &
 done
 wait
 docker run --rm --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
   --entrypoint /bin/bash "$image" -c '
-    test -f "$HOME/.local/state/auto-code-env/dots.attempted" &&
-    test -f "$HOME/.local/state/auto-code-env/dots.succeeded" &&
-    test -L "$HOME/.zshrc" &&
-    flock -n "$HOME/.local/state/auto-code-env/dots.lock" true
-  ' || fail 'concurrent interactive dots did not leave a clean completed state'
+    grep -qx "preserve me" "$HOME/workspace/sentinel" &&
+    grep -qx "local change" "$HOME/dotfiles/local-change" &&
+    flock -n "$HOME/.local/state/auto-code-env/init.lock" true
+  ' || fail 'recreation did not preserve workspace, dotfiles, or initialization lock'
 
 docker run --rm --platform "$platform" --user dev --mount "source=$dots_volume,target=/home/dev" \
   --entrypoint /usr/bin/zsh "$image" -ic '
     test "$OMNI_CONFIG" = "$HOME/.config/omni/settings.json"
     test -L "$HOME/.config/omni/settings.json"
   ' || fail 'interactive shell did not select the synced Omni config'
-
-docker run --rm --platform "$platform" --user dev \
-  --mount "source=$dots_volume,target=/home/dev" --entrypoint /bin/bash "$image" -c '
-    lock="$HOME/.local/state/auto-code-env/dots.lock"
-    bash -c '\''exec 9>"$1"; flock 9; while :; do :; done'\'' _ "$lock" & holder=$!
-    sleep 1
-    if flock -n "$lock" true; then kill -9 "$holder"; exit 1; fi
-    kill -9 "$holder"
-    wait "$holder" 2>/dev/null || true
-    flock -n "$lock" true
-  ' || fail 'dotfiles lock was not released after its holder died'
 
 if [[ "$target" == dev-pilot || "$target" == dev-both ]]; then
   run '

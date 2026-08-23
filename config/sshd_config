@@ -12,7 +12,7 @@ KbdInteractiveAuthentication no
 PermitEmptyPasswords no
 PubkeyAuthentication yes
 AuthenticationMethods publickey
-AuthorizedKeysFile .ssh/authorized_keys
+AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys.d/auto-code
 AllowUsers dev
 
 SetEnv XDG_RUNTIME_DIR=/run/user/1000 SSH_AUTH_SOCK=/run/user/1000/rbw/ssh-agent-socket PATH=/home/dev/.local/bin:/opt/auto-code-env/.local/bin:/opt/auto-code-env/.bun/bin:/opt/auto-code-env/.cargo/bin:/opt/auto-code-env/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
