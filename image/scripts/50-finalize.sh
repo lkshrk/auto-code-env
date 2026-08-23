@@ -2,8 +2,8 @@
 set -euo pipefail
 opt=/opt/devbox
 
-# shellcheck disable=SC2012
-node_bin=$(ls -d "$opt"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1 || true)
+shopt -s nullglob
+node_bin=$(printf '%s\n' "$opt"/.nvm/versions/node/*/bin | sort -V | tail -1)
 if [ -n "$node_bin" ]; then
   for b in node npm npx corepack; do
     [ -x "$node_bin/$b" ] && ln -sf "$node_bin/$b" "$opt/.local/bin/$b"
