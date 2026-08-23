@@ -32,15 +32,17 @@ change frequency so cache invalidation stays local:
 
 | stage     | content                                                        |
 |-----------|----------------------------------------------------------------|
-| `base`    | `debian:trixie-slim`, user `dev` uid/gid 1000, sudo NOPASSWD, apt prereqs from dotfiles' `scripts/setup-workspace-linux.sh`, playwright chromium system libs |
+| `base`    | `debian:trixie-slim`, user `dev` uid/gid 1000, sudo NOPASSWD, apt prereqs from dotfiles' `scripts/setup-workspace-linux.sh` |
 | `omni`    | omni binary (dotfiles `scripts/install-omni-latest.sh`), dotfiles clone at pinned commit into `/opt/devbox/dotfiles` (build-time config source) |
-| `core`    | `omni tools sync core dev dev-tooling shell infra prereqs test-tooling` |
+| `core`    | `omni tools sync core dev dev-tooling shell prereqs test-tooling` |
 | `go`      | `omni tools sync go`                                           |
 | `python`  | `omni tools sync python`                                       |
 | `ts`      | `omni tools sync ts`                                           |
 | `lua`     | `omni tools sync lua`                                          |
+| `browser` | apt libs for headless chromium/firefox (`playwright install-deps`), shared by project Playwright, shiplight and camofox |
 | `ai`      | `omni tools sync ai ai-plugins`                                |
-| `agents`  | `omni tools sync agents` (hermes, pilot, pilot shims)          |
+| `infra`   | `omni tools sync infra` (k8s/gitops CLIs)                      |
+| `agents`  | `omni tools sync agents` (hermes, camofox, pilot, pilot shims) |
 | `runtime` | `devbox-init`, `/etc/profile.d/devbox.sh`, OCI labels, entrypoint |
 
 Rules:
@@ -181,6 +183,25 @@ Works with docker or podman. k8s one-shot = plain Job manifest example in
   `agents` group, add `pilot` tool, per-tool `bin_dir` where needed.
 - **h-cloud**: delete Coder templates dir; point hermes-hq and pilot
   workloads at `devbox` image with `command`; Renovate for the tag.
+
+## Image size
+
+Measured after the first build (`dive`, `docker history`), then cut in
+this order:
+
+1. BuildKit cache mounts on every tool stage (`uv`, `bun`, `npm`, `go-build`,
+   apt) so download caches never land in a layer.
+2. dpkg `path-exclude` for `/usr/share/{doc,man,info,locale}`.
+3. No `build-essential` (already proven: 435 -> 200 MB in `/usr`).
+4. Heavy, narrowly used groups (`browser`, `infra`, `agents`) are the last
+   tool stages, so a slimmer bake target is one `target=` line if ever
+   needed. Not published now.
+5. Push with `compression=zstd,force-compression=true`.
+6. The `devbox` omni host never includes `desk`, `gaming`, `mac`, `priv`,
+   `utils`, `omni`. `core` (incl. neovim, tmux) is in.
+
+Not done: `--squash` (kills layer caching), Alpine base, separate agent
+image. Target: under 3 GB.
 
 ## Risks
 
