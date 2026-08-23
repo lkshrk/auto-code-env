@@ -5,8 +5,8 @@ Status: draft, awaiting review
 
 ## Goal
 
-Replace the Hermes-only control-hub image and the ten per-project Coder
-templates in h-cloud with **one image family** (`ghcr.io/lkshrk/devbox:<variant>`)
+Target state: the Hermes-only control-hub image and the ten per-project
+Coder templates in h-cloud are replaced by **one image family** (`ghcr.io/lkshrk/devbox:<variant>`)
 built from one Containerfile, published as
 `ghcr.io/lkshrk/devbox/<variant>:<calver>` (+ `:latest`), and a small set
 of launchers that run it:
@@ -17,6 +17,11 @@ of launchers that run it:
 - personal local containers on a laptop
 
 Tools are baked into the image. Dotfiles/env are synced at every start.
+
+Rollout is additive first: phase 1 ships the images, a new `devbox` Coder
+template and the local launcher **next to** everything that exists today;
+nothing in h-cloud is removed or repointed. Phase 2 switches consumers and
+deletes the old parts after the new ones are proven. See "Rollout".
 
 ## Non-goals
 
@@ -133,7 +138,7 @@ through this one script. No second copy of bootstrap logic.
 
 ### Coder
 
-One template `coder/devbox/` replaces h-cloud's ten. Per-project content
+One template `coder/devbox/` (eventually replacing h-cloud's ten). Per-project content
 becomes `coder_workspace_preset` blocks (repos, deployment_url, dind,
 playwright, access profile). The access profile (`base`, `civora`,
 `routivo`, `pub`) selects the service account and namespace as today; it
@@ -159,11 +164,10 @@ chain is: release -> Renovate PR here -> merge -> push -> banner. The
 re-prompt. The `coderd` Terraform provider was considered and rejected:
 needs remote state, no benefit over the CLI.
 
-h-cloud removes `kubernetes/apps/coder/coder/templates/` and its
-`coder-templates.yaml`. The three `hermes-worker-*` templates here are
-deleted; Hermes creates `devbox` workspaces with a preset instead.
+The template name `devbox` does not collide with any h-cloud template,
+so both sets coexist in the same Coder deployment during phase 1.
 
-### Agent pods (h-cloud)
+### Agent pods (h-cloud, phase 2)
 
 Hermes hub and Pilot: Deployments/StatefulSets in h-cloud with
 `image: ghcr.io/lkshrk/devbox/hermes:<calver>` / `devbox/pilot:<calver>`, `command` set
@@ -201,13 +205,40 @@ Works with docker or podman. k8s one-shot = plain Job manifest example in
 - One GHCR package per variant (`devbox/go`, `devbox/full`, ...): tags are
   pure calver, so Renovate/Flux image policies need no custom regex.
 
-## Repo changes
+## Rollout
 
-- Rename product to `auto-code-env` / image `devbox` in README, labels,
-  workflows. Remove Hermes-hub framing.
-- Delete `coder/templates/hermes-worker-*`, `coder/templates/common.tf`.
-- Docs collapse to `README.md` + `docs/architecture.md` (layer rationale,
-  install layout, shadowing rules, launcher matrix). Delete the TBD docs.
+### Phase 1 - add (this repo only, plus one dotfiles change)
+
+1. dotfiles: `devbox` omni host, `agent-hermes` / `agent-pilot` groups,
+   `pilot` tool. Additive; existing `coder`/`hermes` hosts untouched.
+2. `image/Containerfile` + `image/scripts/` + `docker-bake.hcl`, all seven
+   variants. `validate.yaml` builds and smoke-tests them on PRs;
+   `release.yaml` publishes `ghcr.io/lkshrk/devbox/<variant>:<calver>`.
+   The existing hermes-hq image build keeps running unchanged until phase 2.
+3. `coder/devbox/` template with presets; `coder-templates.yaml` pushes it
+   as a **new** template next to h-cloud's. Existing workspaces unaffected.
+4. `scripts/devbox` local launcher.
+5. README describes both (old = current, new = devbox preview).
+
+Done when: each variant builds and passes smoke; a `devbox` workspace per
+variant starts in Coder with dots synced and repos cloned; `devbox up`
+works locally on macOS; hermes and pilot binaries run `--version` inside
+`devbox/hermes` and `devbox/pilot` containers.
+
+### Phase 2 - switch and delete (after phase 1 proven in daily use)
+
+1. h-cloud: hermes-hq and pilot workloads -> `devbox/hermes`,
+   `devbox/pilot` with `command` + `DEVBOX_DOTS=0`. Verify pods healthy.
+2. Recreate personal workspaces on `devbox` (home PVCs are per workspace;
+   old ones stay until deleted by hand).
+3. h-cloud: delete `kubernetes/apps/coder/coder/templates/` and its
+   `coder-templates.yaml`; delete the old templates in Coder.
+4. This repo: delete `coder/templates/hermes-worker-*`, `common.tf`, the
+   hermes-hq image path in `release.yaml`, the TBD docs; rename product to
+   `auto-code-env` everywhere; `docs/architecture.md` becomes the single
+   design page.
+
+Each phase-2 step is its own PR and independently revertible.
 
 ## Dependencies outside this repo
 
