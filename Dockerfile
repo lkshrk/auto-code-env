@@ -63,7 +63,7 @@ RUN case "$TARGETARCH" in \
 FROM base AS dotfiles
 ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
 ARG DOTFILES_REF=main
-ARG DOTFILES_COMMIT=53b04d9df0682991c4d7e010b937a4fce29413fb
+ARG DOTFILES_COMMIT=9865ec5e1817db3e36e8af3eb05ad960af41b466
 RUN git init /opt/dotfiles && cd /opt/dotfiles && git remote add origin "$DOTFILES_REPO" \
  && git fetch --depth=1 origin "$DOTFILES_COMMIT" \
  && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "$DOTFILES_COMMIT" \
