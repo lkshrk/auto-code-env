@@ -269,7 +269,8 @@ RUN --mount=type=cache,target=/opt/auto-code-env/.cache,uid=1000,gid=1000 \
     --mount=type=secret,id=GITHUB_TOKEN,required=false,uid=1000 \
     token="$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null || true)" \
  && if [ -n "$token" ]; then \
-      curl -fsSL -H "Authorization: Bearer $token" "https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_REF}/scripts/install.sh" -o /tmp/hermes-install.sh; \
+      curl -fsSL -H 'Accept: application/vnd.github.raw+json' -H "Authorization: Bearer $token" \
+        "https://api.github.com/repos/NousResearch/hermes-agent/contents/scripts/install.sh?ref=${HERMES_COMMIT}" -o /tmp/hermes-install.sh; \
     else \
       curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_REF}/scripts/install.sh" -o /tmp/hermes-install.sh; \
     fi \
