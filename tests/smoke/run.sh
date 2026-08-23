@@ -3,7 +3,7 @@ set -euo pipefail
 variant="${1:?variant}"
 fail=0
 # shellcheck disable=SC2001
-check() { printf '%-28s' "$1"; if out=$(bash -lc "$2" 2>&1); then echo "ok  ${out%%$'\n'*}"; else echo "FAIL"; echo "$out" | sed 's/^/    /'; fail=1; fi; }
+check() { printf '%-28s' "$1"; if out=$(bash -lc "set -o pipefail; $2" 2>&1); then echo "ok  ${out%%$'\n'*}"; else echo "FAIL"; echo "$out" | sed 's/^/    /'; fail=1; fi; }
 
 [ "$(id -u)" = 1000 ] || { echo "uid is $(id -u), want 1000"; fail=1; }
 [ "$HOME" = /home/dev ] || { echo "HOME is $HOME"; fail=1; }
@@ -44,7 +44,7 @@ esac
 [ "${DEVBOX_SMOKE_OFFLINE:-0}" = 1 ] || check "devbox-init dots"  "DEVBOX_DOTS=1 HOME=/tmp/init$$ devbox-init true"
 check "devbox-init nodots" "DEVBOX_DOTS=0 devbox-init true"
 
-if grep -rEIl 'ghp_[A-Za-z0-9]{36}|sk-ant-[A-Za-z0-9_-]{20,}|-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' /opt/devbox /etc 2>/dev/null | head -1 | grep -q .; then
+if grep -rEIl 'ghp_[A-Za-z0-9]{36}|gh[opusr]_[A-Za-z0-9]{36}|sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC|DSA|PGP) PRIVATE KEY' /opt/devbox /etc 2>/dev/null | head -1 | grep -q .; then
   echo "token-like string found in image"; fail=1
 fi
 
