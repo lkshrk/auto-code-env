@@ -6,8 +6,8 @@ Status: draft, awaiting review
 ## Goal
 
 Replace the Hermes-only control-hub image and the ten per-project Coder
-templates in h-cloud with **one image** (`ghcr.io/lkshrk/devbox`) that
-carries the full dev toolchain, and a small set of launchers that run it:
+templates in h-cloud with **one image family** (`ghcr.io/lkshrk/devbox:<variant>`)
+built from one Containerfile, and a small set of launchers that run it:
 
 - Coder workspaces (human, interactive, create/pause/delete on demand)
 - long-running agent pods (Hermes gateway, Pilot)
@@ -18,44 +18,55 @@ Tools are baked into the image. Dotfiles/env are synced at every start.
 
 ## Non-goals
 
-- Stack-split images (`devbox:go`, `devbox:ts`). Layering allows it later;
-  not published now.
-- Hardened "no AI tools" hub image. Hermes and Pilot run on the same image
-  as everything else.
+- Arbitrary stack combinations. Only the variants listed below are published.
+- Hardened "no AI tools" hub image. Hermes and Pilot get claude/codex too.
 - Owning Kubernetes manifests, secrets, or RBAC. Those stay in h-cloud.
 - Replacing Coder. Coder stays the cluster workspace lifecycle manager.
 
-## Image
+## Image family
 
-`image/Containerfile`, multi-stage, one concern per stage, ordered by
-change frequency so cache invalidation stays local:
+One `image/Containerfile`, multi-stage. `docker-bake.hcl` turns it into
+eight published variants:
+
+| tag               | stages                                              |
+|-------------------|-----------------------------------------------------|
+| `devbox:go`       | base, omni, core, ai, stack(go)                     |
+| `devbox:python`   | base, omni, core, ai, stack(python)                 |
+| `devbox:ts`       | base, omni, core, ai, stack(ts), browser            |
+| `devbox:lua`      | base, omni, core, ai, stack(lua)                    |
+| `devbox:full`     | base, omni, core, ai, stack(go python ts lua), browser, infra |
+| `devbox:hermes`   | full + agent(hermes)                                |
+| `devbox:pilot`    | full + agent(pilot)                                 |
+
+Stages, ordered so the shared prefix `base -> omni -> core -> ai` is built
+once and cached for every variant:
 
 | stage     | content                                                        |
 |-----------|----------------------------------------------------------------|
 | `base`    | `debian:trixie-slim`, user `dev` uid/gid 1000, sudo NOPASSWD, apt prereqs from dotfiles' `scripts/setup-workspace-linux.sh` |
 | `omni`    | omni binary (dotfiles `scripts/install-omni-latest.sh`), dotfiles clone at pinned commit into `/opt/devbox/dotfiles` (build-time config source) |
 | `core`    | `omni tools sync core dev dev-tooling shell prereqs test-tooling` |
-| `go`      | `omni tools sync go`                                           |
-| `python`  | `omni tools sync python`                                       |
-| `ts`      | `omni tools sync ts`                                           |
-| `lua`     | `omni tools sync lua`                                          |
+| `ai`      | bun (JS runtime for codex/claude) + `omni tools sync ai ai-plugins` |
+| `stack`   | `ARG STACKS` -> `omni tools sync $STACKS`; one RUN per group so `full` caches per language |
 | `browser` | apt libs for headless chromium/firefox (`playwright install-deps`), shared by project Playwright, shiplight and camofox |
-| `ai`      | `omni tools sync ai ai-plugins`                                |
 | `infra`   | `omni tools sync infra` (k8s/gitops CLIs)                      |
-| `agents`  | `omni tools sync agents` (hermes, camofox, pilot, pilot shims) |
-| `runtime` | `devbox-init`, `/etc/profile.d/devbox.sh`, OCI labels, entrypoint |
+| `agent`   | `ARG AGENT` -> `omni tools sync agent-$AGENT` (hermes+camofox, or pilot+shims) |
+| `runtime` | `devbox-init`, `/etc/profile.d/devbox.sh`, OCI labels, entrypoint; applied to every variant |
 
 Rules:
 
 - Each stage is `COPY image/scripts/NN-name.sh` + `RUN`. No apt lists or
   install logic inline. Rationale lives in `docs/architecture.md`, not
   in Containerfile comments.
-- Tool groups come from a new `devbox` host in dotfiles
-  `omni/.config/omni/settings.json`. A new `agents` group holds hermes
-  and pilot (pilot is added to `tools.json`).
-- `docker-bake.hcl` defines the `devbox` target, shared args
-  (`DOTFILES_REF`, `DOTFILES_COMMIT`), tags and labels. CI runs
-  `docker buildx bake`.
+- Tool groups come from dotfiles `omni/.config/omni/settings.json`: a
+  `devbox` host (core groups + ai + all stacks + infra) plus groups
+  `agent-hermes` (hermes, camofox-browser) and `agent-pilot` (pilot,
+  pilot shims). Pilot is added to `tools.json`.
+- `docker-bake.hcl` holds the variant matrix, shared args
+  (`DOTFILES_REF`, `DOTFILES_COMMIT`), tags and labels. Adding a language
+  = new omni group + one matrix entry.
+- Per-language variants rebuild their own `stack` layer (different parent
+  than `full`); cache mounts keep that cheap and bake runs them in parallel.
 
 ### Install layout: `/opt/devbox`
 
@@ -128,7 +139,8 @@ is a preset value, not derived from template name.
 
 Startup script = Coder-only steps (kubeconfig from mounted SA token, repo
 clone via git-clone module) then `devbox-init`. No apt, no `omni tools
-sync`, no playwright install. Image ref pinned by tag in `main.tf`,
+sync`, no playwright install. Each preset picks a variant
+(`go|python|ts|lua|full`); the image tag is pinned once in `main.tf`,
 bumped by Renovate in this repo.
 
 `coder-templates.yaml` pushes the template from this repo. h-cloud
@@ -139,7 +151,7 @@ workspaces with a preset instead.
 ### Agent pods (h-cloud)
 
 Hermes hub and Pilot: Deployments/StatefulSets in h-cloud with
-`image: ghcr.io/lkshrk/devbox:<tag>`, `command` set
+`image: ghcr.io/lkshrk/devbox:hermes-<tag>` / `:pilot-<tag>`, `command` set
 (`hermes gateway run`, `pilot start ...`), `DEVBOX_DOTS=0`, secrets via
 env from SOPS as today. Pilot shims (`gh` wrapper, notify/retry helpers)
 ship in the image under `/opt/devbox/pilot/bin`. Image bump via the
@@ -161,7 +173,7 @@ Works with docker or podman. k8s one-shot = plain Job manifest example in
 
 ## Release / CI
 
-- `validate.yaml` (PR): `docker buildx bake` (no push) + smoke test:
+- `validate.yaml` (PR): `docker buildx bake` all variants (no push) + per-variant smoke test:
   `claude --version`, `codex --version`, `go version`, `bun --version`,
   `uv --version`, `hermes --version`, `pilot version`, `devbox-init true`
   with `DEVBOX_DOTS=1` against a throwaway home, shadow-scan exit 0;
@@ -179,8 +191,8 @@ Works with docker or podman. k8s one-shot = plain Job manifest example in
 
 ## Dependencies outside this repo
 
-- **dotfiles**: add `devbox` host entry (all groups + `agents`), add
-  `agents` group, add `pilot` tool, per-tool `bin_dir` where needed.
+- **dotfiles**: add `devbox` host entry, groups `agent-hermes` and
+  `agent-pilot`, `pilot` tool, per-tool `bin_dir` where needed.
 - **h-cloud**: delete Coder templates dir; point hermes-hq and pilot
   workloads at `devbox` image with `command`; Renovate for the tag.
 
@@ -193,15 +205,14 @@ this order:
    apt) so download caches never land in a layer.
 2. dpkg `path-exclude` for `/usr/share/{doc,man,info,locale}`.
 3. No `build-essential` (already proven: 435 -> 200 MB in `/usr`).
-4. Heavy, narrowly used groups (`browser`, `infra`, `agents`) are the last
-   tool stages, so a slimmer bake target is one `target=` line if ever
-   needed. Not published now.
+4. Heavy, narrowly used groups (`browser`, `infra`, `agent`) only enter
+   the variants that need them (see matrix).
 5. Push with `compression=zstd,force-compression=true`.
 6. The `devbox` omni host never includes `desk`, `gaming`, `mac`, `priv`,
    `utils`, `omni`. `core` (incl. neovim, tmux) is in.
 
-Not done: `--squash` (kills layer caching), Alpine base, separate agent
-image. Target: under 3 GB.
+Not done: `--squash` (kills layer caching), Alpine base. Target: language
+variants under 2 GB, `full` under 3 GB.
 
 ## Risks
 
