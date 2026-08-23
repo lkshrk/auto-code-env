@@ -256,7 +256,7 @@ COPY --chmod=0755 pilot/bin/ /opt/pilot/bin/
 FROM runtime-core AS pilot-runtime
 ARG PILOT_VERSION=2.266.0-fork.1
 ARG LAZYGIT_VERSION=0.64.1
-ENV PATH=/opt/pilot/bin:${PATH} REAL_GH=/usr/bin/gh
+ENV PATH=/opt/pilot/bin:${PATH}
 COPY --link --from=pilot-files / /
 RUN printf '%s\n' "PILOT_VERSION=${PILOT_VERSION}" "LAZYGIT_VERSION=${LAZYGIT_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
 
@@ -279,7 +279,7 @@ ENV HERMES_HOME=/home/dev/.hermes
 FROM hermes-runtime AS both-runtime
 ARG PILOT_VERSION=2.266.0-fork.1
 ARG LAZYGIT_VERSION=0.64.1
-ENV PATH=/opt/pilot/bin:${PATH} REAL_GH=/usr/bin/gh
+ENV PATH=/opt/pilot/bin:${PATH}
 COPY --link --from=pilot-files / /
 RUN printf '%s\n' "PILOT_VERSION=${PILOT_VERSION}" "LAZYGIT_VERSION=${LAZYGIT_VERSION}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null
 

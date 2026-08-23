@@ -191,12 +191,10 @@ docker run --rm --platform "$platform" --user dev --mount "source=$dots_volume,t
 
 if [[ "$target" == dev-pilot || "$target" == dev-both ]]; then
   run '
-    test "$(command -v gh)" = /opt/pilot/bin/gh
-    test "$REAL_GH" = /usr/bin/gh
     test -x /usr/bin/gh
     test -x /usr/local/bin/pilot
     pilot version >/dev/null
-  ' || fail 'Pilot PATH, real gh, backend, or version is broken'
+  ' || fail 'Pilot backend, gh, or version is broken'
 
   # Exercise the real entrypoint without launching credential-gated Pilot.
   docker run --rm --platform "$platform" --user root --mount "source=$dots_volume,target=/home/dev" \

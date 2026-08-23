@@ -147,8 +147,7 @@ normal remote-development port forwarding.
 
 All variants use the unprivileged `dev` user (UID/GID 1000), default to an
 interactive shell, and have writable home `/home/dev`. `dev-pilot` and
-`dev-both` provide Pilot adapters under
-`/opt/pilot/bin`, with the `gh` shim delegating to `REAL_GH=/usr/bin/gh`.
+`dev-both` provide the Pilot binary and `/opt/pilot/bin/pilot-entrypoint`.
 `dev-hermes` and `dev-both` provide Hermes. Service deployments explicitly
 run `/opt/pilot/bin/pilot-entrypoint` or `hermes gateway run`; the combined
 image does not hide a process supervisor.
