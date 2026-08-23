@@ -17,3 +17,14 @@ __pycache__/
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
+
+# Agent/AI session state
+.omx/
+.omc/
+.claude/
+.codex/
+.agents/
+.wolf/
+.superpowers/
+.taskless/
+.agent-progress.md
