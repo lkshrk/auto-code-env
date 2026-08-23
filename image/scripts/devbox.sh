@@ -1,0 +1,13 @@
+# shellcheck shell=bash
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/go/bin:$HOME/.cargo/bin:/opt/devbox/.local/bin:/opt/devbox/.bun/bin:/opt/devbox/go/bin:/opt/devbox/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export TMPDIR="$HOME/.tmp"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_DATA_HOME="$HOME/.local/share"
+export UV_CACHE_DIR="$HOME/.cache/uv"
+export npm_config_store_dir="$HOME/.local/share/pnpm/store"
+export pnpm_config_store_dir="$HOME/.local/share/pnpm/store"
+export BUN_INSTALL_CACHE_DIR="$HOME/.cache/bun"
+export GOPATH="$HOME/go"
+export GOCACHE="$HOME/.cache/go-build"
+export GOMODCACHE="$HOME/go/pkg/mod"
+export OMNI_HOSTNAME="${OMNI_HOSTNAME:-devbox}"

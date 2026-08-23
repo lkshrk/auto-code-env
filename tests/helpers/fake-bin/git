@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+echo "git $*" >> "$FAKE_LOG"
+case "$1" in
+  clone) mkdir -p "${@: -1}/.git" ;;
+esac
+exit 0

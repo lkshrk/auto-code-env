@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${DEVBOX_DOTFILES_URL:=https://github.com/lkshrk/dotfiles.git}"
+: "${DEVBOX_DOTS:=1}"
+dotfiles="$HOME/dotfiles"
+
+umask 077
+mkdir -p "$HOME/.tmp" "$HOME/.ssh"
+chmod 700 "$HOME/.tmp" "$HOME/.ssh"
+umask 022
+
+if ! grep -qs '^github.com ' "$HOME/.ssh/known_hosts" 2>/dev/null; then
+  ssh-keyscan -t ed25519,rsa github.com codeberg.org 2>/dev/null >> "$HOME/.ssh/known_hosts" || true
+fi
+
+if [ -n "${CODEX_AUTH_JSON:-}" ]; then
+  mkdir -p "$HOME/.codex"
+  (umask 077; printf '%s' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json")
+fi
+
+if [ -d "$dotfiles/.git" ]; then
+  git -C "$dotfiles" remote set-url origin "$DEVBOX_DOTFILES_URL" || true
+  git -C "$dotfiles" fetch --quiet origin || echo "devbox-init: dotfiles fetch failed, continuing" >&2
+elif [ -e "$dotfiles" ]; then
+  echo "devbox-init: $dotfiles exists but is not a git checkout" >&2
+  exit 1
+else
+  git clone --quiet "$DEVBOX_DOTFILES_URL" "$dotfiles"
+fi
+
+if [ "$DEVBOX_DOTS" = "1" ]; then
+  omni --yes dots sync --use-repo
+fi
+
+for d in "$HOME/.local/bin" "$HOME/.bun/bin"; do
+  [ -d "$d" ] || continue
+  for f in "$d"/*; do
+    [ -x "$f" ] || continue
+    img="/opt/devbox/${d#"$HOME"/}/$(basename "$f")"
+    [ -x "$img" ] && echo "devbox-init: $(basename "$f") from $d shadows image copy $img" >&2
+  done
+done
+
+if [ $# -eq 0 ]; then
+  set -- sleep infinity
+fi
+exec "$@"
