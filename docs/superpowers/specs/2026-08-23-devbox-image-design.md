@@ -7,7 +7,9 @@ Status: draft, awaiting review
 
 Replace the Hermes-only control-hub image and the ten per-project Coder
 templates in h-cloud with **one image family** (`ghcr.io/lkshrk/devbox:<variant>`)
-built from one Containerfile, and a small set of launchers that run it:
+built from one Containerfile, published as
+`ghcr.io/lkshrk/devbox/<variant>:<calver>` (+ `:latest`), and a small set
+of launchers that run it:
 
 - Coder workspaces (human, interactive, create/pause/delete on demand)
 - long-running agent pods (Hermes gateway, Pilot)
@@ -140,18 +142,31 @@ is a preset value, not derived from template name.
 Startup script = Coder-only steps (kubeconfig from mounted SA token, repo
 clone via git-clone module) then `devbox-init`. No apt, no `omni tools
 sync`, no playwright install. Each preset picks a variant
-(`go|python|ts|lua|full`); the image tag is pinned once in `main.tf`,
+(`go|python|ts|lua|full`) -> `ghcr.io/lkshrk/devbox/<variant>:<calver>`;
+the calver is pinned once in `main.tf`,
 bumped by Renovate in this repo.
 
-`coder-templates.yaml` pushes the template from this repo. h-cloud
-removes `kubernetes/apps/coder/coder/templates/`. The three
-`hermes-worker-*` templates are deleted; Hermes creates `devbox`
-workspaces with a preset instead.
+Delivery to the cluster: Coder has no pull/GitOps mode; templates are
+pushed. `coder-templates.yaml` in this repo runs `coder templates push
+devbox --directory coder/devbox --name <short sha> --message "<commit
+subject>" --yes` on main (PRs only `terraform fmt -check` + `validate`).
+`--activate` (default) makes it the active version; every workspace on an
+older version shows Coder's "Update available" banner and `coder list`
+marks it outdated. Users update on their own; `require_active_version`
+stays off. An image tag bump is a template change (`main.tf`), so the
+chain is: release -> Renovate PR here -> merge -> push -> banner. The
+`variant` parameter options stay stable so updates never force a
+re-prompt. The `coderd` Terraform provider was considered and rejected:
+needs remote state, no benefit over the CLI.
+
+h-cloud removes `kubernetes/apps/coder/coder/templates/` and its
+`coder-templates.yaml`. The three `hermes-worker-*` templates here are
+deleted; Hermes creates `devbox` workspaces with a preset instead.
 
 ### Agent pods (h-cloud)
 
 Hermes hub and Pilot: Deployments/StatefulSets in h-cloud with
-`image: ghcr.io/lkshrk/devbox:hermes-<tag>` / `:pilot-<tag>`, `command` set
+`image: ghcr.io/lkshrk/devbox/hermes:<calver>` / `devbox/pilot:<calver>`, `command` set
 (`hermes gateway run`, `pilot start ...`), `DEVBOX_DOTS=0`, secrets via
 env from SOPS as today. Pilot shims (`gh` wrapper, notify/retry helpers)
 ship in the image under `/opt/devbox/pilot/bin`. Image bump via the
@@ -179,7 +194,12 @@ Works with docker or podman. k8s one-shot = plain Job manifest example in
   with `DEVBOX_DOTS=1` against a throwaway home, shadow-scan exit 0;
   `terraform validate` on the Coder template.
 - `release.yaml` (main): calendar tag, bake `--push`, dispatch to h-cloud.
-- Image labels: `org.opencontainers.image.revision`, `dotfiles.commit`.
+- Image labels: `org.opencontainers.image.source` (links each GHCR package
+  to this repo so it inherits public visibility - required: private GHCR
+  on the free tier caps at 500 MB), `org.opencontainers.image.revision`,
+  `dotfiles.commit`.
+- One GHCR package per variant (`devbox/go`, `devbox/full`, ...): tags are
+  pure calver, so Renovate/Flux image policies need no custom regex.
 
 ## Repo changes
 
