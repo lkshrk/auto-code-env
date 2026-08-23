@@ -60,6 +60,9 @@ prepare() {
     sudo ssh-keygen -q -t ed25519 -N '' -f "$state_dir/ssh_host_ed25519_key"
     sudo chmod 0600 "$state_dir/ssh_host_ed25519_key"
   fi
+  if [[ -e "$authorized_keys" ]]; then
+    validate_keys "$authorized_keys" < "$authorized_keys"
+  fi
   sync_managed_keys
   [[ -s "$authorized_keys" || -s "$managed_keys" ]] || {
     echo "auto-code-sshd: provide /run/secrets/authorized_keys or add a manual key with 'auto-code-sshd authorize'" >&2

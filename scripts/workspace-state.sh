@@ -54,7 +54,7 @@ case $action in
   restore)
     [[ -f $archive ]] || { echo "workspace-state: archive not found: $archive" >&2; exit 1; }
     validate_archive "$archive" || { echo "workspace-state: invalid workspace archive: $archive" >&2; exit 1; }
-    docker compose -f "$compose_file" stop dev >/dev/null 2>&1 || true
+    docker compose -f "$compose_file" stop dev
     docker compose -f "$compose_file" run --rm --no-deps --user root \
       --entrypoint /bin/bash -v "$archive_dir:/backup" dev -c '
         set -e

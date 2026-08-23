@@ -63,7 +63,7 @@ RUN case "$TARGETARCH" in \
 FROM base AS dotfiles
 ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
 ARG DOTFILES_REF=main
-ARG DOTFILES_COMMIT=ba658341e178148163c0f86a1660bfa32b9692cf
+ARG DOTFILES_COMMIT=53b04d9df0682991c4d7e010b937a4fce29413fb
 RUN git init /opt/dotfiles && cd /opt/dotfiles && git remote add origin "$DOTFILES_REPO" \
  && git fetch --depth=1 origin "$DOTFILES_COMMIT" \
  && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "$DOTFILES_COMMIT" \
@@ -224,6 +224,7 @@ FROM agent-tools AS runtime-core
 COPY --from=rbw-source /home/dev/.cargo/bin/rbw /home/dev/.cargo/bin/rbw-agent /usr/local/bin/
 RUN rbw_version="$(rbw --version | awk '{print $2}')" \
  && printf '%s\n' "RBW_VERSION=${rbw_version}" | sudo tee -a /usr/local/share/auto-code-env/versions.env >/dev/null \
+ && sudo install -d -o dev -g dev -m 0700 /home/dev/workspace \
  && sudo chown -R dev:dev /home/dev
 WORKDIR /home/dev
 EXPOSE 22
@@ -293,27 +294,31 @@ COPY --chmod=0644 config/sshd_config /etc/ssh/sshd_config.d/99-auto-code-env.con
 FROM runtime-core AS dev-full
 ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
-RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+RUN sudo chmod 0755 /etc /etc/ssh /etc/ssh/ssh_config.d /etc/ssh/sshd_config.d \
+ && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
 FROM pilot-runtime AS dev-pilot
 ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
-RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+RUN sudo chmod 0755 /etc /etc/ssh /etc/ssh/ssh_config.d /etc/ssh/sshd_config.d \
+ && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
 FROM hermes-runtime AS dev-hermes
 ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
-RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+RUN sudo chmod 0755 /etc /etc/ssh /etc/ssh/ssh_config.d /etc/ssh/sshd_config.d \
+ && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]
 
 FROM both-runtime AS dev-both
 ENV OMNI_CONFIG=/opt/dotfiles/dotfiles/omni/.config/omni/settings.json OMNI_HOSTNAME=
 COPY --link --from=final-files / /
-RUN sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
+RUN sudo chmod 0755 /etc /etc/ssh /etc/ssh/ssh_config.d /etc/ssh/sshd_config.d \
+ && sudo sh -c 'cat /usr/local/share/auto-code-env/dotfiles.env >> /usr/local/share/auto-code-env/versions.env && rm /usr/local/share/auto-code-env/dotfiles.env'
 ENTRYPOINT ["/usr/local/bin/auto-code-entrypoint"]
 CMD ["zsh"]

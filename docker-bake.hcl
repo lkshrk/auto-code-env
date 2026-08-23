@@ -1,6 +1,6 @@
 variable "REGISTRY" { default = "ghcr.io/lkshrk/auto-code-env" }
 variable "DEBIAN_IMAGE" { default = "debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258" }
-variable "DOTFILES_COMMIT" { default = "ba658341e178148163c0f86a1660bfa32b9692cf" }
+variable "DOTFILES_COMMIT" { default = "53b04d9df0682991c4d7e010b937a4fce29413fb" }
 variable "DOTFILES_REF" { default = "main" }
 variable "OMNI_VERSION" { default = "0.9.32" }
 variable "OMNI_AMD64_SHA256" { default = "9d2369d5f73622834fb8cf7f15baf2ac5417274a9f49856cf380a8758ad8dbaf" }

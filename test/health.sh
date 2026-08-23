@@ -20,6 +20,9 @@ health() {
 
 health
 if AUTO_CODE_TEST_FAIL_SSH=1 health; then exit 1; fi
+chmod 0500 "$tmp/home"
+if health; then exit 1; fi
+chmod 0700 "$tmp/home"
 rm "$tmp/run/ready"
 if health; then exit 1; fi
 
