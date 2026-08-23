@@ -63,7 +63,7 @@ run '
   sudo sshd -T | grep -qx "allowusers dev"
   sudo test -s /var/lib/auto-code-env/sshd/ssh_host_ed25519_key
   test "$(sudo stat -c %a /var/lib/auto-code-env/sshd/ssh_host_ed25519_key)" = 600
-  ssh-keyscan -q -p 22 127.0.0.1 > "$tmp/known_hosts"
+  ssh-keyscan -p 22 127.0.0.1 > "$tmp/known_hosts" 2>/dev/null
   ssh -p 22 -i "$tmp/client" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
     -o UserKnownHostsFile="$tmp/known_hosts" dev@127.0.0.1 \
     "test \"\$(id -u)\" = 1000 &&

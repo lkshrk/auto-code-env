@@ -40,7 +40,7 @@ compose() { docker compose -f "$repo_dir/workspace.compose.yaml" "$@"; }
 scan_host() {
   : > "$known_hosts"
   for _ in $(seq 1 30); do
-    ssh-keyscan -q -p "$port" 127.0.0.1 > "$known_hosts" 2>/dev/null && return 0
+    ssh-keyscan -p "$port" 127.0.0.1 > "$known_hosts" 2>/dev/null && return 0
     sleep 1
   done
   echo "workspace[$target]: SSH host never became ready" >&2
