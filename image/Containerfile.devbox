@@ -1,0 +1,93 @@
+ARG VARIANT=full
+
+FROM docker.io/library/debian:trixie-slim AS base
+ARG DEVBOX_USER=dev
+ARG DEVBOX_UID=1000
+ARG DEVBOX_GID=1000
+ENV DEVBOX_USER=${DEVBOX_USER} DEVBOX_UID=${DEVBOX_UID} DEVBOX_GID=${DEVBOX_GID}
+COPY scripts/10-base.sh /tmp/
+RUN bash /tmp/10-base.sh && rm /tmp/10-base.sh
+
+FROM base AS omni
+ARG DOTFILES_REPO=https://github.com/lkshrk/dotfiles.git
+ARG DOTFILES_REF=main
+ARG DOTFILES_COMMIT=unknown
+ENV DOTFILES_REPO=${DOTFILES_REPO} DOTFILES_REF=${DOTFILES_REF} DOTFILES_COMMIT=${DOTFILES_COMMIT}
+USER ${DEVBOX_USER}
+COPY --chmod=755 scripts/20-omni.sh scripts/30-tools.sh scripts/40-browser.sh /opt/devbox-build/
+RUN /opt/devbox-build/20-omni.sh
+
+FROM omni AS core
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh prereqs core shell dev dev-tooling test-tooling
+
+FROM core AS ai
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh ai ai-plugins
+
+FROM ai AS stack-go
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh go
+
+FROM ai AS stack-python
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh python
+
+FROM ai AS stack-ts
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh ts
+RUN /opt/devbox-build/40-browser.sh
+
+FROM ai AS stack-lua
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh lua
+
+FROM ai AS stack-full
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh go
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh python
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh ts
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh lua
+RUN /opt/devbox-build/40-browser.sh
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh infra
+
+FROM stack-full AS stack-hermes
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh agent-hermes
+
+FROM stack-full AS stack-pilot
+RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
+    --mount=type=secret,id=github_token,uid=1000 \
+    /opt/devbox-build/30-tools.sh agent-pilot
+
+FROM stack-${VARIANT} AS runtime
+ARG VARIANT
+USER root
+COPY --chmod=755 scripts/50-finalize.sh /tmp/
+RUN /tmp/50-finalize.sh && rm -rf /tmp/50-finalize.sh /opt/devbox-build
+COPY --chmod=755 scripts/devbox-init /usr/local/bin/devbox-init
+COPY --chmod=644 scripts/devbox.sh /etc/profile.d/devbox.sh
+ENV HOME=/home/dev \
+    OMNI_HOSTNAME=devbox \
+    DEVBOX_VARIANT=${VARIANT} \
+    PATH=/home/dev/.local/bin:/home/dev/.bun/bin:/home/dev/go/bin:/home/dev/.cargo/bin:/opt/devbox/.local/bin:/opt/devbox/.bun/bin:/opt/devbox/go/bin:/opt/devbox/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+USER dev
+WORKDIR /home/dev
+ENTRYPOINT ["/usr/local/bin/devbox-init"]
+CMD ["sleep", "infinity"]

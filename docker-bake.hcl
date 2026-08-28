@@ -87,3 +87,35 @@ target "dev-both" {
 }
 
 group "default" { targets = ["dev-full", "dev-pilot", "dev-hermes", "dev-both"] }
+
+variable "DEVBOX_REGISTRY" { default = "ghcr.io/lkshrk/devbox" }
+variable "DEVBOX_VERSION" { default = "dev" }
+variable "DEVBOX_DOTFILES_REF" { default = "main" }
+variable "DEVBOX_DOTFILES_COMMIT" { default = "unknown" }
+
+group "devbox" { targets = ["devbox-go", "devbox-python", "devbox-ts", "devbox-lua", "devbox-full", "devbox-hermes", "devbox-pilot"] }
+
+target "_devbox_common" {
+  context = "image"
+  dockerfile = "Containerfile.devbox"
+  platforms = ["linux/amd64"]
+  args = {
+    DOTFILES_REF = DEVBOX_DOTFILES_REF
+    DOTFILES_COMMIT = DEVBOX_DOTFILES_COMMIT
+  }
+  labels = {
+    "org.opencontainers.image.source" = "https://github.com/lkshrk/auto-code-env"
+    "org.opencontainers.image.revision" = DEVBOX_VERSION
+    "io.lkshrk.devbox.dotfiles-commit" = DEVBOX_DOTFILES_COMMIT
+  }
+  output = ["type=image,compression=zstd,force-compression=true"]
+  secret = ["type=env,id=github_token,env=GITHUB_TOKEN"]
+}
+
+target "devbox-go" { inherits = ["_devbox_common"]; args = { VARIANT = "go" }; tags = ["${DEVBOX_REGISTRY}/go:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/go:latest"] }
+target "devbox-python" { inherits = ["_devbox_common"]; args = { VARIANT = "python" }; tags = ["${DEVBOX_REGISTRY}/python:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/python:latest"] }
+target "devbox-ts" { inherits = ["_devbox_common"]; args = { VARIANT = "ts" }; tags = ["${DEVBOX_REGISTRY}/ts:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/ts:latest"] }
+target "devbox-lua" { inherits = ["_devbox_common"]; args = { VARIANT = "lua" }; tags = ["${DEVBOX_REGISTRY}/lua:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/lua:latest"] }
+target "devbox-full" { inherits = ["_devbox_common"]; args = { VARIANT = "full" }; tags = ["${DEVBOX_REGISTRY}/full:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/full:latest"] }
+target "devbox-hermes" { inherits = ["_devbox_common"]; args = { VARIANT = "hermes" }; tags = ["${DEVBOX_REGISTRY}/hermes:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/hermes:latest"] }
+target "devbox-pilot" { inherits = ["_devbox_common"]; args = { VARIANT = "pilot" }; tags = ["${DEVBOX_REGISTRY}/pilot:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/pilot:latest"] }
