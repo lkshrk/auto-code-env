@@ -17,7 +17,7 @@ One Containerfile (`image/Containerfile.devbox`), multi-stage.
 `docker-bake.hcl` turns it into seven published variants, one GHCR package
 each, published as `ghcr.io/lkshrk/devbox/<variant>:<calver>` (+ `:latest`).
 
-| tag             | stages                                                        |
+| tag             | layers                                                        |
 |-----------------|---------------------------------------------------------------|
 | `devbox/go`     | base, omni, core, ai, stack(go)                               |
 | `devbox/python` | base, omni, core, ai, stack(python)                           |
@@ -35,19 +35,23 @@ which is required: private GHCR on the free tier caps at 500 MB.
 Adding a language is a new omni group plus one matrix entry in
 `docker-bake.hcl`.
 
-## Stages, ordered by change frequency
+## Layers, ordered by change frequency
 
-| stage     | content                                                        |
-|-----------|----------------------------------------------------------------|
-| `base`    | `debian:trixie-slim`, user `dev` uid/gid 1000, sudo NOPASSWD, apt prereqs, dpkg doc/man exclusions |
-| `omni`    | omni binary, dotfiles clone pinned to `DOTFILES_COMMIT` into `/opt/devbox/dotfiles` (build-time config source only) |
-| `core`    | `omni tools sync core dev dev-tooling shell prereqs test-tooling` |
-| `ai`      | bun (the JS runtime for codex and claude) + `omni tools sync ai ai-plugins` |
-| `stack`   | `omni tools sync <language group>`, one `RUN` per group          |
-| `browser` | apt libs for headless chromium/firefox (`playwright install-deps`) |
-| `infra`   | `omni tools sync infra` (k8s/gitops CLIs)                       |
-| `agent`   | `omni tools sync agent-hermes` or `agent-pilot`                 |
-| `runtime` | `devbox-init`, `/etc/profile.d/devbox.sh`, `ENV`, OCI labels, entrypoint |
+| layer group | built as                     | content                            |
+|-------------|------------------------------|------------------------------------|
+| `base`      | stage `base`                 | `debian:trixie-slim`, user `dev` uid/gid 1000, sudo NOPASSWD, apt prereqs, dpkg doc/man exclusions |
+| `omni`      | stage `omni`                 | omni binary, dotfiles clone pinned to `DOTFILES_COMMIT` into `/opt/devbox/dotfiles` (build-time config source only) |
+| `core`      | stage `core`                 | `omni tools sync core dev dev-tooling shell prereqs test-tooling` |
+| `ai`        | stage `ai`                   | bun (the JS runtime for codex and claude) + `omni tools sync ai ai-plugins` |
+| `stack`     | stages `stack-go` … `stack-full` | `omni tools sync <language group>`, one `RUN` per group |
+| `browser`   | `RUN` in `stack-ts`, `stack-full` | apt libs for headless chromium/firefox (`playwright install-deps`) |
+| `infra`     | `RUN` in `stack-full`        | `omni tools sync infra` (k8s/gitops CLIs) |
+| `agent`     | stages `stack-hermes`, `stack-pilot` | `omni tools sync agent-hermes` or `agent-pilot` |
+| `runtime`   | stage `runtime`              | `devbox-init`, `/etc/profile.d/devbox.sh`, `ENV`, OCI labels, entrypoint |
+
+Only the "built as" column names real `FROM` stages. `browser` and `infra`
+are not stages of their own — they are `RUN` layers folded into the stack
+stages that need them, so they cost nothing in the variants that do not.
 
 The order is by change frequency, not by dependency alone. The shared
 prefix `base -> omni -> core -> ai` is identical for every variant, so it is
@@ -61,7 +65,7 @@ Per-language variants have a different parent than `full` and therefore
 rebuild their own stack layer; BuildKit cache mounts keep that cheap and
 bake runs the seven targets in parallel.
 
-Every stage is `COPY image/scripts/NN-name.sh` + `RUN`. No apt lists or
+Every layer is a `COPY image/scripts/NN-name.sh` + `RUN`. No apt lists or
 install logic inline in the Containerfile — the rationale lives here, not
 in Containerfile comments.
 
@@ -239,12 +243,26 @@ Every command that starts a container passes `--env-file` and, when an
 ssh-agent is available, mounts the agent socket (`/run/host-services/ssh-auth.sock`
 on Docker Desktop, `$SSH_AUTH_SOCK` elsewhere) rather than any key.
 
-k8s one-shot, no manifest needed:
+k8s one-shot, no manifest file needed:
 
 ```sh
-kubectl run x --image=ghcr.io/lkshrk/devbox/full:latest --rm -it \
-  -- devbox-init claude -p "..."
+kubectl run devbox-oneshot --rm -it --restart=Never \
+  --image=ghcr.io/lkshrk/devbox/full:latest \
+  --overrides='{"spec":{"containers":[{"name":"devbox-oneshot","image":"ghcr.io/lkshrk/devbox/full:latest","stdin":true,"tty":true,"args":["claude","-p","..."],"envFrom":[{"secretRef":{"name":"coder-workspace-secrets"}}]}]}}'
 ```
+
+The `--overrides` block is not optional decoration: `kubectl run` has no
+`--env-from` flag, so without it the pod starts with no credentials at all.
+`--overrides` is a JSON *merge* patch, which replaces the whole `containers`
+list, so name, image, `stdin` and `tty` have to be repeated inside it.
+
+`--restart=Never` is likewise load-bearing: `kubectl run` still defaults to
+`Always`, which would restart the one-shot forever once the command exits.
+
+`args` is the command, not a trailing `-- ...`: the image `ENTRYPOINT` is
+already `devbox-init`, so `args` become its argv and it runs `claude -p "..."`
+after the bootstrap. Passing the command after `--` as well would name
+`devbox-init` twice.
 
 ## Secrets
 
