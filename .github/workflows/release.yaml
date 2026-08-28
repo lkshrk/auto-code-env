@@ -106,3 +106,34 @@ jobs:
           docker buildx imagetools create "${tags[@]}" \
             "${IMAGE}:${TARGET}-candidate-${RUN_ID}-amd64" \
             "${IMAGE}:${TARGET}-candidate-${RUN_ID}-arm64"
+
+  devbox:
+    name: Build & push devbox ${{ matrix.variant }}
+    needs: candidate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [go, python, ts, lua, full, hermes, pilot]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/bake-action@v6
+        with:
+          targets: devbox-${{ matrix.variant }}
+          push: true
+          set: |
+            *.cache-from=type=gha,scope=devbox-${{ matrix.variant }}
+            *.cache-to=type=gha,scope=devbox-${{ matrix.variant }},mode=max
+        env:
+          DEVBOX_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || format('sha-{0}', github.sha) }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

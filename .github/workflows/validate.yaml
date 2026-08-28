@@ -66,3 +66,61 @@ jobs:
             fi
             test/workspace.sh "$target" "$old_image" "$image"
           done
+
+  devbox-lint:
+    name: Devbox lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Shellcheck and bake syntax
+        run: |
+          shellcheck image/scripts/*.sh image/scripts/devbox-init scripts/devbox tests/smoke/run.sh
+          docker buildx bake --print devbox
+
+      - name: Bats
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bats
+          bats tests/devbox-init.bats tests/devbox.bats
+
+  devbox-coder-template:
+    name: Devbox Coder template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.5
+
+      - run: |
+          terraform -chdir=coder/devbox fmt -check -diff
+          terraform -chdir=coder/devbox init -backend=false -input=false
+          terraform -chdir=coder/devbox validate
+
+  devbox-image:
+    name: Devbox ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [go, python, ts, lua, full, hermes, pilot]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build
+        uses: docker/bake-action@v6
+        with:
+          targets: devbox-${{ matrix.variant }}
+          load: true
+          set: |
+            *.cache-from=type=gha,scope=devbox-${{ matrix.variant }}
+            *.cache-to=type=gha,scope=devbox-${{ matrix.variant }},mode=max
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke
+        run: docker run --rm -v "$PWD/tests/smoke:/smoke:ro" "ghcr.io/lkshrk/devbox/${{ matrix.variant }}:dev" /smoke/run.sh "${{ matrix.variant }}"

@@ -29,6 +29,12 @@ docker run --rm -it auto-code-env:dev-full
 Build a non-native platform with a Buildx builder that supports it; use the
 same `--set <target>.platform=linux/<arch>` override as CI.
 
+## Devbox
+
+The additive devbox family is separate from these composable images. Build all
+seven amd64 variants with `docker buildx bake devbox`; see
+[`docs/architecture.md`](docs/architecture.md) for launchers and Coder use.
+
 ## Tooling and dotfiles
 
 The Dockerfile uses explicit `omni tools install --group … --force` commands,
