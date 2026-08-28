@@ -20,7 +20,7 @@ data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
 locals {
-  image_version = "2026.8.0" # renovate: datasource=github-releases depName=lkshrk/auto-code-env
+  image_version = "latest" # renovate: datasource=github-tags depName=lkshrk/auto-code-env
 }
 
 data "coder_parameter" "variant" {
