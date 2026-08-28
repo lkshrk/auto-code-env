@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# GNU coreutils stat: -f is --file-system, so it writes to stdout AND fails.
+case "$1" in
+  -f) echo "  File: \"$3\"    ID: 0 Namelen: 255     Type: apfs"; exit 1 ;;
+  -c) /usr/bin/stat -f %Lp "$3" ;;
+  *)  exit 1 ;;
+esac

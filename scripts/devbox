@@ -25,7 +25,7 @@ check_env_file() {
     exit 1
   }
   local mode
-  mode=$(stat -f %Lp "$env_file" 2>/dev/null || stat -c %a "$env_file")
+  mode=$(stat -c %a "$env_file" 2>/dev/null) || mode=$(stat -f %Lp "$env_file")
   [ "$mode" = "600" ] || {
     echo "devbox: $env_file must be mode 600 (is $mode)" >&2
     exit 1

@@ -49,6 +49,19 @@ setup() {
   [[ "$output" == *"missing"* ]]
 }
 
+@test "up accepts a mode 600 env file on a GNU-stat host" {
+  PATH="$BATS_TEST_DIRNAME/helpers/gnu-stat:$PATH" run "$DEVBOX" up api
+  [ "$status" -eq 0 ]
+  grep -q '^docker run' "$FAKE_LOG"
+}
+
+@test "up refuses a world-readable env file on a GNU-stat host" {
+  chmod 644 "$DEVBOX_ENV_FILE"
+  PATH="$BATS_TEST_DIRNAME/helpers/gnu-stat:$PATH" run "$DEVBOX" up api
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"mode 600"* ]]
+}
+
 @test "sh execs zsh login shell" {
   run "$DEVBOX" sh api
   [ "$status" -eq 0 ]
