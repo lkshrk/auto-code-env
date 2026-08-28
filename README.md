@@ -33,7 +33,7 @@ same `--set <target>.platform=linux/<arch>` override as CI.
 
 The additive devbox family is separate from these composable images. Build all
 seven amd64 variants with `docker buildx bake devbox`; see
-[`docs/architecture.md`](docs/architecture.md) for launchers and Coder use.
+[`docs/devbox.md`](docs/devbox.md) for launchers and Coder use.
 
 ## Tooling and dotfiles
 
