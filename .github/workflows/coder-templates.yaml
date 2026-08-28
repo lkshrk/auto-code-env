@@ -1,0 +1,54 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Coder Templates
+
+on:
+  push:
+    branches: [main]
+    paths: [coder/devbox/**]
+  pull_request:
+    paths: [coder/devbox/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  devbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.5
+
+      - name: Validate devbox template
+        run: |
+          set -euo pipefail
+          tmpdir=$(mktemp -d)
+          cp coder/devbox/*.tf "$tmpdir/"
+          terraform -chdir="$tmpdir" fmt -check -diff
+          terraform -chdir="$tmpdir" init -backend=false -input=false
+          terraform -chdir="$tmpdir" validate
+
+      - name: Install Coder CLI
+        if: github.event_name != 'pull_request'
+        env:
+          CODER_URL: https://coder.h-cloud.io
+          CODER_SESSION_TOKEN: ${{ secrets.CODER_SESSION_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(curl -fsSL "$CODER_URL/api/v2/buildinfo" | jq -r '.version' | sed 's/^v//; s/+.*//')
+          curl -fsSL "https://github.com/coder/coder/releases/download/v${version}/coder_${version}_linux_amd64.deb" -o /tmp/coder.deb
+          sudo dpkg -i /tmp/coder.deb
+
+      - name: Push devbox template
+        if: github.event_name != 'pull_request'
+        env:
+          CODER_URL: https://coder.h-cloud.io
+          CODER_SESSION_TOKEN: ${{ secrets.CODER_SESSION_TOKEN }}
+        run: |
+          coder templates push devbox --directory coder/devbox \
+            --name "$(git rev-parse --short HEAD)-${{ github.run_number }}-${{ github.run_attempt }}" \
+            --message "$(git log -1 --pretty=%s)" --yes
