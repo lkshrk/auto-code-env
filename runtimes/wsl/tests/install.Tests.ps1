@@ -38,6 +38,24 @@ function Assert-Throws {
     throw "$Message. Expected an exception."
 }
 
+function Assert-ThrowsMessage {
+    param([scriptblock]$Action, [string[]]$Patterns, [string]$Message)
+
+    try {
+        & $Action
+    }
+    catch {
+        foreach ($pattern in $Patterns) {
+            if ($_.Exception.Message -notmatch $pattern) {
+                throw "$Message. Pattern '$pattern' was not found in '$($_.Exception.Message)'."
+            }
+        }
+        return
+    }
+
+    throw "$Message. Expected an exception."
+}
+
 function Import-InstallFunction {
     param([string]$Path, [string]$Name)
 
@@ -231,6 +249,9 @@ try {
     Assert-Equal $false (Test-WslDistributionRegistered -Output $null -Name "openhands-worker") "empty registered distribution output should not find the target"
 
     Assert-Equal $true (Test-UbuntuRelease -Output @("NAME=Ubuntu", "ID=ubuntu", "VERSION_ID=`"26.04`"") -Version "26.04") "Ubuntu 26.04 release should be accepted"
+    Assert-Equal $false (Test-UbuntuRelease -Output @("ID=debian", "VERSION_ID=26.04") -Version "26.04") "wrong Ubuntu ID should be rejected"
+    Assert-Equal $false (Test-UbuntuRelease -Output @("ID=ubuntu", "ID=debian", "VERSION_ID=26.04") -Version "26.04") "conflicting Ubuntu IDs should be rejected"
+    Assert-Equal $false (Test-UbuntuRelease -Output @("ID=ubuntu", "VERSION_ID=26.04", "VERSION_ID=24.04") -Version "26.04") "duplicate Ubuntu versions should be rejected"
     Assert-Equal $false (Test-UbuntuRelease -Output @("ID=ubuntu", "VERSION_ID=26.04.1") -Version "26.04") "wrong Ubuntu release should be rejected"
     $nulSeparatedRelease = [string]::Join([char]0, [char[]]"ID=ubuntu`nVERSION_ID=26.04")
     Assert-Equal $true (Test-UbuntuRelease -Output @($nulSeparatedRelease) -Version "26.04") "NUL-separated Ubuntu release should be accepted"
@@ -259,6 +280,10 @@ try {
     Set-FakeWslScenario -Root $testRoot -TerminateExit 1
     Assert-Throws { Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker" } "termination failure should fail"
     Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--distribution openhands-worker --user root --exec cat /etc/os-release`n--terminate openhands-worker`n" (Get-FakeWslCalls) "termination failure should still attempt only the target"
+
+    Set-FakeWslScenario -Root $testRoot -IdExit 1 -TerminateExit 1
+    Assert-ThrowsMessage -Action { Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker" } -Patterns @("root access", "terminate") -Message "identity and termination failures should both be reported"
+    Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--terminate openhands-worker`n" (Get-FakeWslCalls) "combined failure should still terminate only the target"
     Set-FakeWslScenario -Root $testRoot -Before "openhands-worker" -Help "--name-suffix <Name>"
     Assert-Equal $false (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "existing target should be a no-op before help gating"
     Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "existing target should only be listed"

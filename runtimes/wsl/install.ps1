@@ -151,9 +151,15 @@ function Test-UbuntuRelease {
     )
 
     $normalized = ($Output -replace [string][char]0, "") -join "`n"
-    $idPattern = '(?m)^ID=(?:ubuntu|"ubuntu")\r?$'
-    $versionPattern = '(?m)^VERSION_ID=(?:' + [regex]::Escape($Version) + '|"' + [regex]::Escape($Version) + '")\r?$'
-    return [bool]([regex]::Matches($normalized, $idPattern).Count -eq 1 -and [regex]::Matches($normalized, $versionPattern).Count -eq 1)
+    $ids = [regex]::Matches($normalized, '(?m)^ID=(?<value>.*?)(?:\r)?$')
+    $versions = [regex]::Matches($normalized, '(?m)^VERSION_ID=(?<value>.*?)(?:\r)?$')
+    if ($ids.Count -ne 1 -or $versions.Count -ne 1) {
+        return $false
+    }
+
+    $id = $ids[0].Groups["value"].Value
+    $releaseVersion = $versions[0].Groups["value"].Value
+    return [bool](($id -eq "ubuntu" -or $id -eq '"ubuntu"') -and ($releaseVersion -eq $Version -or $releaseVersion -eq ('"' + $Version + '"')))
 }
 
 function Assert-WslDistributionIdentity {
@@ -189,6 +195,9 @@ function Assert-WslDistributionIdentity {
         $terminateExit = $LASTEXITCODE
     }
 
+    if ($failure -and $terminateExit -ne 0) {
+        throw "$($failure.Exception.Message) Unable to terminate WSL distribution '$Name'."
+    }
     if ($failure) {
         throw $failure
     }
