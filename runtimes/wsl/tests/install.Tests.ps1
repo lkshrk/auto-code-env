@@ -487,12 +487,15 @@ try {
 
     Assert-Throws { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath (Join-Path $assetDirectory "missing.sh") -ConfigPath $configAsset } "missing bootstrap source should fail before WSL starts"
 
-    $bootstrapPath = "/root/openhands-bootstrap"
-    if (Test-Path -LiteralPath $bootstrapPath) {
-        throw "transfer shell test requires an isolated bootstrap path."
-    }
+    $bootstrapPath = Join-Path $testRoot ("bootstrap-" + [Guid]::NewGuid().ToString("N"))
+    Assert-NotMatch '^/root(?:/|$)' $bootstrapPath "transfer shell test path must stay inside the test root"
+    Assert-Match ('^' + [regex]::Escape($testRoot) + [regex]::Escape([IO.Path]::DirectorySeparatorChar)) $bootstrapPath "transfer shell test path must be under the test root"
     try {
         $transfer = Get-WslBaseProvisioningTransferCommand
+        $productionBootstrap = "bootstrap=/root/openhands-bootstrap"
+        Assert-Equal 1 ([regex]::Matches($transfer, [regex]::Escape($productionBootstrap))).Count "production bootstrap assignment should be replaced exactly once"
+        $transfer = $transfer.Replace($productionBootstrap, "bootstrap='$bootstrapPath'")
+        Assert-NotMatch '/root/openhands-bootstrap' $transfer "execution test must not use the production bootstrap path"
         & sh -ec $transfer sh "IyEvYmluL3NoCg==" "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
         Assert-Equal 0 $LASTEXITCODE "first transfer shell run should succeed"
         Assert-Equal "IyEvYmluL3NoCg==" ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/provision.sh"))) "transfer shell should write exact provision bytes"
