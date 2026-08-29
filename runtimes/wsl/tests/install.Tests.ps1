@@ -465,11 +465,39 @@ try {
     Assert-Equal $verificationProgram ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($stage4bArguments[3][7]))) "verification program base64 must preserve exact UTF-8 bytes"
     Assert-Match '\[ -z "\$\{WSL_INTEROP:-\}" \]' $verificationProgram "Stage 4B should verify WSL_INTEROP is absent"
     Assert-Match '\[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop \]' $verificationProgram "Stage 4B should verify WSLInterop binfmt is absent"
+    $verificationRoot = Join-Path $testRoot ("verification-" + [Guid]::NewGuid().ToString("N"))
+    $safeAgentPaths = @(".openhands", ".claude", ".codex", "workspaces") | ForEach-Object { Join-Path $verificationRoot $_ }
+    New-Item -ItemType Directory -Path $verificationRoot | Out-Null
+    foreach ($path in $safeAgentPaths) {
+        New-Item -ItemType Directory -Path $path | Out-Null
+    }
+    & chmod 700 @safeAgentPaths
+    Assert-Equal 0 $LASTEXITCODE "verification test setup should set private directory modes"
+    $currentUser = ((& id -un) -join "").Trim()
+    $currentGroup = ((& id -gn) -join "").Trim()
+    $pidOne = [System.IO.File]::ReadAllText("/proc/1/comm").Trim()
+    $safeVerificationProgram = $verificationProgram.Replace('[ "$(id -un)" = agent ]', ('[ "$(id -un)" = ' + $currentUser + ' ]'))
+    $safeVerificationProgram = $safeVerificationProgram.Replace('[ "$(cat /proc/1/comm)" = systemd ]', ('[ "$(cat /proc/1/comm)" = ' + $pidOne + ' ]'))
+    $safeVerificationProgram = $safeVerificationProgram.Replace('/mnt/c', (Join-Path $verificationRoot "mnt-c"))
+    $safeVerificationProgram = $safeVerificationProgram.Replace('/proc/sys/fs/binfmt_misc/WSLInterop', (Join-Path $verificationRoot "WSLInterop"))
+    for ($index = 0; $index -lt $safeAgentPaths.Count; $index++) {
+        $safeVerificationProgram = $safeVerificationProgram.Replace(@('/home/agent/.openhands', '/home/agent/.claude', '/home/agent/.codex', '/home/agent/workspaces')[$index], $safeAgentPaths[$index])
+    }
+    $safeVerificationProgram = $safeVerificationProgram.Replace('agent:agent 700', "${currentUser}:${currentGroup} 700")
     $previousInterop = $env:WSL_INTEROP
     try {
+        $env:WSL_INTEROP = ""
+        & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $safeVerificationProgram)
+        Assert-Equal 0 $LASTEXITCODE "combined verification program should execute with mapped target facts"
+        $verificationLines = @($verificationProgram -split "`n")
+        Assert-Equal 10 $verificationLines.Count "combined verification program line count"
+        Assert-Equal '[ ! -e /mnt/c ]' $verificationLines[3] "mount check line boundary"
+        Assert-Equal 'set -e' $verificationLines[4] "isolation fragment start line boundary"
+        Assert-Equal '[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ]' $verificationLines[6] "isolation fragment end line boundary"
+        Assert-Equal 'for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do' $verificationLines[7] "directory loop line boundary"
+
         $isolationWrapper = Get-WslShellProgramWrapper
         $isolationProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBaseProvisioningIsolationCommand)
-        $env:WSL_INTEROP = ""
         & sh -ec $isolationWrapper sh $isolationProgram
         Assert-Equal 0 $LASTEXITCODE "verification wrapper should accept an empty WSL_INTEROP and absent binfmt"
         $env:WSL_INTEROP = "unexpected"
@@ -478,6 +506,7 @@ try {
     }
     finally {
         $env:WSL_INTEROP = $previousInterop
+        Remove-Item -LiteralPath $verificationRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     $wrapperTempRoot = Join-Path $testRoot ("wrapper-temp-" + [Guid]::NewGuid().ToString("N"))

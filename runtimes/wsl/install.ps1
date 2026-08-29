@@ -382,25 +382,24 @@ install_asset "$3" "$4" "$bootstrap/wsl.conf" 600
 }
 
 function Get-WslBaseProvisioningVerificationCommand {
-    $isolationCommand = Get-WslBaseProvisioningIsolationCommand
-    return @'
-set -eu
-[ "$(id -un)" = agent ]
-[ "$(cat /proc/1/comm)" = systemd ]
-[ ! -e /mnt/c ]
-'@ + $isolationCommand + @'
-for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do
-    [ ! -L "$path" ] && [ -d "$path" ] && [ "$(stat -c '%U:%G %a' "$path")" = 'agent:agent 700' ]
-done
-'@
+    return (@(
+        'set -eu'
+        '[ "$(id -un)" = agent ]'
+        '[ "$(cat /proc/1/comm)" = systemd ]'
+        '[ ! -e /mnt/c ]'
+        (Get-WslBaseProvisioningIsolationCommand)
+        'for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do'
+        '    [ ! -L "$path" ] && [ -d "$path" ] && [ "$(stat -c ''%U:%G %a'' "$path")" = ''agent:agent 700'' ]'
+        'done'
+    ) -join "`n")
 }
 
 function Get-WslBaseProvisioningIsolationCommand {
-    return @'
-set -e
-[ -z "${WSL_INTEROP:-}" ]
-[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ]
-'@
+    return (@(
+        'set -e'
+        '[ -z "${WSL_INTEROP:-}" ]'
+        '[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ]'
+    ) -join "`n")
 }
 
 function Invoke-WslBaseProvisioning {
