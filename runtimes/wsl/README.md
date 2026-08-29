@@ -108,8 +108,9 @@ rejects missing, non-file, and reparse-point sources; verifies each transferred
 SHA-256 before root executes the provisioner; and never relies on `/mnt` or
 Windows interop after isolation is enabled. It restarts only
 `openhands-worker`, verifies the default `agent`, systemd PID 1, absent
-`/mnt/c` and WSLInterop, and the four private agent directories, then stops
-only that worker. Reruns reuse only safe root-owned bootstrap files.
+`/mnt/c`, empty `WSL_INTEROP`, absent WSLInterop binfmt registration, and the
+four private agent directories, then stops only that worker. Reruns reuse only
+safe root-owned bootstrap files.
 
 The provisioner is root-only and refuses any `WSL_DISTRO_NAME` other than
 `openhands-worker`. It idempotently creates the unprivileged `agent` user and

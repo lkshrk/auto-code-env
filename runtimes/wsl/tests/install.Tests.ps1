@@ -80,6 +80,10 @@ function New-FakeWslExecutable {
     [System.IO.File]::WriteAllText($path, @'
 #!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_WSL_LOG"
+printf '%s\0' "$#" >> "$FAKE_WSL_ARGV_LOG"
+for argument in "$@"; do
+    printf '%s\0' "$argument" >> "$FAKE_WSL_ARGV_LOG"
+done
 
 if [ "$1" = "--list" ] && [ "$2" = "--quiet" ]; then
     count=0
@@ -177,8 +181,10 @@ function Set-FakeWslScenario {
     )
 
     $env:FAKE_WSL_LOG = Join-Path $Root "fake-wsl.log"
+    $env:FAKE_WSL_ARGV_LOG = Join-Path $Root "fake-wsl.argv"
     $env:FAKE_WSL_LIST_COUNT = Join-Path $Root "fake-wsl.list-count"
     [System.IO.File]::WriteAllText($env:FAKE_WSL_LOG, "", [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllBytes($env:FAKE_WSL_ARGV_LOG, [byte[]]@())
     Remove-Item -LiteralPath $env:FAKE_WSL_LIST_COUNT -Force -ErrorAction SilentlyContinue
     $env:FAKE_WSL_LIST_BEFORE = $Before
     $env:FAKE_WSL_LIST_AFTER = $After
@@ -202,6 +208,23 @@ function Set-FakeWslScenario {
 
 function Get-FakeWslCalls {
     return [System.IO.File]::ReadAllText($env:FAKE_WSL_LOG)
+}
+
+function Get-FakeWslArgumentCalls {
+    $parts = ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($env:FAKE_WSL_ARGV_LOG))).Split([char]0)
+    $calls = New-Object 'System.Collections.Generic.List[object]'
+    $index = 0
+    while ($index -lt $parts.Length - 1) {
+        $count = [int]$parts[$index]
+        $index++
+        $arguments = New-Object 'System.Collections.Generic.List[string]'
+        for ($argumentIndex = 0; $argumentIndex -lt $count; $argumentIndex++) {
+            $arguments.Add($parts[$index])
+            $index++
+        }
+        $calls.Add([string[]]$arguments)
+    }
+    return [object[]]$calls
 }
 
 function Invoke-ThrowingTerminateWsl {
@@ -230,6 +253,9 @@ try {
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-UbuntuRelease")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Assert-WslDistributionIdentity")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBootstrapAsset")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBaseProvisioningTransferCommand")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBaseProvisioningIsolationCommand")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBaseProvisioningVerificationCommand")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Invoke-WslBaseProvisioning")))
 
     Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $true -Is64BitOperatingSystem $true) "64-bit process WSL path"
@@ -417,7 +443,26 @@ try {
     $stage4bCalls = Get-FakeWslCalls
     Assert-Match '(?s)^--distribution openhands-worker --user root --exec sh -ec .*\n--distribution openhands-worker --user root --exec /bin/bash /root/openhands-bootstrap/provision.sh\n--terminate openhands-worker\n--distribution openhands-worker --exec sh -ec .*\n--terminate openhands-worker\n$' $stage4bCalls "Stage 4B should transfer, provision, restart, verify, and stop only the target"
     Assert-Match 'IyEvYmluL3NoCg== a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf W3VzZXJdCg== 37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2' $stage4bCalls "Stage 4B should pass exact asset bytes and hashes"
-    Assert-Match '\[ ! -e /mnt/c \]' $stage4bCalls "Stage 4B should verify mount isolation after restart"
+    $stage4bArguments = Get-FakeWslArgumentCalls
+    Assert-Equal 5 $stage4bArguments.Count "Stage 4B should make exactly five WSL calls"
+    $expectedTransferArguments = @("--distribution", "openhands-worker", "--user", "root", "--exec", "sh", "-ec", (Get-WslBaseProvisioningTransferCommand), "sh", "IyEvYmluL3NoCg==", "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf", "W3VzZXJdCg==", "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2") -join [char]0
+    Assert-Equal $expectedTransferArguments ($stage4bArguments[0] -join [char]0) "transfer argv boundaries and positions"
+    $expectedVerificationArguments = @("--distribution", "openhands-worker", "--exec", "sh", "-ec", (Get-WslBaseProvisioningVerificationCommand)) -join [char]0
+    Assert-Equal $expectedVerificationArguments ($stage4bArguments[3] -join [char]0) "verification argv boundaries and fixed shell body"
+    Assert-Match '\[ -z "\$\{WSL_INTEROP:-\}" \]' $stage4bArguments[3][5] "Stage 4B should verify WSL_INTEROP is absent"
+    Assert-Match '\[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop \]' $stage4bArguments[3][5] "Stage 4B should verify WSLInterop binfmt is absent"
+    $previousInterop = $env:WSL_INTEROP
+    try {
+        $env:WSL_INTEROP = ""
+        & sh -ec (Get-WslBaseProvisioningIsolationCommand)
+        Assert-Equal 0 $LASTEXITCODE "isolation command should accept an empty WSL_INTEROP and absent binfmt"
+        $env:WSL_INTEROP = "unexpected"
+        & sh -ec (Get-WslBaseProvisioningIsolationCommand)
+        Assert-Equal 1 $LASTEXITCODE "isolation command should reject WSL_INTEROP"
+    }
+    finally {
+        $env:WSL_INTEROP = $previousInterop
+    }
 
     Set-FakeWslScenario -Root $testRoot
     $env:FAKE_WSL_STAGE4B_TRANSFER_EXIT = "1"
@@ -441,6 +486,30 @@ try {
     Assert-ThrowsMessage -Action { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset } -Patterns @("restart", "terminate") -Message "restart and cleanup failures should both be reported"
 
     Assert-Throws { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath (Join-Path $assetDirectory "missing.sh") -ConfigPath $configAsset } "missing bootstrap source should fail before WSL starts"
+
+    $bootstrapPath = "/root/openhands-bootstrap"
+    if (Test-Path -LiteralPath $bootstrapPath) {
+        throw "transfer shell test requires an isolated bootstrap path."
+    }
+    try {
+        $transfer = Get-WslBaseProvisioningTransferCommand
+        & sh -ec $transfer sh "IyEvYmluL3NoCg==" "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
+        Assert-Equal 0 $LASTEXITCODE "first transfer shell run should succeed"
+        Assert-Equal "IyEvYmluL3NoCg==" ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/provision.sh"))) "transfer shell should write exact provision bytes"
+        Assert-Equal "W3VzZXJdCg==" ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/wsl.conf"))) "transfer shell should write exact config bytes"
+        Assert-Equal "root:root 700" ((& stat -c '%U:%G %a' "$bootstrapPath/provision.sh").Trim()) "transfer shell provision ownership and mode"
+        Assert-Equal "root:root 600" ((& stat -c '%U:%G %a' "$bootstrapPath/wsl.conf").Trim()) "transfer shell config ownership and mode"
+        & sh -ec $transfer sh "IyEvYmluL3NoCg==" "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
+        Assert-Equal 0 $LASTEXITCODE "transfer shell rerun should accept canonical modes"
+        & sh -ec $transfer sh "IyEvYmluL3NoCg==" ("0" * 64) "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
+        Assert-Equal 1 $LASTEXITCODE "transfer shell should reject a mismatched SHA-256"
+        Assert-Equal "IyEvYmluL3NoCg==" ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/provision.sh"))) "failed hash verification should preserve the prior asset"
+    }
+    finally {
+        if (Test-Path -LiteralPath $bootstrapPath) {
+            Remove-Item -LiteralPath $bootstrapPath -Recurse -Force
+        }
+    }
 
     Set-FakeWslScenario -Root $testRoot
     Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset

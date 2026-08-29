@@ -338,17 +338,8 @@ function Get-WslBootstrapAsset {
     }
 }
 
-function Invoke-WslBaseProvisioning {
-    param(
-        [Parameter(Mandatory)][string]$WslPath,
-        [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][string]$ProvisionPath,
-        [Parameter(Mandatory)][string]$ConfigPath
-    )
-
-    $provision = Get-WslBootstrapAsset -Path $ProvisionPath
-    $config = Get-WslBootstrapAsset -Path $ConfigPath
-    $transferCommand = @'
+function Get-WslBaseProvisioningTransferCommand {
+    return @'
 set -eu
 bootstrap=/root/openhands-bootstrap
 if [ -e "$bootstrap" ] || [ -L "$bootstrap" ]; then
@@ -374,19 +365,44 @@ install_asset() {
     rm -f "$encoded"
     trap - EXIT
 }
-install_asset "$1" "$2" "$bootstrap/provision.sh" 0700
-install_asset "$3" "$4" "$bootstrap/wsl.conf" 0600
+install_asset "$1" "$2" "$bootstrap/provision.sh" 700
+install_asset "$3" "$4" "$bootstrap/wsl.conf" 600
 '@
-    $verificationCommand = @'
+}
+
+function Get-WslBaseProvisioningVerificationCommand {
+    $isolationCommand = Get-WslBaseProvisioningIsolationCommand
+    return @'
 set -eu
 [ "$(id -un)" = agent ]
 [ "$(cat /proc/1/comm)" = systemd ]
 [ ! -e /mnt/c ]
-[ ! -e /run/WSLInterop ]
+'@ + $isolationCommand + @'
 for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do
     [ ! -L "$path" ] && [ -d "$path" ] && [ "$(stat -c '%U:%G %a' "$path")" = 'agent:agent 700' ]
 done
 '@
+}
+
+function Get-WslBaseProvisioningIsolationCommand {
+    return @'
+[ -z "${WSL_INTEROP:-}" ]
+[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ]
+'@
+}
+
+function Invoke-WslBaseProvisioning {
+    param(
+        [Parameter(Mandatory)][string]$WslPath,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$ProvisionPath,
+        [Parameter(Mandatory)][string]$ConfigPath
+    )
+
+    $provision = Get-WslBootstrapAsset -Path $ProvisionPath
+    $config = Get-WslBootstrapAsset -Path $ConfigPath
+    $transferCommand = Get-WslBaseProvisioningTransferCommand
+    $verificationCommand = Get-WslBaseProvisioningVerificationCommand
 
     $failure = $null
     $terminationFailure = $null
