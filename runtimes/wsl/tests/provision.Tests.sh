@@ -62,6 +62,23 @@ run_container '
 '
 
 run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%U:%G %a" /etc/wsl.conf)" = "root:root 644"
+  cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
+'
+
+run_container '
+  touch /usr/local/bin/uv
+  if env WSL_DISTRO_NAME=openhands-worker bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test ! -e /opt/openhands
+'
+
+run_container '
   ln -s /src/runtimes/wsl/provision.sh /tmp/provision
   env WSL_DISTRO_NAME=openhands-worker bash /tmp/provision
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
