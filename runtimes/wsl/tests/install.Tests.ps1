@@ -189,6 +189,16 @@ function Get-FakeWslCalls {
     return [System.IO.File]::ReadAllText($env:FAKE_WSL_LOG)
 }
 
+function Invoke-ThrowingTerminateWsl {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$WslArguments)
+
+    if ($WslArguments[0] -eq "--terminate") {
+        throw "Simulated termination exception."
+    }
+
+    & $script:FakeWslPath @WslArguments
+}
+
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("wsl-install-tests-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 
@@ -249,6 +259,7 @@ try {
     Assert-Equal $false (Test-WslDistributionRegistered -Output $null -Name "openhands-worker") "empty registered distribution output should not find the target"
 
     Assert-Equal $true (Test-UbuntuRelease -Output @("NAME=Ubuntu", "ID=ubuntu", "VERSION_ID=`"26.04`"") -Version "26.04") "Ubuntu 26.04 release should be accepted"
+    Assert-Equal $false (Test-UbuntuRelease -Output @("ID=Ubuntu", "VERSION_ID=26.04") -Version "26.04") "case-variant Ubuntu ID should be rejected"
     Assert-Equal $false (Test-UbuntuRelease -Output @("ID=debian", "VERSION_ID=26.04") -Version "26.04") "wrong Ubuntu ID should be rejected"
     Assert-Equal $false (Test-UbuntuRelease -Output @("ID=ubuntu", "ID=debian", "VERSION_ID=26.04") -Version "26.04") "conflicting Ubuntu IDs should be rejected"
     Assert-Equal $false (Test-UbuntuRelease -Output @("ID=ubuntu", "VERSION_ID=26.04", "VERSION_ID=24.04") -Version "26.04") "duplicate Ubuntu versions should be rejected"
@@ -257,6 +268,7 @@ try {
     Assert-Equal $true (Test-UbuntuRelease -Output @($nulSeparatedRelease) -Version "26.04") "NUL-separated Ubuntu release should be accepted"
 
     $fakeWslPath = New-FakeWslExecutable -Root $testRoot
+    $script:FakeWslPath = $fakeWslPath
     Set-FakeWslScenario -Root $testRoot -NulId $true -NulRelease $true
     Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker"
     Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--distribution openhands-worker --user root --exec cat /etc/os-release`n--terminate openhands-worker`n" (Get-FakeWslCalls) "identity checks should run as root and terminate only the target"
@@ -284,6 +296,12 @@ try {
     Set-FakeWslScenario -Root $testRoot -IdExit 1 -TerminateExit 1
     Assert-ThrowsMessage -Action { Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker" } -Patterns @("root access", "terminate") -Message "identity and termination failures should both be reported"
     Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--terminate openhands-worker`n" (Get-FakeWslCalls) "combined failure should still terminate only the target"
+
+    Set-FakeWslScenario -Root $testRoot -IdExit 1
+    Assert-ThrowsMessage -Action { Assert-WslDistributionIdentity -WslPath "Invoke-ThrowingTerminateWsl" -Name "openhands-worker" } -Patterns @("root access", "Simulated termination exception") -Message "identity and thrown termination failures should both be reported"
+
+    Set-FakeWslScenario -Root $testRoot
+    Assert-ThrowsMessage -Action { Assert-WslDistributionIdentity -WslPath "Invoke-ThrowingTerminateWsl" -Name "openhands-worker" } -Patterns @("Simulated termination exception") -Message "thrown termination failure should be fatal after a successful identity check"
     Set-FakeWslScenario -Root $testRoot -Before "openhands-worker" -Help "--name-suffix <Name>"
     Assert-Equal $false (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "existing target should be a no-op before help gating"
     Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "existing target should only be listed"

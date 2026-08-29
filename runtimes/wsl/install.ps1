@@ -159,7 +159,7 @@ function Test-UbuntuRelease {
 
     $id = $ids[0].Groups["value"].Value
     $releaseVersion = $versions[0].Groups["value"].Value
-    return [bool](($id -eq "ubuntu" -or $id -eq '"ubuntu"') -and ($releaseVersion -eq $Version -or $releaseVersion -eq ('"' + $Version + '"')))
+    return [bool](($id -ceq "ubuntu" -or $id -ceq '"ubuntu"') -and ($releaseVersion -ceq $Version -or $releaseVersion -ceq ('"' + $Version + '"')))
 }
 
 function Assert-WslDistributionIdentity {
@@ -169,7 +169,7 @@ function Assert-WslDistributionIdentity {
     )
 
     $failure = $null
-    $terminateExit = 0
+    $terminationFailure = $null
     try {
         $uid = & $WslPath --distribution $Name --user root --exec id -u
         if ($LASTEXITCODE -ne 0) {
@@ -191,18 +191,25 @@ function Assert-WslDistributionIdentity {
         $failure = $_
     }
     finally {
-        & $WslPath --terminate $Name
-        $terminateExit = $LASTEXITCODE
+        try {
+            & $WslPath --terminate $Name
+            if ($LASTEXITCODE -ne 0) {
+                $terminationFailure = "Unable to terminate WSL distribution '$Name'."
+            }
+        }
+        catch {
+            $terminationFailure = $_.Exception.Message
+        }
     }
 
-    if ($failure -and $terminateExit -ne 0) {
-        throw "$($failure.Exception.Message) Unable to terminate WSL distribution '$Name'."
+    if ($failure -and $terminationFailure) {
+        throw "$($failure.Exception.Message) $terminationFailure"
     }
     if ($failure) {
         throw $failure
     }
-    if ($terminateExit -ne 0) {
-        throw "Unable to terminate WSL distribution '$Name'."
+    if ($terminationFailure) {
+        throw $terminationFailure
     }
 }
 
