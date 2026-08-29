@@ -42,14 +42,14 @@ setup() {
   CODEX_AUTH_JSON='{"k":"v"}' run "$DEVBOX_INIT" true
   [ "$status" -eq 0 ]
   [ "$(cat "$HOME/.codex/auth.json")" = '{"k":"v"}' ]
-  [ "$(stat -f %Lp "$HOME/.codex/auth.json" 2>/dev/null || stat -c %a "$HOME/.codex/auth.json")" = "600" ]
+  [ "$(stat -c %a "$HOME/.codex/auth.json" 2>/dev/null || stat -f %Lp "$HOME/.codex/auth.json")" = "600" ]
 }
 
 @test "creates tmp and ssh dirs with strict modes" {
   run "$DEVBOX_INIT" true
   [ "$status" -eq 0 ]
-  [ "$(stat -f %Lp "$HOME/.tmp" 2>/dev/null || stat -c %a "$HOME/.tmp")" = "700" ]
-  [ "$(stat -f %Lp "$HOME/.ssh" 2>/dev/null || stat -c %a "$HOME/.ssh")" = "700" ]
+  [ "$(stat -c %a "$HOME/.tmp" 2>/dev/null || stat -f %Lp "$HOME/.tmp")" = "700" ]
+  [ "$(stat -c %a "$HOME/.ssh" 2>/dev/null || stat -f %Lp "$HOME/.ssh")" = "700" ]
 }
 
 @test "execs the given command and propagates its exit code" {
