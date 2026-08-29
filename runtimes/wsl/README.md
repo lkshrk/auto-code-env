@@ -97,6 +97,11 @@ post-install verification failures stop the installer. This stage does not
 import a distribution, select an install location, or use a fallback naming
 flow.
 
+Stage 3 starts only `openhands-worker` noninteractively as `root`, verifies
+`id -u` is `0` and `/etc/os-release` identifies Ubuntu `26.04`, then terminates
+only that distribution on every verification path. It does not provision Linux
+users, files, packages, configuration, or firewall rules.
+
 ## WSL configuration
 
 Target:

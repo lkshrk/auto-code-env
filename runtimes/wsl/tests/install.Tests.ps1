@@ -94,6 +94,28 @@ if [ "$1" = "--install" ]; then
     exit "${FAKE_WSL_INSTALL_EXIT:-0}"
 fi
 
+if [ "$1" = "--distribution" ] && [ "$3" = "--user" ] && [ "$4" = "root" ] && [ "$5" = "--exec" ] && [ "$6" = "id" ] && [ "$7" = "-u" ]; then
+    if [ "$FAKE_WSL_ID_NUL" = "1" ]; then
+        printf '%s\n' "$FAKE_WSL_ID" | awk '{ for (i = 1; i <= length($0); i++) { printf "%s%c", substr($0, i, 1), 0 }; printf "\n%c", 0 }'
+    else
+        printf '%s\n' "$FAKE_WSL_ID"
+    fi
+    exit "${FAKE_WSL_ID_EXIT:-0}"
+fi
+
+if [ "$1" = "--distribution" ] && [ "$3" = "--user" ] && [ "$4" = "root" ] && [ "$5" = "--exec" ] && [ "$6" = "cat" ] && [ "$7" = "/etc/os-release" ]; then
+    if [ "$FAKE_WSL_RELEASE_NUL" = "1" ]; then
+        printf '%s\n' "$FAKE_WSL_RELEASE" | awk '{ for (i = 1; i <= length($0); i++) { printf "%s%c", substr($0, i, 1), 0 }; printf "\n%c", 0 }'
+    else
+        printf '%s\n' "$FAKE_WSL_RELEASE"
+    fi
+    exit "${FAKE_WSL_RELEASE_EXIT:-0}"
+fi
+
+if [ "$1" = "--terminate" ]; then
+    exit "${FAKE_WSL_TERMINATE_EXIT:-0}"
+fi
+
 exit 99
 '@, [System.Text.UTF8Encoding]::new($false))
     & chmod +x $path
@@ -114,7 +136,14 @@ function Set-FakeWslScenario {
         [int]$ListExit = 0,
         [int]$InstallExit = 0,
         [bool]$NulHelp = $false,
-        [bool]$EmptyInitialList = $false
+        [bool]$EmptyInitialList = $false,
+        [string]$Id = "0",
+        [string]$Release = "ID=ubuntu`nVERSION_ID=`"26.04`"",
+        [int]$IdExit = 0,
+        [int]$ReleaseExit = 0,
+        [int]$TerminateExit = 0,
+        [bool]$NulId = $false,
+        [bool]$NulRelease = $false
     )
 
     $env:FAKE_WSL_LOG = Join-Path $Root "fake-wsl.log"
@@ -129,6 +158,13 @@ function Set-FakeWslScenario {
     $env:FAKE_WSL_INSTALL_EXIT = "$InstallExit"
     $env:FAKE_WSL_HELP_NUL = if ($NulHelp) { "1" } else { "0" }
     $env:FAKE_WSL_EMPTY_INITIAL_LIST = if ($EmptyInitialList) { "1" } else { "0" }
+    $env:FAKE_WSL_ID = $Id
+    $env:FAKE_WSL_RELEASE = $Release
+    $env:FAKE_WSL_ID_EXIT = "$IdExit"
+    $env:FAKE_WSL_RELEASE_EXIT = "$ReleaseExit"
+    $env:FAKE_WSL_TERMINATE_EXIT = "$TerminateExit"
+    $env:FAKE_WSL_ID_NUL = if ($NulId) { "1" } else { "0" }
+    $env:FAKE_WSL_RELEASE_NUL = if ($NulRelease) { "1" } else { "0" }
 }
 
 function Get-FakeWslCalls {
@@ -148,6 +184,8 @@ try {
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslExecutablePath")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslVersionSupported")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Restore-WslConfig")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-UbuntuRelease")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Assert-WslDistributionIdentity")))
 
     Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $true -Is64BitOperatingSystem $true) "64-bit process WSL path"
     Assert-Equal "C:\Windows\Sysnative\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $true) "32-bit process WSL path"
@@ -192,7 +230,35 @@ try {
     Assert-Equal $true (Test-WslDistributionRegistered -Output @($nulSeparatedRegistered) -Name "openhands-worker") "NUL-separated registered distribution should be found"
     Assert-Equal $false (Test-WslDistributionRegistered -Output $null -Name "openhands-worker") "empty registered distribution output should not find the target"
 
+    Assert-Equal $true (Test-UbuntuRelease -Output @("NAME=Ubuntu", "ID=ubuntu", "VERSION_ID=`"26.04`"") -Version "26.04") "Ubuntu 26.04 release should be accepted"
+    Assert-Equal $false (Test-UbuntuRelease -Output @("ID=ubuntu", "VERSION_ID=26.04.1") -Version "26.04") "wrong Ubuntu release should be rejected"
+    $nulSeparatedRelease = [string]::Join([char]0, [char[]]"ID=ubuntu`nVERSION_ID=26.04")
+    Assert-Equal $true (Test-UbuntuRelease -Output @($nulSeparatedRelease) -Version "26.04") "NUL-separated Ubuntu release should be accepted"
+
     $fakeWslPath = New-FakeWslExecutable -Root $testRoot
+    Set-FakeWslScenario -Root $testRoot -NulId $true -NulRelease $true
+    Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker"
+    Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--distribution openhands-worker --user root --exec cat /etc/os-release`n--terminate openhands-worker`n" (Get-FakeWslCalls) "identity checks should run as root and terminate only the target"
+
+    Set-FakeWslScenario -Root $testRoot -Id "1000"
+    Assert-Throws { Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker" } "non-root identity should fail"
+    Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--terminate openhands-worker`n" (Get-FakeWslCalls) "non-root identity should still terminate the target"
+
+    Set-FakeWslScenario -Root $testRoot -Release "ID=ubuntu`nVERSION_ID=24.04"
+    Assert-Throws { Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker" } "wrong release should fail"
+    Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--distribution openhands-worker --user root --exec cat /etc/os-release`n--terminate openhands-worker`n" (Get-FakeWslCalls) "wrong release should still terminate the target"
+
+    Set-FakeWslScenario -Root $testRoot -IdExit 1
+    Assert-Throws { Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker" } "nonzero root check should fail"
+    Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--terminate openhands-worker`n" (Get-FakeWslCalls) "failed root check should still terminate the target"
+
+    Set-FakeWslScenario -Root $testRoot -ReleaseExit 1
+    Assert-Throws { Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker" } "nonzero release check should fail"
+    Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--distribution openhands-worker --user root --exec cat /etc/os-release`n--terminate openhands-worker`n" (Get-FakeWslCalls) "failed release check should still terminate the target"
+
+    Set-FakeWslScenario -Root $testRoot -TerminateExit 1
+    Assert-Throws { Assert-WslDistributionIdentity -WslPath $fakeWslPath -Name "openhands-worker" } "termination failure should fail"
+    Assert-Equal "--distribution openhands-worker --user root --exec id -u`n--distribution openhands-worker --user root --exec cat /etc/os-release`n--terminate openhands-worker`n" (Get-FakeWslCalls) "termination failure should still attempt only the target"
     Set-FakeWslScenario -Root $testRoot -Before "openhands-worker" -Help "--name-suffix <Name>"
     Assert-Equal $false (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "existing target should be a no-op before help gating"
     Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "existing target should only be listed"

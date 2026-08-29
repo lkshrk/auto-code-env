@@ -144,6 +144,59 @@ function Test-WslDistributionRegistered {
     return [bool]((($Output -replace [string][char]0, "") -join "`n") -match ("(?m)^\s*" + [regex]::Escape($Name) + "\s*$"))
 }
 
+function Test-UbuntuRelease {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Output,
+        [Parameter(Mandatory)][string]$Version
+    )
+
+    $normalized = ($Output -replace [string][char]0, "") -join "`n"
+    $idPattern = '(?m)^ID=(?:ubuntu|"ubuntu")\r?$'
+    $versionPattern = '(?m)^VERSION_ID=(?:' + [regex]::Escape($Version) + '|"' + [regex]::Escape($Version) + '")\r?$'
+    return [bool]([regex]::Matches($normalized, $idPattern).Count -eq 1 -and [regex]::Matches($normalized, $versionPattern).Count -eq 1)
+}
+
+function Assert-WslDistributionIdentity {
+    param(
+        [Parameter(Mandatory)][string]$WslPath,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    $failure = $null
+    $terminateExit = 0
+    try {
+        $uid = & $WslPath --distribution $Name --user root --exec id -u
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to verify root access for WSL distribution '$Name'."
+        }
+        if ((($uid -replace [string][char]0, "") -join "`n").Trim() -ne "0") {
+            throw "WSL distribution '$Name' did not run as root."
+        }
+
+        $release = & $WslPath --distribution $Name --user root --exec cat /etc/os-release
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to read the release identity for WSL distribution '$Name'."
+        }
+        if (-not (Test-UbuntuRelease -Output $release -Version "26.04")) {
+            throw "WSL distribution '$Name' is not Ubuntu 26.04."
+        }
+    }
+    catch {
+        $failure = $_
+    }
+    finally {
+        & $WslPath --terminate $Name
+        $terminateExit = $LASTEXITCODE
+    }
+
+    if ($failure) {
+        throw $failure
+    }
+    if ($terminateExit -ne 0) {
+        throw "Unable to terminate WSL distribution '$Name'."
+    }
+}
+
 function Install-WslDistribution {
     param(
         [Parameter(Mandatory)][string]$WslPath,
@@ -301,3 +354,6 @@ Write-Host "WSL bootstrap Stage 1 completed."
 
 Install-WslDistribution -WslPath $wslPath -Distribution $Distribution -Name $DistroName | Out-Null
 Write-Host "WSL bootstrap Stage 2 completed."
+
+Assert-WslDistributionIdentity -WslPath $wslPath -Name $DistroName
+Write-Host "WSL bootstrap Stage 3 completed."
