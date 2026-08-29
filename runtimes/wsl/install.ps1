@@ -161,9 +161,6 @@ function Install-WslDistribution {
     }
 
     $help = & $WslPath --help
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to read WSL help."
-    }
     if (-not (Test-WslNamedInstallSupported -Output $help)) {
         throw "Installed WSL does not support named distribution installation."
     }

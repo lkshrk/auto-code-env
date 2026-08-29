@@ -79,7 +79,12 @@ if [ "$1" = "--list" ] && [ "$2" = "--quiet" ]; then
 fi
 
 if [ "$1" = "--help" ]; then
-    printf '%s\n' "$FAKE_WSL_HELP"
+    if [ "$FAKE_WSL_HELP_NUL" = "1" ]; then
+        printf '%s' "$FAKE_WSL_HELP" | awk '{ for (i = 1; i <= length($0); i++) { printf "%s%c", substr($0, i, 1), 0 } }'
+        printf '\n'
+    else
+        printf '%s\n' "$FAKE_WSL_HELP"
+    fi
     exit "${FAKE_WSL_HELP_EXIT:-0}"
 fi
 
@@ -105,7 +110,8 @@ function Set-FakeWslScenario {
         [string]$Help = "--name <Name>",
         [int]$HelpExit = 0,
         [int]$ListExit = 0,
-        [int]$InstallExit = 0
+        [int]$InstallExit = 0,
+        [bool]$NulHelp = $false
     )
 
     $env:FAKE_WSL_LOG = Join-Path $Root "fake-wsl.log"
@@ -118,6 +124,7 @@ function Set-FakeWslScenario {
     $env:FAKE_WSL_HELP_EXIT = "$HelpExit"
     $env:FAKE_WSL_LIST_EXIT = "$ListExit"
     $env:FAKE_WSL_INSTALL_EXIT = "$InstallExit"
+    $env:FAKE_WSL_HELP_NUL = if ($NulHelp) { "1" } else { "0" }
 }
 
 function Get-FakeWslCalls {
@@ -193,9 +200,13 @@ try {
     Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "missing named-install help should fail"
     Assert-Equal "--list --quiet`n--help`n" (Get-FakeWslCalls) "missing named-install help calls"
 
-    Set-FakeWslScenario -Root $testRoot -HelpExit 1
-    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "nonzero help should fail"
-    Assert-Equal "--list --quiet`n--help`n" (Get-FakeWslCalls) "nonzero help calls"
+    Set-FakeWslScenario -Root $testRoot -After "openhands-worker" -HelpExit 1 -NulHelp $true
+    Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "valid NUL-separated help should override its nonzero exit"
+    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "nonzero informational help calls"
+
+    Set-FakeWslScenario -Root $testRoot -Help "--name-suffix <Name>" -HelpExit 1
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "nonzero help without named install should fail"
+    Assert-Equal "--list --quiet`n--help`n" (Get-FakeWslCalls) "nonzero unsupported help calls"
 
     Set-FakeWslScenario -Root $testRoot -ListExit 1
     Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "nonzero list should fail"

@@ -92,9 +92,10 @@ After Stage 1, it checks `wsl --list --quiet` first: an existing
 target machine's `wsl --help` and use named installation when an exact `--name`
 option is advertised. A new target is created with
 `wsl --install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`.
-The installer fails if the native command fails or a fresh quiet list does not
-show the exact registered name. This stage does not import a distribution,
-select an install location, or use a fallback naming flow.
+The help output itself must advertise `--name`; quiet-list, install, and
+post-install verification failures stop the installer. This stage does not
+import a distribution, select an install location, or use a fallback naming
+flow.
 
 ## WSL configuration
 
