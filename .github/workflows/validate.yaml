@@ -73,6 +73,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Shellcheck and bake syntax
         run: |
           shellcheck image/scripts/*.sh image/scripts/devbox-init scripts/devbox tests/smoke/run.sh
@@ -83,21 +87,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y bats
           bats tests/devbox-init.bats tests/devbox.bats
-
-  devbox-coder-template:
-    name: Devbox Coder template
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.15.5
-
-      - run: |
-          terraform -chdir=coder/devbox fmt -check -diff
-          terraform -chdir=coder/devbox init -backend=false -input=false
-          terraform -chdir=coder/devbox validate
 
   devbox-image:
     name: Devbox ${{ matrix.variant }}

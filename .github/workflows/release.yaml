@@ -110,6 +110,7 @@ jobs:
   devbox:
     name: Build & push devbox ${{ matrix.variant }}
     needs: candidate
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -126,6 +127,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Validate devbox CalVer tag
+        env:
+          DEVBOX_VERSION: ${{ github.ref_name }}
+        run: |
+          [[ "$DEVBOX_VERSION" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]]
+
       - name: Build and push
         uses: docker/bake-action@v6
         with:
@@ -135,5 +142,6 @@ jobs:
             *.cache-from=type=gha,scope=devbox-${{ matrix.variant }}
             *.cache-to=type=gha,scope=devbox-${{ matrix.variant }},mode=max
         env:
-          DEVBOX_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || format('sha-{0}', github.sha) }}
+          DEVBOX_VERSION: ${{ github.ref_name }}
+          DEVBOX_REVISION: ${{ github.sha }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

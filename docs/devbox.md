@@ -8,8 +8,9 @@ Coder workspace, a long-running agent pod, a headless one-shot job, and a
 local container on a laptop — all through one entrypoint, `devbox-init`.
 
 Phase 1 is additive: the devbox images, the `devbox` Coder template and the
-local launcher ship **next to** the existing hermes-hq image and the
-`hermes-worker-*` templates. Nothing is repointed or removed until phase 2.
+local launcher ship **next to** the existing `dev-full`, `dev-pilot`,
+`dev-hermes`, and `dev-both` composable image lifecycle. Nothing is repointed
+or removed until phase 2.
 
 ## Image family
 
@@ -190,22 +191,11 @@ The first published calver gets pinned there at phase-1 acceptance, before
 any workspace is created; from then on Renovate bumps it
 (`datasource=github-tags`, this repo cuts tags rather than Releases).
 
-Delivery: Coder has no pull/GitOps mode, so templates are pushed.
-`.github/workflows/coder-templates.yaml` runs, on `main`:
-
-```sh
-coder templates push devbox --directory coder/devbox \
-  --name <short sha>-<run number>-<run attempt> \
-  --message "<commit subject>" --yes
-```
-
-`--activate` (the default) makes it the active version. Every workspace on
-an older version shows Coder's "Update available" banner and is marked
-outdated in `coder list`; users update on their own schedule and
-`require_active_version` stays off. So an image bump is a template change,
-and the chain is: release -> Renovate PR here -> merge -> push -> banner.
-The `variant` parameter options stay stable so an update never forces a
-re-prompt. PRs run `terraform fmt -check` and `validate` only.
+Until the first immutable CalVer is pinned, the path-filtered
+`.github/workflows/coder-templates.yaml` validates this template but does not
+push or activate it. Task 10 will pin the image, enable the push, and then
+make update availability part of the Coder lifecycle. The `variant` parameter
+options stay stable so an update never forces a re-prompt.
 
 The template name `devbox` collides with nothing in h-cloud, so both sets
 coexist in the same Coder deployment through phase 1.

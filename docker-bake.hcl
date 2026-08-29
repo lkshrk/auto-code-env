@@ -90,6 +90,7 @@ group "default" { targets = ["dev-full", "dev-pilot", "dev-hermes", "dev-both"] 
 
 variable "DEVBOX_REGISTRY" { default = "ghcr.io/lkshrk/devbox" }
 variable "DEVBOX_VERSION" { default = "dev" }
+variable "DEVBOX_REVISION" { default = "unknown" }
 variable "DEVBOX_DOTFILES_REF" { default = "main" }
 variable "DEVBOX_DOTFILES_COMMIT" { default = "80e4e773eece899ae854445230688a42aca76d4b" }
 
@@ -105,7 +106,7 @@ target "_devbox_common" {
   }
   labels = {
     "org.opencontainers.image.source" = "https://github.com/lkshrk/auto-code-env"
-    "org.opencontainers.image.revision" = DEVBOX_VERSION
+    "org.opencontainers.image.revision" = DEVBOX_REVISION
     "io.lkshrk.devbox.dotfiles-commit" = DEVBOX_DOTFILES_COMMIT
   }
   output = ["type=image,compression=zstd,force-compression=true"]
