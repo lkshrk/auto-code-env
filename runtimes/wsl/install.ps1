@@ -386,7 +386,7 @@ function Get-WslBaseProvisioningVerificationCommand {
         'set -eu'
         '[ "$(id -un)" = agent ]'
         '[ "$(cat /proc/1/comm)" = systemd ]'
-        '[ ! -e /mnt/c ]'
+        'if mountpoint -q /mnt/c; then exit 1; fi'
         (Get-WslBaseProvisioningIsolationCommand)
         'for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do'
         '    [ ! -L "$path" ] && [ -d "$path" ] && [ "$(stat -c ''%U:%G %a'' "$path")" = ''agent:agent 700'' ]'

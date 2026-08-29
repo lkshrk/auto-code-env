@@ -468,6 +468,7 @@ try {
     $verificationRoot = Join-Path $testRoot ("verification-" + [Guid]::NewGuid().ToString("N"))
     $safeAgentPaths = @(".openhands", ".claude", ".codex", "workspaces") | ForEach-Object { Join-Path $verificationRoot $_ }
     New-Item -ItemType Directory -Path $verificationRoot | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $verificationRoot "mnt-c") | Out-Null
     foreach ($path in $safeAgentPaths) {
         New-Item -ItemType Directory -Path $path | Out-Null
     }
@@ -489,9 +490,12 @@ try {
         $env:WSL_INTEROP = ""
         & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $safeVerificationProgram)
         Assert-Equal 0 $LASTEXITCODE "combined verification program should execute with mapped target facts"
+        $mountedDriveVerificationProgram = $safeVerificationProgram.Replace((Join-Path $verificationRoot "mnt-c"), "/")
+        & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $mountedDriveVerificationProgram)
+        Assert-Equal 1 $LASTEXITCODE "combined verification program should reject a mounted Windows drive"
         $verificationLines = @($verificationProgram -split "`n")
         Assert-Equal 10 $verificationLines.Count "combined verification program line count"
-        Assert-Equal '[ ! -e /mnt/c ]' $verificationLines[3] "mount check line boundary"
+        Assert-Equal 'if mountpoint -q /mnt/c; then exit 1; fi' $verificationLines[3] "mount check line boundary"
         Assert-Equal 'set -e' $verificationLines[4] "isolation fragment start line boundary"
         Assert-Equal '[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ]' $verificationLines[6] "isolation fragment end line boundary"
         Assert-Equal 'for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do' $verificationLines[7] "directory loop line boundary"
