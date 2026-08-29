@@ -31,7 +31,7 @@ else
 fi
 
 if [ "$DEVBOX_DOTS" = "1" ]; then
-  omni --yes dots sync --use-repo
+  OMNI_CONFIG="$dotfiles/dotfiles/omni/.config/omni/settings.json" omni --yes dots sync --use-repo
 fi
 
 for d in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/go/bin" "$HOME/.cargo/bin"; do

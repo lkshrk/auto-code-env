@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-echo "omni $*" >> "$FAKE_LOG"
+echo "OMNI_CONFIG=${OMNI_CONFIG:-} omni $*" >> "$FAKE_LOG"
 exit 0

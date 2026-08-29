@@ -15,6 +15,7 @@ setup() {
   [ "$status" -eq 0 ]
   grep -q "git clone --quiet https://github.com/lkshrk/dotfiles.git $HOME/dotfiles" "$FAKE_LOG"
   grep -q "omni --yes dots sync --use-repo" "$FAKE_LOG"
+  grep -Fq "OMNI_CONFIG=$HOME/dotfiles/dotfiles/omni/.config/omni/settings.json omni --yes dots sync --use-repo" "$FAKE_LOG"
 }
 
 @test "fetches but never resets an existing checkout" {
