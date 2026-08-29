@@ -54,7 +54,7 @@ function Set-WslMirroredNetworking {
 
         $keys = @{}
         for ($index = $start; $index -lt $end; $index++) {
-            if ($lines[$index] -match '^\s*([^=;#][^=]*)=') {
+            if ($lines[$index] -match '^\s*([^=;#\s][^=]*)=') {
                 $key = $Matches[1].Trim()
                 if ($keys.ContainsKey($key)) {
                     throw "Duplicate key '$key' in [wsl2] in '$Path'."
@@ -132,6 +132,48 @@ function Test-WslDistributionAvailable {
     return [bool]((($Output -replace [string][char]0, "") -join "`n") -match ("(?m)^\s*" + [regex]::Escape($Distribution) + "(?:\s|$)"))
 }
 
+function Get-WslExecutablePath {
+    param(
+        [string]$SystemRoot = $env:SystemRoot,
+        [bool]$Is64BitProcess = [Environment]::Is64BitProcess,
+        [bool]$Is64BitOperatingSystem = [Environment]::Is64BitOperatingSystem
+    )
+
+    $directory = if (-not $Is64BitProcess -and $Is64BitOperatingSystem) { "$SystemRoot\Sysnative" } else { "$SystemRoot\System32" }
+    return "$directory\wsl.exe"
+}
+
+function Test-WslVersionSupported {
+    param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Output)
+
+    $normalized = ($Output -replace [string][char]0, "") -join "`n"
+    $match = [regex]::Match($normalized, '(?m)^\s*WSL version:\s*(\d+\.\d+(?:\.\d+){0,2})')
+    if (-not $match.Success) {
+        return $false
+    }
+
+    try {
+        return [version]$match.Groups[1].Value -ge [version]"2.7"
+    }
+    catch {
+        return $false
+    }
+}
+
+function Restore-WslConfig {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [AllowNull()][string]$BackupPath
+    )
+
+    if ($BackupPath) {
+        [System.IO.File]::Copy($BackupPath, $Path, $true)
+    }
+    elseif (Test-Path -LiteralPath $Path -PathType Leaf) {
+        Remove-Item -LiteralPath $Path -Force
+    }
+}
+
 function Assert-WslPrerequisites {
     param([Parameter(Mandatory)][string]$Distribution)
 
@@ -149,31 +191,38 @@ function Assert-WslPrerequisites {
         throw "Run this installer from an elevated PowerShell session."
     }
 
-    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
-        throw "WSL is not installed or wsl.exe is not available."
+    $wslPath = Get-WslExecutablePath
+    if (-not (Test-Path -LiteralPath $wslPath -PathType Leaf)) {
+        throw "WSL is not installed at '$wslPath'."
     }
 
-    & wsl.exe --version
+    $versionOutput = & $wslPath --version
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to read the installed WSL version."
     }
+    if (-not (Test-WslVersionSupported -Output $versionOutput)) {
+        throw "WSL version 2.7 or later is required."
+    }
 
-    $online = & wsl.exe --list --online
+    $online = & $wslPath --list --online
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to list online WSL distributions."
     }
     if (-not (Test-WslDistributionAvailable -Output $online -Distribution $Distribution)) {
         throw "Required online WSL distribution '$Distribution' is unavailable."
     }
+
+    return $wslPath
 }
 
-Assert-WslPrerequisites -Distribution $Distribution
+$wslPath = Assert-WslPrerequisites -Distribution $Distribution
 
 $configPath = Join-Path $env:USERPROFILE ".wslconfig"
 $result = Set-WslMirroredNetworking -Path $configPath
 if ($result.Changed) {
-    & wsl.exe --shutdown
+    & $wslPath --shutdown
     if ($LASTEXITCODE -ne 0) {
+        Restore-WslConfig -Path $configPath -BackupPath $result.BackupPath
         throw "WSL configuration changed, but WSL shutdown failed."
     }
 }

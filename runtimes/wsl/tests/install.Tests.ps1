@@ -62,6 +62,19 @@ try {
     $installPath = Join-Path $PSScriptRoot ".." "install.ps1"
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Set-WslMirroredNetworking")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionAvailable")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslExecutablePath")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslVersionSupported")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Restore-WslConfig")))
+
+    Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -SystemRoot "C:\Windows" -Is64BitProcess $true -Is64BitOperatingSystem $true) "64-bit process WSL path"
+    Assert-Equal "C:\Windows\Sysnative\wsl.exe" (Get-WslExecutablePath -SystemRoot "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $true) "32-bit process WSL path"
+    Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -SystemRoot "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $false) "32-bit OS WSL path"
+
+    Assert-Equal $true (Test-WslVersionSupported -Output @("WSL version: 2.7.0", "Kernel version: 6.6")) "WSL 2.7.0 should be supported"
+    Assert-Equal $false (Test-WslVersionSupported -Output @("WSL version: 2.6.9")) "WSL 2.6.9 should be rejected"
+    Assert-Equal $false (Test-WslVersionSupported -Output @("WSL version: unknown")) "malformed WSL version should be rejected"
+    $nulSeparatedVersion = [string]::Join([char]0, [char[]]"WSL version: 2.7.0")
+    Assert-Equal $true (Test-WslVersionSupported -Output @($nulSeparatedVersion)) "NUL-separated WSL 2.7.0 should be supported"
 
     $onlineOutput = @(
         "The following is a list of valid distributions that can be installed.",
@@ -97,6 +110,19 @@ try {
     Assert-Equal $false $mixedEolResult.Changed "mixed-EOL mirrored config should be a no-op"
     Assert-Equal $mixedEol (Get-Content $mixedEolPath -Raw) "mixed-EOL config should be unchanged"
 
+    $rollbackPath = Join-Path $testRoot "rollback.wslconfig"
+    $rollbackOriginal = "[wsl2]`nnetworkingMode=nat`n"
+    [System.IO.File]::WriteAllText($rollbackPath, $rollbackOriginal, [System.Text.UTF8Encoding]::new($false))
+    $rollbackChanged = Set-WslMirroredNetworking -Path $rollbackPath
+    Restore-WslConfig -Path $rollbackPath -BackupPath $rollbackChanged.BackupPath
+    Assert-Equal $rollbackOriginal (Get-Content $rollbackPath -Raw) "rollback should restore an existing config"
+    Assert-Equal $true (Set-WslMirroredNetworking -Path $rollbackPath).Changed "retry after rollback should change again"
+
+    $newConfigPath = Join-Path $testRoot "new-config.wslconfig"
+    $newConfigChanged = Set-WslMirroredNetworking -Path $newConfigPath
+    Restore-WslConfig -Path $newConfigPath -BackupPath $newConfigChanged.BackupPath
+    Assert-Equal $false (Test-Path -LiteralPath $newConfigPath) "rollback should delete a newly created config"
+
     $formattedPath = Join-Path $testRoot "formatted.wslconfig"
     [System.IO.File]::WriteAllText($formattedPath, "[wsl2]`n  networkingMode = nat ; retain this`n`tdnsTunneling = false # retain this too`n", [System.Text.UTF8Encoding]::new($false))
     $formattedResult = Set-WslMirroredNetworking -Path $formattedPath
@@ -118,6 +144,10 @@ try {
     $duplicateKeyPath = Join-Path $testRoot "duplicate-key.wslconfig"
     [System.IO.File]::WriteAllText($duplicateKeyPath, "[wsl2]`nnetworkingMode=nat`nnetworkingMode=mirrored`n", [System.Text.UTF8Encoding]::new($false))
     Assert-Throws { Set-WslMirroredNetworking -Path $duplicateKeyPath } "duplicate key"
+
+    $commentPath = Join-Path $testRoot "comment-equals.wslconfig"
+    [System.IO.File]::WriteAllText($commentPath, "[wsl2]`n  # note=value`n  # note=value`nnetworkingMode=nat`ndnsTunneling=false`n", [System.Text.UTF8Encoding]::new($false))
+    Assert-Equal $true (Set-WslMirroredNetworking -Path $commentPath).Changed "comment lines with equals should not be keys"
 
     $source = Get-Content $installPath -Raw
     Assert-NotMatch 'IsWindowsVersionAtLeast|File\]::Move\([^\r\n]+,\s*[^\r\n]+,\s*\$true\)|::new\(' $source "Windows PowerShell 5.1 compatibility"
