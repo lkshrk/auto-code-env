@@ -338,6 +338,17 @@ function Get-WslBootstrapAsset {
     }
 }
 
+function Get-WslShellProgramWrapper {
+    return 'program=$(mktemp); printf %s $1 | base64 -d >$program && sh $program $2 $3 $4 $5; result=$?; rm -f $program; exit $result'
+}
+
+function ConvertTo-WslShellProgramBase64 {
+    param([Parameter(Mandatory)][string]$Program)
+
+    $encoding = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+    return [Convert]::ToBase64String($encoding.GetBytes($Program))
+}
+
 function Get-WslBaseProvisioningTransferCommand {
     return @'
 set -eu
@@ -386,6 +397,7 @@ done
 
 function Get-WslBaseProvisioningIsolationCommand {
     return @'
+set -e
 [ -z "${WSL_INTEROP:-}" ]
 [ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ]
 '@
@@ -401,13 +413,14 @@ function Invoke-WslBaseProvisioning {
 
     $provision = Get-WslBootstrapAsset -Path $ProvisionPath
     $config = Get-WslBootstrapAsset -Path $ConfigPath
-    $transferCommand = Get-WslBaseProvisioningTransferCommand
-    $verificationCommand = Get-WslBaseProvisioningVerificationCommand
+    $wrapper = Get-WslShellProgramWrapper
+    $transferProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBaseProvisioningTransferCommand)
+    $verificationProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBaseProvisioningVerificationCommand)
 
     $failure = $null
     $terminationFailure = $null
     try {
-        & $WslPath --distribution $Name --user root --exec sh -ec $transferCommand sh $provision.Base64 $provision.Sha256 $config.Base64 $config.Sha256
+        & $WslPath --distribution $Name --user root --exec sh -ec $wrapper sh $transferProgram $provision.Base64 $provision.Sha256 $config.Base64 $config.Sha256
         if ($LASTEXITCODE -ne 0) {
             throw "Unable to transfer verified bootstrap assets to WSL distribution '$Name'."
         }
@@ -422,7 +435,7 @@ function Invoke-WslBaseProvisioning {
             throw "Unable to restart WSL distribution '$Name'."
         }
 
-        & $WslPath --distribution $Name --exec sh -ec $verificationCommand
+        & $WslPath --distribution $Name --exec sh -ec $wrapper sh $verificationProgram
         if ($LASTEXITCODE -ne 0) {
             throw "WSL distribution '$Name' failed post-provision verification."
         }

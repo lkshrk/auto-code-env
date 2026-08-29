@@ -106,7 +106,8 @@ Stage 4 copies `provision.sh` and `wsl.conf` as exact base64-encoded bytes into
 the root-owned `/root/openhands-bootstrap` directory. The Windows installer
 rejects missing, non-file, and reparse-point sources; verifies each transferred
 SHA-256 before root executes the provisioner; and never relies on `/mnt` or
-Windows interop after isolation is enabled. It restarts only
+Windows interop after isolation is enabled. Its native WSL calls carry only a
+fixed single-line decoder and base64 tokens, not multiline shell programs. It restarts only
 `openhands-worker`, verifies the default `agent`, systemd PID 1, absent
 `/mnt/c`, empty `WSL_INTEROP`, absent WSLInterop binfmt registration, and the
 four private agent directories, then stops only that worker. Reruns reuse only

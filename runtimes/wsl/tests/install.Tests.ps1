@@ -253,6 +253,8 @@ try {
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-UbuntuRelease")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Assert-WslDistributionIdentity")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBootstrapAsset")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslShellProgramWrapper")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "ConvertTo-WslShellProgramBase64")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBaseProvisioningTransferCommand")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBaseProvisioningIsolationCommand")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBaseProvisioningVerificationCommand")))
@@ -445,20 +447,34 @@ try {
     Assert-Match 'IyEvYmluL3NoCg== a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf W3VzZXJdCg== 37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2' $stage4bCalls "Stage 4B should pass exact asset bytes and hashes"
     $stage4bArguments = Get-FakeWslArgumentCalls
     Assert-Equal 5 $stage4bArguments.Count "Stage 4B should make exactly five WSL calls"
-    $expectedTransferArguments = @("--distribution", "openhands-worker", "--user", "root", "--exec", "sh", "-ec", (Get-WslBaseProvisioningTransferCommand), "sh", "IyEvYmluL3NoCg==", "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf", "W3VzZXJdCg==", "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2") -join [char]0
+    $transferProgram = Get-WslBaseProvisioningTransferCommand
+    $transferProgramBase64 = ConvertTo-WslShellProgramBase64 -Program $transferProgram
+    $expectedTransferArguments = @("--distribution", "openhands-worker", "--user", "root", "--exec", "sh", "-ec", (Get-WslShellProgramWrapper), "sh", $transferProgramBase64, "IyEvYmluL3NoCg==", "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf", "W3VzZXJdCg==", "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2") -join [char]0
     Assert-Equal $expectedTransferArguments ($stage4bArguments[0] -join [char]0) "transfer argv boundaries and positions"
-    $expectedVerificationArguments = @("--distribution", "openhands-worker", "--exec", "sh", "-ec", (Get-WslBaseProvisioningVerificationCommand)) -join [char]0
+    Assert-NotMatch "`n" $stage4bArguments[0][7] "native transfer wrapper must be single-line"
+    Assert-NotMatch "'" $stage4bArguments[0][7] "native transfer wrapper must not contain single quotes"
+    Assert-NotMatch ([string][char]34) $stage4bArguments[0][7] "native transfer wrapper must not contain double quotes"
+    Assert-Equal $transferProgram ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($stage4bArguments[0][9]))) "transfer program base64 must preserve exact UTF-8 bytes"
+    $verificationProgram = Get-WslBaseProvisioningVerificationCommand
+    $verificationProgramBase64 = ConvertTo-WslShellProgramBase64 -Program $verificationProgram
+    $expectedVerificationArguments = @("--distribution", "openhands-worker", "--exec", "sh", "-ec", (Get-WslShellProgramWrapper), "sh", $verificationProgramBase64) -join [char]0
     Assert-Equal $expectedVerificationArguments ($stage4bArguments[3] -join [char]0) "verification argv boundaries and fixed shell body"
-    Assert-Match '\[ -z "\$\{WSL_INTEROP:-\}" \]' $stage4bArguments[3][5] "Stage 4B should verify WSL_INTEROP is absent"
-    Assert-Match '\[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop \]' $stage4bArguments[3][5] "Stage 4B should verify WSLInterop binfmt is absent"
+    Assert-NotMatch "`n" $stage4bArguments[3][5] "native verification wrapper must be single-line"
+    Assert-NotMatch "'" $stage4bArguments[3][5] "native verification wrapper must not contain single quotes"
+    Assert-NotMatch ([string][char]34) $stage4bArguments[3][5] "native verification wrapper must not contain double quotes"
+    Assert-Equal $verificationProgram ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($stage4bArguments[3][7]))) "verification program base64 must preserve exact UTF-8 bytes"
+    Assert-Match '\[ -z "\$\{WSL_INTEROP:-\}" \]' $verificationProgram "Stage 4B should verify WSL_INTEROP is absent"
+    Assert-Match '\[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop \]' $verificationProgram "Stage 4B should verify WSLInterop binfmt is absent"
     $previousInterop = $env:WSL_INTEROP
     try {
+        $isolationWrapper = Get-WslShellProgramWrapper
+        $isolationProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBaseProvisioningIsolationCommand)
         $env:WSL_INTEROP = ""
-        & sh -ec (Get-WslBaseProvisioningIsolationCommand)
-        Assert-Equal 0 $LASTEXITCODE "isolation command should accept an empty WSL_INTEROP and absent binfmt"
+        & sh -ec $isolationWrapper sh $isolationProgram
+        Assert-Equal 0 $LASTEXITCODE "verification wrapper should accept an empty WSL_INTEROP and absent binfmt"
         $env:WSL_INTEROP = "unexpected"
-        & sh -ec (Get-WslBaseProvisioningIsolationCommand)
-        Assert-Equal 1 $LASTEXITCODE "isolation command should reject WSL_INTEROP"
+        & sh -ec $isolationWrapper sh $isolationProgram
+        Assert-Equal 1 $LASTEXITCODE "verification wrapper should reject WSL_INTEROP"
     }
     finally {
         $env:WSL_INTEROP = $previousInterop
@@ -496,17 +512,21 @@ try {
         Assert-Equal 1 ([regex]::Matches($transfer, [regex]::Escape($productionBootstrap))).Count "production bootstrap assignment should be replaced exactly once"
         $transfer = $transfer.Replace($productionBootstrap, "bootstrap='$bootstrapPath'")
         Assert-NotMatch '/root/openhands-bootstrap' $transfer "execution test must not use the production bootstrap path"
-        & sh -ec $transfer sh "IyEvYmluL3NoCg==" "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
+        $transferProgramBase64 = ConvertTo-WslShellProgramBase64 -Program $transfer
+        $wrapper = Get-WslShellProgramWrapper
+        & sh -ec $wrapper sh $transferProgramBase64 "IyEvYmluL3NoCg==" "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
         Assert-Equal 0 $LASTEXITCODE "first transfer shell run should succeed"
         Assert-Equal "IyEvYmluL3NoCg==" ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/provision.sh"))) "transfer shell should write exact provision bytes"
         Assert-Equal "W3VzZXJdCg==" ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/wsl.conf"))) "transfer shell should write exact config bytes"
         Assert-Equal "root:root 700" ((& stat -c '%U:%G %a' "$bootstrapPath/provision.sh").Trim()) "transfer shell provision ownership and mode"
         Assert-Equal "root:root 600" ((& stat -c '%U:%G %a' "$bootstrapPath/wsl.conf").Trim()) "transfer shell config ownership and mode"
-        & sh -ec $transfer sh "IyEvYmluL3NoCg==" "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
+        & sh -ec $wrapper sh $transferProgramBase64 "IyEvYmluL3NoCg==" "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
         Assert-Equal 0 $LASTEXITCODE "transfer shell rerun should accept canonical modes"
-        & sh -ec $transfer sh "IyEvYmluL3NoCg==" ("0" * 64) "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
+        & sh -ec $wrapper sh $transferProgramBase64 "IyEvYmluL3NoCg==" ("0" * 64) "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
         Assert-Equal 1 $LASTEXITCODE "transfer shell should reject a mismatched SHA-256"
         Assert-Equal "IyEvYmluL3NoCg==" ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/provision.sh"))) "failed hash verification should preserve the prior asset"
+        & sh -ec $wrapper sh "not-base64" "IyEvYmluL3NoCg==" "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" "W3VzZXJdCg==" "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2"
+        Assert-Equal 1 $LASTEXITCODE "wrapper should reject a corrupted program payload"
     }
     finally {
         if (Test-Path -LiteralPath $bootstrapPath) {
