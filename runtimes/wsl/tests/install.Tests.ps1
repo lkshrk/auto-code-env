@@ -38,8 +38,8 @@ function Assert-Throws {
     throw "$Message. Expected an exception."
 }
 
-function Import-ConfigMergeFunction {
-    param([string]$Path)
+function Import-InstallFunction {
+    param([string]$Path, [string]$Name)
 
     $errors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errors)
@@ -47,9 +47,9 @@ function Import-ConfigMergeFunction {
         throw ($errors | Out-String)
     }
 
-    $function = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Set-WslMirroredNetworking" }, $true)
+    $function = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name }, $true)
     if (-not $function) {
-        throw "Set-WslMirroredNetworking is missing."
+        throw "$Name is missing."
     }
 
     return $function.Extent.Text
@@ -60,7 +60,18 @@ New-Item -ItemType Directory -Path $testRoot | Out-Null
 
 try {
     $installPath = Join-Path $PSScriptRoot ".." "install.ps1"
-    . ([scriptblock]::Create((Import-ConfigMergeFunction $installPath)))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Set-WslMirroredNetworking")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionAvailable")))
+
+    $onlineOutput = @(
+        "The following is a list of valid distributions that can be installed.",
+        "Install using 'wsl.exe --install <Distro>'.",
+        "",
+        "NAME                            FRIENDLY NAME",
+        "Ubuntu-26.04                    Ubuntu 26.04 LTS"
+    )
+    Assert-Equal $true (Test-WslDistributionAvailable -Output $onlineOutput -Distribution "Ubuntu-26.04") "exact online distribution should be available"
+    Assert-Equal $false (Test-WslDistributionAvailable -Output @("Ubuntu-26.04-extra             Wrong") -Distribution "Ubuntu-26.04") "near-match distribution should be unavailable"
 
     $configPath = Join-Path $testRoot ".wslconfig"
     $original = "[wsl2]`nfirewall=true`nlocalhostForwarding=false`n"

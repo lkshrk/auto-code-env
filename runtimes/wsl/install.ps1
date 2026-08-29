@@ -123,6 +123,15 @@ function Set-WslMirroredNetworking {
     return [pscustomobject]@{ Changed = $true; BackupPath = $backupPath }
 }
 
+function Test-WslDistributionAvailable {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Output,
+        [Parameter(Mandatory)][string]$Distribution
+    )
+
+    return [bool](($Output -join "`n") -match ("(?m)^\s*" + [regex]::Escape($Distribution) + "(?:\s|$)"))
+}
+
 function Assert-WslPrerequisites {
     param([Parameter(Mandatory)][string]$Distribution)
 
@@ -153,7 +162,7 @@ function Assert-WslPrerequisites {
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to list online WSL distributions."
     }
-    if (($online -join "`n") -notmatch ("(?m)^\\s*" + [regex]::Escape($Distribution) + "(?:\\s|$)")) {
+    if (-not (Test-WslDistributionAvailable -Output $online -Distribution $Distribution)) {
         throw "Required online WSL distribution '$Distribution' is unavailable."
     }
 }
