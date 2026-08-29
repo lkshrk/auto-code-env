@@ -129,7 +129,7 @@ function Test-WslDistributionAvailable {
         [Parameter(Mandatory)][string]$Distribution
     )
 
-    return [bool](($Output -join "`n") -match ("(?m)^\s*" + [regex]::Escape($Distribution) + "(?:\s|$)"))
+    return [bool]((($Output -replace [string][char]0, "") -join "`n") -match ("(?m)^\s*" + [regex]::Escape($Distribution) + "(?:\s|$)"))
 }
 
 function Assert-WslPrerequisites {
