@@ -55,6 +55,75 @@ function Import-InstallFunction {
     return $function.Extent.Text
 }
 
+function New-FakeWslExecutable {
+    param([string]$Root)
+
+    $path = Join-Path $Root "fake-wsl"
+    [System.IO.File]::WriteAllText($path, @'
+#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_WSL_LOG"
+
+if [ "$1" = "--list" ] && [ "$2" = "--quiet" ]; then
+    count=0
+    if [ -f "$FAKE_WSL_LIST_COUNT" ]; then
+        count=$(cat "$FAKE_WSL_LIST_COUNT")
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$FAKE_WSL_LIST_COUNT"
+    if [ "$count" -eq 1 ]; then
+        printf '%s\n' "$FAKE_WSL_LIST_BEFORE"
+    else
+        printf '%s\n' "$FAKE_WSL_LIST_AFTER"
+    fi
+    exit "${FAKE_WSL_LIST_EXIT:-0}"
+fi
+
+if [ "$1" = "--help" ]; then
+    printf '%s\n' "$FAKE_WSL_HELP"
+    exit "${FAKE_WSL_HELP_EXIT:-0}"
+fi
+
+if [ "$1" = "--install" ]; then
+    exit "${FAKE_WSL_INSTALL_EXIT:-0}"
+fi
+
+exit 99
+'@, [System.Text.UTF8Encoding]::new($false))
+    & chmod +x $path
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to make fake WSL executable."
+    }
+
+    return $path
+}
+
+function Set-FakeWslScenario {
+    param(
+        [string]$Root,
+        [string]$Before = "",
+        [string]$After = "",
+        [string]$Help = "--name <Name>",
+        [int]$HelpExit = 0,
+        [int]$ListExit = 0,
+        [int]$InstallExit = 0
+    )
+
+    $env:FAKE_WSL_LOG = Join-Path $Root "fake-wsl.log"
+    $env:FAKE_WSL_LIST_COUNT = Join-Path $Root "fake-wsl.list-count"
+    [System.IO.File]::WriteAllText($env:FAKE_WSL_LOG, "", [System.Text.UTF8Encoding]::new($false))
+    Remove-Item -LiteralPath $env:FAKE_WSL_LIST_COUNT -Force -ErrorAction SilentlyContinue
+    $env:FAKE_WSL_LIST_BEFORE = $Before
+    $env:FAKE_WSL_LIST_AFTER = $After
+    $env:FAKE_WSL_HELP = $Help
+    $env:FAKE_WSL_HELP_EXIT = "$HelpExit"
+    $env:FAKE_WSL_LIST_EXIT = "$ListExit"
+    $env:FAKE_WSL_INSTALL_EXIT = "$InstallExit"
+}
+
+function Get-FakeWslCalls {
+    return [System.IO.File]::ReadAllText($env:FAKE_WSL_LOG)
+}
+
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("wsl-install-tests-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 
@@ -110,6 +179,35 @@ try {
     Assert-Equal $false (Test-WslDistributionRegistered -Output @("Ubuntu 26.04 LTS (openhands-worker)") -Name "openhands-worker") "friendly names should not register the target"
     $nulSeparatedRegistered = [string]::Join([char]0, [char[]]"openhands-worker")
     Assert-Equal $true (Test-WslDistributionRegistered -Output @($nulSeparatedRegistered) -Name "openhands-worker") "NUL-separated registered distribution should be found"
+
+    $fakeWslPath = New-FakeWslExecutable -Root $testRoot
+    Set-FakeWslScenario -Root $testRoot -Before "openhands-worker" -Help "--name-suffix <Name>"
+    Assert-Equal $false (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "existing target should be a no-op before help gating"
+    Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "existing target should only be listed"
+
+    Set-FakeWslScenario -Root $testRoot -Before "docker-desktop" -After "docker-desktop`nopenhands-worker"
+    Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "new target should install and verify"
+    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "named install call order"
+
+    Set-FakeWslScenario -Root $testRoot -Help "--name-suffix <Name>"
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "missing named-install help should fail"
+    Assert-Equal "--list --quiet`n--help`n" (Get-FakeWslCalls) "missing named-install help calls"
+
+    Set-FakeWslScenario -Root $testRoot -HelpExit 1
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "nonzero help should fail"
+    Assert-Equal "--list --quiet`n--help`n" (Get-FakeWslCalls) "nonzero help calls"
+
+    Set-FakeWslScenario -Root $testRoot -ListExit 1
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "nonzero list should fail"
+    Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "nonzero list calls"
+
+    Set-FakeWslScenario -Root $testRoot -InstallExit 1
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "nonzero install should fail"
+    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n" (Get-FakeWslCalls) "nonzero install calls"
+
+    Set-FakeWslScenario -Root $testRoot -After "docker-desktop"
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "missing post-install target should fail"
+    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "missing post-install target calls"
 
     $configPath = Join-Path $testRoot ".wslconfig"
     $original = "[wsl2]`nfirewall=true`nlocalhostForwarding=false`n"

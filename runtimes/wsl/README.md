@@ -86,10 +86,11 @@ repositories.
 - restrict that rule to explicitly approved source ranges;
 - apply global WSL shutdown/restart only when required by a covered change.
 
-After Stage 1, `install.ps1` reads the target machine's `wsl --help` and uses
-named installation only when an exact `--name` option is advertised. It then
-checks `wsl --list --quiet`: an existing `openhands-worker` is a no-op, and a
-new target is created with
+`install.ps1` always uses the exact `Ubuntu-26.04` distribution identifier.
+After Stage 1, it checks `wsl --list --quiet` first: an existing
+`openhands-worker` is a no-op. Only when the target is absent does it read the
+target machine's `wsl --help` and use named installation when an exact `--name`
+option is advertised. A new target is created with
 `wsl --install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`.
 The installer fails if the native command fails or a fresh quiet list does not
 show the exact registered name. This stage does not import a distribution,

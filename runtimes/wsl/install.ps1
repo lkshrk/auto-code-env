@@ -1,8 +1,4 @@
-[CmdletBinding()]
-param(
-    [string]$Distribution = "Ubuntu-26.04"
-)
-
+$Distribution = "Ubuntu-26.04"
 $DistroName = "openhands-worker"
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -155,14 +151,6 @@ function Install-WslDistribution {
         [Parameter(Mandatory)][string]$Name
     )
 
-    $help = & $WslPath --help
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to read WSL help."
-    }
-    if (-not (Test-WslNamedInstallSupported -Output $help)) {
-        throw "Installed WSL does not support named distribution installation."
-    }
-
     $registered = & $WslPath --list --quiet
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to list installed WSL distributions."
@@ -170,6 +158,14 @@ function Install-WslDistribution {
     if (Test-WslDistributionRegistered -Output $registered -Name $Name) {
         Write-Host "WSL distribution '$Name' already exists."
         return $false
+    }
+
+    $help = & $WslPath --help
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to read WSL help."
+    }
+    if (-not (Test-WslNamedInstallSupported -Output $help)) {
+        throw "Installed WSL does not support named distribution installation."
     }
 
     & $WslPath --install --distribution $Distribution --name $Name --no-launch
