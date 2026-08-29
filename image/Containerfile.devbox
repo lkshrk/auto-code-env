@@ -69,7 +69,11 @@ RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
 FROM stack-full AS stack-hermes
 RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \
     --mount=type=secret,id=github_token,uid=1000 \
-    /opt/devbox-build/30-tools.sh agent-hermes
+    sudo apt-get update -qq \
+    && sudo apt-get install -y --no-install-recommends build-essential \
+    && /opt/devbox-build/30-tools.sh agent-hermes \
+    && sudo apt-get purge -y --auto-remove build-essential \
+    && sudo rm -rf /var/lib/apt/lists/*
 
 FROM stack-full AS stack-pilot
 RUN --mount=type=cache,target=/opt/devbox/.cache,uid=1000,gid=1000 \

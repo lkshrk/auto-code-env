@@ -15,6 +15,8 @@ fi
 
 sudo apt-get update -qq
 for group in "$@"; do
-  omni --config "$OMNI_CONFIG" --yes tools sync "$group"
+  if ! omni --config "$OMNI_CONFIG" --yes tools sync "$group"; then
+    omni --config "$OMNI_CONFIG" --yes sync --retry-failed
+  fi
 done
 sudo rm -rf /var/lib/apt/lists/*
