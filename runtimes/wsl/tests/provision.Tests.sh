@@ -35,6 +35,16 @@ run_container '
 '
 
 run_container '
+  mkdir /tmp/assets
+  cp /src/runtimes/wsl/provision.sh /tmp/assets/provision.sh
+  ln -s /src/runtimes/wsl/wsl.conf /tmp/assets/wsl.conf
+  if env WSL_DISTRO_NAME=openhands-worker bash /tmp/assets/provision.sh; then
+    exit 1
+  fi
+  test -L /tmp/assets/wsl.conf
+'
+
+run_container '
   useradd --create-home --shell /bin/sh --user-group agent
   if env WSL_DISTRO_NAME=openhands-worker bash /src/runtimes/wsl/provision.sh; then
     exit 1
@@ -46,6 +56,15 @@ run_container '
   if env WSL_DISTRO_NAME=openhands-worker bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
+'
+
+run_container '
+  mkdir /home/agent
+  if env WSL_DISTRO_NAME=openhands-worker bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  ! id agent >/dev/null 2>&1
+  test "$(stat -c "%U:%G %a" /home/agent)" = "root:root 755"
 '
 
 run_container '
@@ -90,6 +109,56 @@ run_container '
     exit 1
   fi
   test -f /home/agent/.claude
+'
+
+run_container '
+  useradd --create-home --shell /bin/bash --user-group agent
+  chmod 0700 /home/agent
+  mkdir /home/agent/.codex
+  chown root:root /home/agent/.codex
+  chmod 0700 /home/agent/.codex
+  if env WSL_DISTRO_NAME=openhands-worker bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%U:%G %a" /home/agent/.codex)" = "root:root 700"
+'
+
+run_container '
+  useradd --create-home --shell /bin/bash --user-group agent
+  useradd --create-home --shell /bin/bash --user-group other
+  chmod 0700 /home/agent
+  mkdir /home/agent/.claude
+  chown other:other /home/agent/.claude
+  chmod 0700 /home/agent/.claude
+  if env WSL_DISTRO_NAME=openhands-worker bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%U:%G %a" /home/agent/.claude)" = "other:other 700"
+'
+
+run_container '
+  useradd --create-home --shell /bin/bash --user-group agent
+  chmod 0700 /home/agent
+  mkdir /home/agent/workspaces
+  chown agent:agent /home/agent/workspaces
+  chmod 0755 /home/agent/workspaces
+  if env WSL_DISTRO_NAME=openhands-worker bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%U:%G %a" /home/agent/workspaces)" = "agent:agent 755"
+'
+
+run_container '
+  useradd --create-home --shell /bin/bash --user-group agent
+  chmod 0700 /home/agent
+  printf victim > /tmp/victim
+  chmod 0600 /tmp/victim
+  ln -s /tmp/victim /home/agent/.codex
+  if env WSL_DISTRO_NAME=openhands-worker bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(cat /tmp/victim)" = victim
+  test "$(stat -c "%U:%G %a" /tmp/victim)" = "root:root 600"
 '
 
 run_container '

@@ -273,14 +273,10 @@ runtimes/wsl/
 |-- README.md
 |-- install.ps1
 |-- provision.sh
-|-- verify.sh
 |-- wsl.conf
 |-- tests/
+|   |-- install.Tests.ps1
 |   `-- provision.Tests.sh
-|-- nginx/
-|   `-- openhands-worker.conf
-`-- systemd/
-    `-- openhands-backend.service
 ```
 
 Only implemented and verified assets belong in this tree. Add each remaining
