@@ -1,3 +1,4 @@
 [submodule "deploy/openhands/upstream"]
 	path = deploy/openhands/upstream
 	url = https://github.com/OpenHands/OpenHands.git
+	branch = v1.16.0
