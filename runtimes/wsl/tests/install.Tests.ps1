@@ -260,6 +260,13 @@ try {
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBaseProvisioningVerificationCommand")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Invoke-WslBaseProvisioning")))
 
+    $lfProgram = "set -eu`necho canonical`n"
+    foreach ($variant in @($lfProgram, ($lfProgram -replace "`n", "`r`n"), ($lfProgram -replace "`n", "`r"))) {
+        $decodedProgram = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((ConvertTo-WslShellProgramBase64 -Program $variant)))
+        Assert-Equal $lfProgram $decodedProgram "shell program bytes should decode as canonical LF"
+        Assert-NotMatch "`r" $decodedProgram "decoded shell program must not contain carriage returns"
+    }
+
     Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $true -Is64BitOperatingSystem $true) "64-bit process WSL path"
     Assert-Equal "C:\Windows\Sysnative\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $true) "32-bit process WSL path"
     Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $false) "32-bit OS WSL path"
@@ -533,18 +540,29 @@ try {
     }
 
     $wrapperTempRoot = Join-Path $testRoot ("wrapper-temp-" + [Guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Path $wrapperTempRoot | Out-Null
+    $hostileTmpDir = Join-Path $wrapperTempRoot "mnt-like path"
+    New-Item -ItemType Directory -Path $hostileTmpDir -Force | Out-Null
+    $hostileSentinel = Join-Path $hostileTmpDir "sentinel"
+    [System.IO.File]::WriteAllText($hostileSentinel, "untouched", [System.Text.UTF8Encoding]::new($false))
     $previousTmpDir = $env:TMPDIR
     try {
-        $env:TMPDIR = $wrapperTempRoot
+        Assert-Equal 0 @(Get-ChildItem -LiteralPath /tmp -Filter "openhands-bootstrap.*" -Force -ErrorAction SilentlyContinue).Count "wrapper test context should start without bootstrap leftovers"
+        $env:TMPDIR = $hostileTmpDir
+        & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program "exit 0")
+        Assert-Equal 0 $LASTEXITCODE "wrapper should succeed with hostile TMPDIR"
+        Assert-Equal "untouched" ([System.IO.File]::ReadAllText($hostileSentinel)) "wrapper should not use hostile TMPDIR"
+        Assert-Equal 0 @(Get-ChildItem -LiteralPath /tmp -Filter "openhands-bootstrap.*" -Force -ErrorAction SilentlyContinue).Count "wrapper should remove its successful temporary program"
+
         & sh -ec (Get-WslShellProgramWrapper) sh "not-base64"
         Assert-Equal 1 $LASTEXITCODE "wrapper should preserve decode failure status"
-        Assert-Equal 0 @(Get-ChildItem -LiteralPath $wrapperTempRoot -Force).Count "wrapper should remove its temporary program after decode failure"
+        Assert-Equal "untouched" ([System.IO.File]::ReadAllText($hostileSentinel)) "decode failure should not touch hostile TMPDIR"
+        Assert-Equal 0 @(Get-ChildItem -LiteralPath /tmp -Filter "openhands-bootstrap.*" -Force -ErrorAction SilentlyContinue).Count "wrapper should remove its temporary program after decode failure"
 
         $failingProgram = ConvertTo-WslShellProgramBase64 -Program "exit 23"
         & sh -ec (Get-WslShellProgramWrapper) sh $failingProgram
         Assert-Equal 23 $LASTEXITCODE "wrapper should preserve inner program failure status"
-        Assert-Equal 0 @(Get-ChildItem -LiteralPath $wrapperTempRoot -Force).Count "wrapper should remove its temporary program after inner program failure"
+        Assert-Equal "untouched" ([System.IO.File]::ReadAllText($hostileSentinel)) "inner failure should not touch hostile TMPDIR"
+        Assert-Equal 0 @(Get-ChildItem -LiteralPath /tmp -Filter "openhands-bootstrap.*" -Force -ErrorAction SilentlyContinue).Count "wrapper should remove its temporary program after inner program failure"
     }
     finally {
         $env:TMPDIR = $previousTmpDir

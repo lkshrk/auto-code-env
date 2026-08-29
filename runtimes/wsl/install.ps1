@@ -339,14 +339,14 @@ function Get-WslBootstrapAsset {
 }
 
 function Get-WslShellProgramWrapper {
-    return 'program=$(mktemp); if printf %s $1 | base64 -d >$program && sh $program $2 $3 $4 $5; then result=0; else result=$?; fi; rm -f $program; exit $result'
+    return 'program=$(mktemp /tmp/openhands-bootstrap.XXXXXXXXXX); if printf %s $1 | base64 -d >$program && sh $program $2 $3 $4 $5; then result=0; else result=$?; fi; rm -f $program; exit $result'
 }
 
 function ConvertTo-WslShellProgramBase64 {
     param([Parameter(Mandatory)][string]$Program)
 
     $encoding = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
-    return [Convert]::ToBase64String($encoding.GetBytes($Program))
+    return [Convert]::ToBase64String($encoding.GetBytes(($Program -replace "`r`n?", "`n")))
 }
 
 function Get-WslBaseProvisioningTransferCommand {
