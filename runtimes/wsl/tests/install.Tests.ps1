@@ -17,6 +17,14 @@ function Assert-Match {
     }
 }
 
+function Assert-NotMatch {
+    param([string]$Pattern, [string]$Actual, [string]$Message = "Unexpected pattern was found")
+
+    if ($Actual -match $Pattern) {
+        throw "$Message. Pattern '$Pattern' was found."
+    }
+}
+
 function Assert-Throws {
     param([scriptblock]$Action, [string]$Message)
 
@@ -51,7 +59,8 @@ $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("wsl-install-tests-" + 
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 
 try {
-    . ([scriptblock]::Create((Import-ConfigMergeFunction (Join-Path $PSScriptRoot ".." "install.ps1"))))
+    $installPath = Join-Path $PSScriptRoot ".." "install.ps1"
+    . ([scriptblock]::Create((Import-ConfigMergeFunction $installPath)))
 
     $configPath = Join-Path $testRoot ".wslconfig"
     $original = "[wsl2]`nfirewall=true`nlocalhostForwarding=false`n"
@@ -68,6 +77,21 @@ try {
     Assert-Equal $false $second.Changed "mirrored config should be idempotent"
     Assert-Equal $null $second.BackupPath "no-op should not back up"
 
+    $mixedEolPath = Join-Path $testRoot "mixed-eol.wslconfig"
+    $mixedEol = "[wsl2]`r`nnetworkingMode=mirrored`ndnsTunneling=true`r`nfirewall=true`n"
+    [System.IO.File]::WriteAllText($mixedEolPath, $mixedEol, [System.Text.UTF8Encoding]::new($false))
+    $mixedEolResult = Set-WslMirroredNetworking -Path $mixedEolPath
+    Assert-Equal $false $mixedEolResult.Changed "mixed-EOL mirrored config should be a no-op"
+    Assert-Equal $mixedEol (Get-Content $mixedEolPath -Raw) "mixed-EOL config should be unchanged"
+
+    $formattedPath = Join-Path $testRoot "formatted.wslconfig"
+    [System.IO.File]::WriteAllText($formattedPath, "[wsl2]`n  networkingMode = nat ; retain this`n`tdnsTunneling = false # retain this too`n", [System.Text.UTF8Encoding]::new($false))
+    $formattedResult = Set-WslMirroredNetworking -Path $formattedPath
+    Assert-Equal $true $formattedResult.Changed "formatted config should change"
+    Assert-Match "(?m)^  networkingMode = mirrored ; retain this$" (Get-Content $formattedPath -Raw) "networking format"
+    Assert-Match "(?m)^\tdnsTunneling = true # retain this too$" (Get-Content $formattedPath -Raw) "DNS format"
+    Assert-Equal 91 ([System.IO.File]::ReadAllBytes($formattedPath)[0]) "write should not add a UTF-8 BOM"
+
     $missingSectionPath = Join-Path $testRoot "missing-section.wslconfig"
     [System.IO.File]::WriteAllText($missingSectionPath, "[experimental]`nsparseVhd=true`n", [System.Text.UTF8Encoding]::new($false))
     $inserted = Set-WslMirroredNetworking -Path $missingSectionPath
@@ -81,6 +105,9 @@ try {
     $duplicateKeyPath = Join-Path $testRoot "duplicate-key.wslconfig"
     [System.IO.File]::WriteAllText($duplicateKeyPath, "[wsl2]`nnetworkingMode=nat`nnetworkingMode=mirrored`n", [System.Text.UTF8Encoding]::new($false))
     Assert-Throws { Set-WslMirroredNetworking -Path $duplicateKeyPath } "duplicate key"
+
+    $source = Get-Content $installPath -Raw
+    Assert-NotMatch 'IsWindowsVersionAtLeast|File\]::Move\([^\r\n]+,\s*[^\r\n]+,\s*\$true\)|::new\(' $source "Windows PowerShell 5.1 compatibility"
 
     Write-Host "PASS: WSL mirrored networking configuration"
 }

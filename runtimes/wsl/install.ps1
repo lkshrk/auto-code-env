@@ -9,12 +9,12 @@ Set-StrictMode -Version Latest
 function Set-WslMirroredNetworking {
     param([Parameter(Mandatory)][string]$Path)
 
-    $encoding = [System.Text.UTF8Encoding]::new($false)
+    $encoding = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
     $exists = Test-Path -LiteralPath $Path -PathType Leaf
     $original = if ($exists) { [System.IO.File]::ReadAllText($Path) } else { "" }
     $newline = if ($original.Contains("`r`n")) { "`r`n" } else { "`n" }
     $hasTrailingNewline = $original.EndsWith("`n")
-    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines = New-Object 'System.Collections.Generic.List[string]'
     if ($original.Length) {
         $lines.AddRange([string[]]($original -split "`r?`n"))
         if ($lines[$lines.Count - 1] -eq "") {
@@ -63,6 +63,14 @@ function Set-WslMirroredNetworking {
             }
         }
 
+        $networkingKey = $keys.Keys | Where-Object { $_ -ieq "networkingMode" } | Select-Object -First 1
+        $dnsKey = $keys.Keys | Where-Object { $_ -ieq "dnsTunneling" } | Select-Object -First 1
+        if ($null -ne $networkingKey -and $null -ne $dnsKey -and
+            $lines[[int]$keys[$networkingKey]] -match ("^\s*" + [regex]::Escape($networkingKey) + "\s*=\s*mirrored\s*(?:[;#].*)?$") -and
+            $lines[[int]$keys[$dnsKey]] -match ("^\s*" + [regex]::Escape($dnsKey) + "\s*=\s*true\s*(?:[;#].*)?$") ) {
+            return [pscustomobject]@{ Changed = $false; BackupPath = $null }
+        }
+
         foreach ($setting in @(@("networkingMode", "mirrored"), @("dnsTunneling", "true"))) {
             $key = $setting[0]
             $value = $setting[1]
@@ -71,8 +79,12 @@ function Set-WslMirroredNetworking {
                 $lines.Insert($end, "$key=$value")
                 $end++
             }
-            elseif ($lines[[int]$keys[$keyName]] -notmatch ("^\\s*" + [regex]::Escape($keyName) + "\\s*=\\s*" + [regex]::Escape($value) + "\\s*(?:[;#].*)?$") ) {
-                $lines[[int]$keys[$keyName]] = "$key=$value"
+            elseif ($lines[[int]$keys[$keyName]] -notmatch ("^\s*" + [regex]::Escape($keyName) + "\s*=\s*" + [regex]::Escape($value) + "\s*(?:[;#].*)?$") ) {
+                $line = $lines[[int]$keys[$keyName]]
+                if ($line -notmatch ("^(?<prefix>\s*" + [regex]::Escape($keyName) + "\s*=\s*)[^\s;#]*(?<suffix>\s*(?:[;#].*)?)$")) {
+                    throw "Unable to update '$keyName' in '$Path'."
+                }
+                $lines[[int]$keys[$keyName]] = "$($Matches.prefix)$value$($Matches.suffix)"
             }
         }
     }
@@ -90,13 +102,17 @@ function Set-WslMirroredNetworking {
     $backupPath = $null
     if ($exists) {
         $backupPath = Join-Path $directory ("$leaf." + (Get-Date -Format "yyyyMMddHHmmssfff") + ".bak")
-        [System.IO.File]::Copy($Path, $backupPath)
     }
 
     $temporaryPath = Join-Path $directory (".$leaf." + [Guid]::NewGuid().ToString("N") + ".tmp")
     try {
         [System.IO.File]::WriteAllText($temporaryPath, $updated, $encoding)
-        [System.IO.File]::Move($temporaryPath, $Path, $true)
+        if ($exists) {
+            [System.IO.File]::Replace($temporaryPath, $Path, $backupPath)
+        }
+        else {
+            [System.IO.File]::Move($temporaryPath, $Path)
+        }
     }
     finally {
         if (Test-Path -LiteralPath $temporaryPath) {
@@ -110,12 +126,16 @@ function Set-WslMirroredNetworking {
 function Assert-WslPrerequisites {
     param([Parameter(Mandatory)][string]$Distribution)
 
-    if (-not [System.Environment]::IsWindowsVersionAtLeast(10, 0, 22621)) {
+    if ($env:OS -ne "Windows_NT") {
+        throw "Windows 11 is required."
+    }
+    $build = [int](Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name CurrentBuildNumber).CurrentBuildNumber
+    if ($build -lt 22621) {
         throw "Windows build 22621 or later is required."
     }
 
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    $principal = New-Object -TypeName Security.Principal.WindowsPrincipal -ArgumentList $identity
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw "Run this installer from an elevated PowerShell session."
     }
