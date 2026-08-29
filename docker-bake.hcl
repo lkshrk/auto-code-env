@@ -91,7 +91,7 @@ group "default" { targets = ["dev-full", "dev-pilot", "dev-hermes", "dev-both"] 
 variable "DEVBOX_REGISTRY" { default = "ghcr.io/lkshrk/devbox" }
 variable "DEVBOX_VERSION" { default = "dev" }
 variable "DEVBOX_DOTFILES_REF" { default = "main" }
-variable "DEVBOX_DOTFILES_COMMIT" { default = "unknown" }
+variable "DEVBOX_DOTFILES_COMMIT" { default = "80e4e773eece899ae854445230688a42aca76d4b" }
 
 group "devbox" { targets = ["devbox-go", "devbox-python", "devbox-ts", "devbox-lua", "devbox-full", "devbox-hermes", "devbox-pilot"] }
 
