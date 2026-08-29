@@ -86,6 +86,7 @@ COPY --chmod=644 scripts/devbox.sh /etc/profile.d/devbox.sh
 ENV HOME=/home/dev \
     OMNI_HOSTNAME=devbox \
     DEVBOX_VARIANT=${VARIANT} \
+    COREPACK_HOME=/opt/devbox/.corepack \
     PATH=/home/dev/.local/bin:/home/dev/.bun/bin:/home/dev/go/bin:/home/dev/.cargo/bin:/opt/devbox/.local/bin:/opt/devbox/.bun/bin:/opt/devbox/go/bin:/opt/devbox/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 USER dev
 WORKDIR /home/dev

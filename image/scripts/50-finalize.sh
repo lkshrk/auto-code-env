@@ -8,6 +8,8 @@ if [ -n "$node_bin" ]; then
   for b in node npm npx corepack; do
     [ -x "$node_bin/$b" ] && ln -sf "$node_bin/$b" "$opt/.local/bin/$b"
   done
+  "$opt/.local/bin/corepack" enable --install-directory "$opt/.local/bin" pnpm
+  COREPACK_HOME="$opt/.corepack" "$opt/.local/bin/corepack" install --global pnpm
 fi
 
 rm -rf "$opt"/.cache "$opt"/.npm "$opt"/.bun/install/cache "$opt"/go/pkg/mod/cache "$opt"/.tmp
