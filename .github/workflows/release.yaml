@@ -127,11 +127,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Validate devbox CalVer tag
+      - name: Normalize devbox CalVer tag
+        id: devbox-version
         env:
-          DEVBOX_VERSION: ${{ github.ref_name }}
+          DEVBOX_TAG: ${{ github.ref_name }}
         run: |
+          [[ "$DEVBOX_TAG" == v* ]]
+          DEVBOX_VERSION="${DEVBOX_TAG#v}"
           [[ "$DEVBOX_VERSION" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]]
+          echo "version=$DEVBOX_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/bake-action@v6
@@ -142,6 +146,6 @@ jobs:
             *.cache-from=type=gha,scope=devbox-${{ matrix.variant }}
             *.cache-to=type=gha,scope=devbox-${{ matrix.variant }},mode=max
         env:
-          DEVBOX_VERSION: ${{ github.ref_name }}
+          DEVBOX_VERSION: ${{ steps.devbox-version.outputs.version }}
           DEVBOX_REVISION: ${{ github.sha }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
