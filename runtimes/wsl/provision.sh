@@ -1,4 +1,5 @@
-#!/usr/bin/env bash
+#!/bin/bash
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 set -euo pipefail
 umask 022
 
@@ -20,6 +21,7 @@ staged_node_home=
 staged_node_manifest=
 uv_stage_root=
 staged_uv_directory=
+cleanup_paths=()
 
 fail() {
     printf '%s\n' "$1" >&2
@@ -30,10 +32,24 @@ path_exists() {
     [ -e "$1" ] || [ -L "$1" ]
 }
 
+register_cleanup() {
+    cleanup_paths+=("$1")
+}
+
+cleanup() {
+    local path
+
+    for path in "${cleanup_paths[@]}"; do
+        if path_exists "$path"; then
+            /usr/bin/rm -rf -- "$path"
+        fi
+    done
+}
+
 assert_agent_directory() {
     local path=$1
 
-    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(stat -c '%U:%G %a' "$path")" != 'agent:agent 700' ]; then
+    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(/usr/bin/stat -c '%U:%G %a' "$path")" != 'agent:agent 700' ]; then
         fail "invalid agent directory: $path"
     fi
 }
@@ -41,13 +57,13 @@ assert_agent_directory() {
 assert_agent() {
     local entry name uid gid home shell
 
-    entry=$(getent passwd agent) || fail 'agent account is missing'
+    entry=$(/usr/bin/getent passwd agent) || fail 'agent account is missing'
     IFS=: read -r name _ uid gid _ home shell <<< "$entry"
     case $uid in
         ''|*[!0-9]*) fail 'agent UID is invalid' ;;
     esac
     if [ "$name" != 'agent' ] || [ "$home" != '/home/agent' ] || [ "$shell" != '/bin/bash' ] || [ "$uid" -eq 0 ] ||
-        [ "$(id -gn agent)" != 'agent' ] || [ "$(id -nG agent)" != 'agent' ]; then
+        [ "$(/usr/bin/id -gn agent)" != 'agent' ] || [ "$(/usr/bin/id -nG agent)" != 'agent' ]; then
         fail 'agent account does not match the runtime contract'
     fi
 }
@@ -55,21 +71,21 @@ assert_agent() {
 resolve_assets() {
     local payload_path
 
-    if ! script_path=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+    if ! script_path=$(/usr/bin/readlink -f -- "${BASH_SOURCE[0]}"); then
         fail 'unable to resolve provisioning script'
     fi
     if [ -z "$script_path" ] || [ ! -f "$script_path" ]; then
         fail 'provisioning script must be a regular file'
     fi
-    asset_dir=$(dirname "$script_path")
+    asset_dir=$(/usr/bin/dirname "$script_path")
     payload_path="$asset_dir/wsl.conf"
     if [ -L "$payload_path" ] || [ ! -f "$payload_path" ]; then
         fail 'wsl.conf must be a regular sibling file'
     fi
-    if ! config_path=$(readlink -f -- "$payload_path"); then
+    if ! config_path=$(/usr/bin/readlink -f -- "$payload_path"); then
         fail 'unable to resolve wsl.conf'
     fi
-    if [ -z "$config_path" ] || [ ! -f "$config_path" ] || [ "$(dirname "$config_path")" != "$asset_dir" ]; then
+    if [ -z "$config_path" ] || [ ! -f "$config_path" ] || [ "$(/usr/bin/dirname "$config_path")" != "$asset_dir" ]; then
         fail 'wsl.conf must resolve to the provisioning script directory'
     fi
 }
@@ -81,7 +97,7 @@ ensure_private_directory() {
         assert_agent_directory "$path"
         return
     fi
-    runuser -u agent -- mkdir -m 0700 -- "$path"
+    /usr/sbin/runuser -u agent -- /usr/bin/mkdir -m 0700 -- "$path"
     assert_agent_directory "$path"
 }
 
@@ -89,17 +105,17 @@ install_wsl_config() {
     if [ -L /etc/wsl.conf ] || [ -d /etc/wsl.conf ] || { [ -e /etc/wsl.conf ] && [ ! -f /etc/wsl.conf ]; }; then
         fail 'unsafe path: /etc/wsl.conf'
     fi
-    install -T -o root -g root -m 0644 "$config_path" /etc/wsl.conf
+    /usr/bin/install -T -o root -g root -m 0644 "$config_path" /etc/wsl.conf
 }
 
 assert_trusted_root_directory() {
     local path=$1
     local mode
 
-    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(stat -c '%u:%g' "$path")" != '0:0' ]; then
+    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(/usr/bin/stat -c '%u:%g' "$path")" != '0:0' ]; then
         fail "invalid trusted directory: $path"
     fi
-    mode=$(stat -c '%a' "$path")
+    mode=$(/usr/bin/stat -c '%a' "$path")
     case $mode in
         ''|*[!0-7]*) fail "invalid trusted directory mode: $path" ;;
     esac
@@ -111,7 +127,7 @@ assert_trusted_root_directory() {
 assert_exact_root_directory() {
     local path=$1
 
-    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(stat -c '%u:%g %a' "$path")" != '0:0 755' ]; then
+    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(/usr/bin/stat -c '%u:%g %a' "$path")" != '0:0 755' ]; then
         fail "invalid root directory: $path"
     fi
 }
@@ -120,7 +136,7 @@ assert_root_file() {
     local path=$1
     local expected_mode=$2
 
-    if [ -L "$path" ] || [ ! -f "$path" ] || [ "$(stat -c '%u:%g %a' "$path")" != "0:0 $expected_mode" ]; then
+    if [ -L "$path" ] || [ ! -f "$path" ] || [ "$(/usr/bin/stat -c '%u:%g %a' "$path")" != "0:0 $expected_mode" ]; then
         fail "invalid root file: $path"
     fi
 }
@@ -129,10 +145,10 @@ assert_root_nonwritable_file() {
     local path=$1
     local mode
 
-    if [ -L "$path" ] || [ ! -f "$path" ] || [ "$(stat -c '%u:%g' "$path")" != '0:0' ]; then
+    if [ -L "$path" ] || [ ! -f "$path" ] || [ "$(/usr/bin/stat -c '%u:%g' "$path")" != '0:0' ]; then
         fail "invalid root file: $path"
     fi
-    mode=$(stat -c '%a' "$path")
+    mode=$(/usr/bin/stat -c '%a' "$path")
     if (( (8#$mode & 0022) != 0 )); then
         fail "writable root file: $path"
     fi
@@ -145,8 +161,8 @@ print_wrapper() {
 }
 
 assert_node_link() {
-    if [ ! -L /usr/local/bin/node ] || [ "$(stat -c '%u:%g' /usr/local/bin/node)" != '0:0' ] ||
-        [ "$(readlink /usr/local/bin/node)" != "$NODE_BINARY" ]; then
+    if [ ! -L /usr/local/bin/node ] || [ "$(/usr/bin/stat -c '%u:%g' /usr/local/bin/node)" != '0:0' ] ||
+        [ "$(/usr/bin/readlink /usr/local/bin/node)" != "$NODE_BINARY" ]; then
         fail 'invalid node entry point'
     fi
 }
@@ -157,7 +173,7 @@ assert_wrapper() {
     local path="/usr/local/bin/$name"
 
     assert_root_file "$path" 755
-    cmp -s "$path" <(print_wrapper "$cli") || fail "invalid $name entry point"
+    /usr/bin/cmp -s "$path" <(print_wrapper "$cli") || fail "invalid $name entry point"
 }
 
 preflight_tool_paths() {
@@ -168,7 +184,7 @@ preflight_tool_paths() {
     done
 
     if ! path_exists "$OPENHANDS_ROOT"; then
-        mkdir -m 0755 -- "$OPENHANDS_ROOT" || true
+        /usr/bin/mkdir -m 0755 -- "$OPENHANDS_ROOT" || true
     fi
     assert_exact_root_directory "$OPENHANDS_ROOT"
 
@@ -196,7 +212,7 @@ download() {
     local url=$1
     local output=$2
 
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$output" "$url"
+    /usr/bin/curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$output" "$url"
 }
 
 assert_safe_archive() {
@@ -205,7 +221,7 @@ assert_safe_archive() {
     local member
     local members=0
 
-    tar -tf "$archive" >/dev/null || fail "unreadable archive: $archive"
+    /usr/bin/tar -tf "$archive" >/dev/null || fail "unreadable archive: $archive"
     while IFS= read -r member; do
         members=$((members + 1))
         case $member in
@@ -215,7 +231,7 @@ assert_safe_archive() {
         case "/$member/" in
             *'/../'*) fail "unsafe archive member: $member" ;;
         esac
-    done < <(tar -tf "$archive")
+    done < <(/usr/bin/tar -tf "$archive")
     [ "$members" -gt 0 ] || fail "empty archive: $archive"
 }
 
@@ -224,19 +240,19 @@ assert_safe_tree_links() {
     local link target resolved
 
     while IFS= read -r -d '' link; do
-        [ "$(stat -c '%u:%g' "$link")" = '0:0' ] || fail "invalid symlink owner: $link"
-        target=$(readlink "$link")
+        [ "$(/usr/bin/stat -c '%u:%g' "$link")" = '0:0' ] || fail "invalid symlink owner: $link"
+        target=$(/usr/bin/readlink "$link")
         case $target in
             /*) fail "unsafe symlink target: $link" ;;
         esac
         [[ $target != *$'\t'* && $target != *$'\n'* ]] || fail "unsafe symlink target: $link"
-        resolved=$(readlink -m -- "$(dirname "$link")/$target")
+        resolved=$(/usr/bin/readlink -m -- "$(/usr/bin/dirname "$link")/$target")
         case $resolved in
             "$root/"*) ;;
             *) fail "unsafe symlink target: $link" ;;
         esac
         [ -e "$link" ] || fail "dangling symlink: $link"
-    done < <(find "$root" -type l -print0)
+    done < <(/usr/bin/find "$root" -type l -print0)
 }
 
 generate_node_manifest() {
@@ -250,11 +266,11 @@ generate_node_manifest() {
 
             relative=${path#./}
             [[ $relative != *$'\t'* && $relative != *$'\n'* ]] || fail "unsupported Node.js path: $relative"
-            IFS=' ' read -r mode uid gid < <(stat -c '%a %u %g' -- "$path")
+            IFS=' ' read -r mode uid gid < <(/usr/bin/stat -c '%a %u %g' -- "$path")
             [ "$uid:$gid" = '0:0' ] || fail "invalid Node.js ownership: $relative"
 
             if [ -L "$path" ]; then
-                target=$(readlink "$path")
+                target=$(/usr/bin/readlink "$path")
                 [[ $target != *$'\t'* && $target != *$'\n'* ]] || fail "unsupported Node.js symlink: $relative"
                 printf 'L\t%s\t%s\t%s\n' "$mode" "$target" "$relative"
             elif [ -d "$path" ]; then
@@ -262,13 +278,13 @@ generate_node_manifest() {
                 printf 'D\t%s\t%s\n' "$mode" "$relative"
             elif [ -f "$path" ]; then
                 (( (8#$mode & 0022) == 0 )) || fail "writable Node.js file: $relative"
-                hash=$(sha256sum -- "$path")
+                hash=$(/usr/bin/sha256sum -- "$path")
                 hash=${hash%% *}
                 printf 'F\t%s\t%s\t%s\n' "$mode" "$hash" "$relative"
             else
                 fail "unsupported Node.js file type: $relative"
             fi
-        done < <(find . -mindepth 1 ! -path "./$NODE_MANIFEST" -print0 | LC_ALL=C sort -z)
+        done < <(/usr/bin/find . -mindepth 1 ! -path "./$NODE_MANIFEST" -print0 | LC_ALL=C /usr/bin/sort -z)
     ) > "$output" || fail 'unable to generate Node.js manifest'
 }
 
@@ -279,13 +295,13 @@ stage_node() {
 
     download "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" "$checksums"
     download "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ARCHIVE}" "$archive"
-    checksum=$(awk -v archive="$NODE_ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' "$checksums") ||
+    checksum=$(/usr/bin/awk -v archive="$NODE_ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' "$checksums") ||
         fail 'Node.js checksum is missing or ambiguous'
-    printf '%s\n' "$checksum" | (cd "$node_stage_root" && sha256sum -c -) ||
+    printf '%s\n' "$checksum" | (cd "$node_stage_root" && /usr/bin/sha256sum -c -) ||
         fail 'Node.js checksum verification failed'
 
     assert_safe_archive "$archive" "$NODE_DIRECTORY"
-    tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$node_stage_root"
+    /usr/bin/tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$node_stage_root"
     staged_node_home="$node_stage_root/$NODE_DIRECTORY"
     assert_exact_root_directory "$staged_node_home"
     assert_safe_tree_links "$staged_node_home"
@@ -293,9 +309,12 @@ stage_node() {
     assert_root_nonwritable_file "$staged_node_home/lib/node_modules/npm/bin/npm-cli.js"
     assert_root_nonwritable_file "$staged_node_home/lib/node_modules/npm/bin/npx-cli.js"
 
+    if path_exists "$staged_node_home/$NODE_MANIFEST"; then
+        fail 'Node.js archive contains reserved manifest'
+    fi
     staged_node_manifest="$node_stage_root/$NODE_MANIFEST"
     generate_node_manifest "$staged_node_home" "$staged_node_manifest"
-    install -T -o root -g root -m 0644 "$staged_node_manifest" "$staged_node_home/$NODE_MANIFEST"
+    /usr/bin/install -T -o root -g root -m 0644 "$staged_node_manifest" "$staged_node_home/$NODE_MANIFEST"
 
     [ "$("$staged_node_home/bin/node" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js archive'
     [ "$("$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npm-cli.js" --version)" = '10.9.8' ] ||
@@ -311,14 +330,14 @@ stage_uv() {
 
     download "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_ARCHIVE}.sha256" "$checksum_file"
     download "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_ARCHIVE}" "$archive"
-    checksum=$(awk 'NF { print $1; count++ } END { if (count != 1) exit 1 }' "$checksum_file") ||
+    checksum=$(/usr/bin/awk 'NF { print $1; count++ } END { if (count != 1) exit 1 }' "$checksum_file") ||
         fail 'uv checksum is missing or ambiguous'
     [[ $checksum =~ ^[0-9a-f]{64}$ ]] || fail 'uv checksum is invalid'
-    printf '%s  %s\n' "$checksum" "$UV_ARCHIVE" | (cd "$uv_stage_root" && sha256sum -c -) ||
+    printf '%s  %s\n' "$checksum" "$UV_ARCHIVE" | (cd "$uv_stage_root" && /usr/bin/sha256sum -c -) ||
         fail 'uv checksum verification failed'
 
     assert_safe_archive "$archive" "$UV_DIRECTORY"
-    tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$uv_stage_root"
+    /usr/bin/tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$uv_stage_root"
     staged_uv_directory="$uv_stage_root/$UV_DIRECTORY"
     assert_exact_root_directory "$staged_uv_directory"
     assert_safe_tree_links "$staged_uv_directory"
@@ -329,9 +348,10 @@ stage_uv() {
 }
 
 stage_toolchain() {
-    node_stage_root=$(mktemp -d "$OPENHANDS_ROOT/.node-stage.XXXXXX")
-    uv_stage_root=$(mktemp -d /usr/local/bin/.uv-stage.XXXXXX)
-    trap 'rm -rf -- "$node_stage_root" "$uv_stage_root"' EXIT
+    node_stage_root=$(/usr/bin/mktemp -d "$OPENHANDS_ROOT/.node-stage.XXXXXX")
+    register_cleanup "$node_stage_root"
+    uv_stage_root=$(/usr/bin/mktemp -d /usr/local/bin/.uv-stage.XXXXXX)
+    register_cleanup "$uv_stage_root"
 
     stage_node
     stage_uv
@@ -342,20 +362,21 @@ validate_installed_node_tree() {
 
     assert_exact_root_directory "$NODE_HOME"
     assert_root_file "$NODE_HOME/$NODE_MANIFEST" 644
-    cmp -s "$NODE_HOME/$NODE_MANIFEST" "$staged_node_manifest" || fail 'foreign Node.js manifest'
+    /usr/bin/cmp -s "$NODE_HOME/$NODE_MANIFEST" "$staged_node_manifest" || fail 'foreign Node.js manifest'
     assert_safe_tree_links "$NODE_HOME"
 
-    current_manifest=$(mktemp "$node_stage_root/installed-manifest.XXXXXX")
+    current_manifest=$(/usr/bin/mktemp "$node_stage_root/installed-manifest.XXXXXX")
+    register_cleanup "$current_manifest"
     generate_node_manifest "$NODE_HOME" "$current_manifest"
-    cmp -s "$current_manifest" "$staged_node_manifest" || fail 'invalid Node.js installation'
+    /usr/bin/cmp -s "$current_manifest" "$staged_node_manifest" || fail 'invalid Node.js installation'
 }
 
 validate_existing_tool_paths() {
     if path_exists /usr/local/bin/uv; then
-        cmp -s /usr/local/bin/uv "$staged_uv_directory/uv" || fail 'foreign uv installation'
+        /usr/bin/cmp -s /usr/local/bin/uv "$staged_uv_directory/uv" || fail 'foreign uv installation'
     fi
     if path_exists /usr/local/bin/uvx; then
-        cmp -s /usr/local/bin/uvx "$staged_uv_directory/uvx" || fail 'foreign uvx installation'
+        /usr/bin/cmp -s /usr/local/bin/uvx "$staged_uv_directory/uvx" || fail 'foreign uvx installation'
     fi
 
     if path_exists "$NODE_HOME"; then
@@ -378,7 +399,7 @@ commit_node_tree() {
         return
     fi
 
-    mv -T -n -- "$staged_node_home" "$NODE_HOME"
+    /usr/bin/mv -T -n -- "$staged_node_home" "$NODE_HOME"
     if path_exists "$staged_node_home"; then
         validate_installed_node_tree
     else
@@ -394,11 +415,12 @@ commit_node_link() {
         return
     fi
 
-    temp_directory=$(mktemp -d /usr/local/bin/.node-link.XXXXXX)
-    ln -s "$NODE_BINARY" "$temp_directory/node"
-    chown -h root:root "$temp_directory/node"
-    mv -T -n -- "$temp_directory/node" /usr/local/bin/node
-    rm -rf -- "$temp_directory"
+    temp_directory=$(/usr/bin/mktemp -d /usr/local/bin/.node-link.XXXXXX)
+    register_cleanup "$temp_directory"
+    /usr/bin/ln -s "$NODE_BINARY" "$temp_directory/node"
+    /usr/bin/chown -h root:root "$temp_directory/node"
+    /usr/bin/mv -T -n -- "$temp_directory/node" /usr/local/bin/node
+    /usr/bin/rm -rf -- "$temp_directory"
     assert_node_link
 }
 
@@ -413,12 +435,13 @@ commit_wrapper() {
         return
     fi
 
-    temp=$(mktemp "/usr/local/bin/.${name}.XXXXXX")
+    temp=$(/usr/bin/mktemp "/usr/local/bin/.${name}.XXXXXX")
+    register_cleanup "$temp"
     print_wrapper "$cli" > "$temp"
-    chown root:root "$temp"
-    chmod 0755 "$temp"
-    mv -T -n -- "$temp" "$destination"
-    rm -f -- "$temp"
+    /usr/bin/chown root:root "$temp"
+    /usr/bin/chmod 0755 "$temp"
+    /usr/bin/mv -T -n -- "$temp" "$destination"
+    /usr/bin/rm -f -- "$temp"
     assert_wrapper "$name" "$cli"
 }
 
@@ -430,16 +453,17 @@ commit_uv_binary() {
 
     if path_exists "$destination"; then
         assert_root_file "$destination" 755
-        cmp -s "$destination" "$source" || fail "foreign $name installation"
+        /usr/bin/cmp -s "$destination" "$source" || fail "foreign $name installation"
         return
     fi
 
-    temp=$(mktemp "/usr/local/bin/.${name}.XXXXXX")
-    install -T -o root -g root -m 0755 "$source" "$temp"
-    mv -T -n -- "$temp" "$destination"
-    rm -f -- "$temp"
+    temp=$(/usr/bin/mktemp "/usr/local/bin/.${name}.XXXXXX")
+    register_cleanup "$temp"
+    /usr/bin/install -T -o root -g root -m 0755 "$source" "$temp"
+    /usr/bin/mv -T -n -- "$temp" "$destination"
+    /usr/bin/rm -f -- "$temp"
     assert_root_file "$destination" 755
-    cmp -s "$destination" "$source" || fail "foreign $name installation"
+    /usr/bin/cmp -s "$destination" "$source" || fail "foreign $name installation"
 }
 
 commit_toolchain() {
@@ -458,8 +482,8 @@ verify_toolchain() {
     assert_wrapper npx "$NPX_CLI"
     assert_root_file /usr/local/bin/uv 755
     assert_root_file /usr/local/bin/uvx 755
-    cmp -s /usr/local/bin/uv "$staged_uv_directory/uv" || fail 'invalid uv installation'
-    cmp -s /usr/local/bin/uvx "$staged_uv_directory/uvx" || fail 'invalid uvx installation'
+    /usr/bin/cmp -s /usr/local/bin/uv "$staged_uv_directory/uv" || fail 'invalid uv installation'
+    /usr/bin/cmp -s /usr/local/bin/uvx "$staged_uv_directory/uvx" || fail 'invalid uvx installation'
 
     [ "$("$NODE_BINARY" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js installation'
     [ "$("$NODE_BINARY" "$NPM_CLI" --version)" = '10.9.8' ] || fail 'invalid npm installation'
@@ -468,7 +492,9 @@ verify_toolchain() {
     [ "$(/usr/local/bin/uvx --version)" = "uvx $UV_VERSION" ] || fail 'invalid uvx installation'
 }
 
-if [ "$(id -u)" -ne 0 ]; then
+trap cleanup EXIT
+
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then
     fail 'provisioning must run as root'
 fi
 
@@ -477,11 +503,11 @@ if [ "${WSL_DISTRO_NAME:-}" != 'openhands-worker' ]; then
 fi
 
 resolve_assets
-if ! id agent >/dev/null 2>&1; then
+if ! /usr/bin/id agent >/dev/null 2>&1; then
     if [ -e /home/agent ] || [ -L /home/agent ]; then
         fail 'agent home must be absent before account creation'
     fi
-    useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent
+    /usr/sbin/useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent
 fi
 assert_agent
 assert_agent_directory /home/agent
@@ -491,12 +517,12 @@ done
 
 install_wsl_config
 
-if [ "$(uname -m)" != 'x86_64' ]; then
+if [ "$(/usr/bin/uname -m)" != 'x86_64' ]; then
     fail 'unsupported architecture: only x86_64 is supported'
 fi
 preflight_tool_paths
-DEBIAN_FRONTEND=noninteractive apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl xz-utils
+DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
+DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils
 stage_toolchain
 validate_existing_tool_paths
 commit_toolchain

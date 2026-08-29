@@ -122,7 +122,9 @@ Stage 5A supports x86_64 only. It installs exactly Node.js `22.23.2` under
 `/opt/openhands/node-v22.23.2-linux-x64` and `uv`/`uvx` `0.12.7` under
 `/usr/local/bin`. Downloads use HTTPS and are checked against Node's official
 `SHASUMS256.txt` and the published uv asset checksum before extraction. Both
-archives are fully staged and validated before either tool is committed.
+archives are fully staged and validated before either tool is committed. The
+provisioner replaces inherited `PATH` with system-only directories before its
+first command and uses absolute trusted commands for validation and commits.
 
 The Node tree carries a root-owned manifest of every directory, symlink, and
 regular file, including exact modes and hashes. Reruns compare that manifest
@@ -130,10 +132,11 @@ and a freshly generated tree manifest with the verified release without
 executing an existing installation. `/usr/local/bin/node` is a fixed symlink;
 the root-owned `npm` and `npx` wrappers invoke the versioned Node binary and
 absolute CLI files, independent of `PATH`. Missing entry points are repaired
-with sibling temporary files and atomic renames. Existing mismatches, unsafe
-ancestors, writable trusted directories, and foreign files fail closed without
-replacement. The only added apt packages are `ca-certificates`, `curl`, and
-`xz-utils`.
+with registered sibling temporary files and atomic renames; failures clean all
+registered temporary paths. Release archives containing the reserved manifest
+name are rejected. Existing mismatches, unsafe ancestors, writable trusted
+directories, and foreign files fail closed without replacement. The only added
+apt packages are `ca-certificates`, `curl`, and `xz-utils`.
 
 This stage installs no npm packages, OpenHands components, services, nginx
 configuration, firewall rules, or secrets. The next stage may add a separately

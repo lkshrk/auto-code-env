@@ -3,17 +3,29 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+fixture_image=auto-code-env-wsl-stage5a-fixture:ubuntu-26.04
+
+ensure_fixture_image() {
+  if docker image inspect "$fixture_image" >/dev/null 2>&1; then
+    return
+  fi
+  printf '%s\n' \
+    'FROM ubuntu:26.04' \
+    'RUN apt-get update && apt-get install -y --no-install-recommends xz-utils && rm -rf /var/lib/apt/lists/*' |
+    docker build --quiet --tag "$fixture_image" -
+}
 
 setup_fixture() {
   local node_archive=node-v22.23.2-linux-x64.tar.xz
   local node_directory=node-v22.23.2-linux-x64
+  local reserved_node_archive=reserved-node-v22.23.2-linux-x64.tar.xz
   local uv_archive=uv-x86_64-unknown-linux-gnu.tar.gz
   local uv_directory=uv-x86_64-unknown-linux-gnu
 
   mkdir -p "/tmp/fixture-src/$node_directory/bin"
   mkdir -p "/tmp/fixture-src/$node_directory/lib/node_modules/npm/bin"
   mkdir -p "/tmp/fixture-src/$node_directory/lib/node_modules/npm/node_modules/example"
-  mkdir -p "/tmp/fixture-src/$uv_directory" /fixtures /test-bin
+  mkdir -p "/tmp/fixture-src/$uv_directory" /fixtures
 
   printf '%s\n' \
     '#!/bin/sh' \
@@ -28,34 +40,68 @@ setup_fixture() {
   printf '%s\n' 'fixture dependency' > "/tmp/fixture-src/$node_directory/lib/node_modules/npm/node_modules/example/index.js"
   ln -s ../lib/node_modules/npm/bin/npm-cli.js "/tmp/fixture-src/$node_directory/bin/npm"
   ln -s ../lib/node_modules/npm/bin/npx-cli.js "/tmp/fixture-src/$node_directory/bin/npx"
-  tar -czf "/fixtures/$node_archive" -C /tmp/fixture-src "$node_directory"
-  (cd /fixtures && sha256sum "$node_archive" > SHASUMS256.txt)
+  tar -cJf "/fixtures/$node_archive" -C /tmp/fixture-src "$node_directory"
+  printf '%s\n' counterfeit > "/tmp/fixture-src/$node_directory/.openhands-manifest"
+  tar -cJf "/fixtures/$reserved_node_archive" -C /tmp/fixture-src "$node_directory"
+  rm "/tmp/fixture-src/$node_directory/.openhands-manifest"
+  test "$(od -An -tx1 -N6 "/fixtures/$node_archive" | tr -d ' \n')" = fd377a585a00
 
   printf '%s\n' '#!/bin/sh' 'printf "%s\n" "uv 0.12.7"' > "/tmp/fixture-src/$uv_directory/uv"
   printf '%s\n' '#!/bin/sh' 'printf "%s\n" "uvx 0.12.7"' > "/tmp/fixture-src/$uv_directory/uvx"
   chmod 0755 "/tmp/fixture-src/$uv_directory/uv" "/tmp/fixture-src/$uv_directory/uvx"
   tar -czf "/fixtures/$uv_archive" -C /tmp/fixture-src "$uv_directory"
-  (cd /fixtures && sha256sum "$uv_archive" > "$uv_archive.sha256")
 
-  printf '%s\n' '#!/bin/sh' 'exit 0' > /test-bin/apt-get
-  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "${FIXTURE_UNAME:-x86_64}"' > /test-bin/uname
+  cp /usr/bin/mv /usr/bin/mv.fixture-real
   printf '%s\n' \
     '#!/bin/sh' \
-    'output=' \
-    'url=' \
-    'while test "$#" -gt 0; do' \
-    '  case "$1" in' \
-    '    --output) output=$2; shift 2 ;;' \
-    '    *) url=$1; shift ;;' \
-    '  esac' \
-    'done' \
-    'source=/fixtures/${url##*/}' \
-    'cp -- "$source" "$output"' \
-    'if test "${CORRUPT_NODE_DOWNLOAD:-}" = 1 && test "${url##*/}" = node-v22.23.2-linux-x64.tar.xz; then' \
-    '  printf corrupt >> "$output"' \
-    'fi' > /test-bin/curl
-  chmod 0755 /test-bin/apt-get /test-bin/curl /test-bin/uname
-  export PATH=/usr/local/bin:/test-bin:/usr/sbin:/usr/bin:/sbin:/bin
+    'test "$PATH" = /usr/sbin:/usr/bin:/sbin:/bin || exit 73' \
+    'last=' \
+    'for argument do last=$argument; done' \
+    'if test -n "${FIXTURE_FAIL_RENAME_DEST:-}" && test "$last" = "$FIXTURE_FAIL_RENAME_DEST"; then' \
+    '  printf "%s\n" "$last" >> /tmp/rename-failures' \
+    '  exit 70' \
+    'fi' \
+    'exec /usr/bin/mv.fixture-real "$@"' > /usr/bin/mv
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'test "$PATH" = /usr/sbin:/usr/bin:/sbin:/bin || exit 73' \
+    'printf "%s\n" "$*" >> /tmp/apt-calls' \
+    'case "$*" in' \
+    '  update|"install -y --no-install-recommends ca-certificates curl xz-utils") exit 0 ;;' \
+    '  *) exit 71 ;;' \
+    'esac' > /usr/bin/apt-get
+  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "${FIXTURE_UNAME:-x86_64}"' > /usr/bin/uname
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'test "$PATH" = /usr/sbin:/usr/bin:/sbin:/bin || exit 73' \
+    'test "$#" -eq 10' \
+    'test "$1" = --fail' \
+    'test "$2" = --location' \
+    'test "$3" = --proto' \
+    'test "$4" = =https' \
+    'test "$5" = --tlsv1.2' \
+    'test "$6" = --retry' \
+    'test "$7" = 3' \
+    'test "$8" = --output' \
+    'output=$9' \
+    'url=${10}' \
+    'node_source=/fixtures/node-v22.23.2-linux-x64.tar.xz' \
+    'if test "${FIXTURE_RESERVED_MANIFEST:-}" = 1; then node_source=/fixtures/reserved-node-v22.23.2-linux-x64.tar.xz; fi' \
+    'case "$url" in' \
+    '  https://nodejs.org/dist/v22.23.2/SHASUMS256.txt)' \
+    '    hash=$(/usr/bin/sha256sum "$node_source"); hash=${hash%% *}' \
+    '    printf "%s  %s\n" "$hash" node-v22.23.2-linux-x64.tar.xz > "$output" ;;' \
+    '  https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz)' \
+    '    /usr/bin/cp -- "$node_source" "$output"' \
+    '    if test "${FIXTURE_CORRUPT_NODE_DOWNLOAD:-}" = 1; then printf corrupt >> "$output"; fi ;;' \
+    '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-x86_64-unknown-linux-gnu.tar.gz.sha256)' \
+    '    hash=$(/usr/bin/sha256sum /fixtures/uv-x86_64-unknown-linux-gnu.tar.gz); hash=${hash%% *}' \
+    '    printf "%s  %s\n" "$hash" uv-x86_64-unknown-linux-gnu.tar.gz > "$output" ;;' \
+    '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-x86_64-unknown-linux-gnu.tar.gz)' \
+    '    /usr/bin/cp -- /fixtures/uv-x86_64-unknown-linux-gnu.tar.gz "$output" ;;' \
+    '  *) exit 72 ;;' \
+    'esac' > /usr/bin/curl
+  chmod 0755 /usr/bin/apt-get /usr/bin/curl /usr/bin/mv /usr/bin/uname
 }
 
 run_container() {
@@ -63,15 +109,23 @@ run_container() {
 
   setup=$(declare -f setup_fixture)
   docker run --rm --tmpfs /opt:rw,exec,mode=755,size=64m \
-    -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c "$setup
+    -v "$repo_root:/src:ro" "$fixture_image" bash -euo pipefail -c "$setup
 setup_fixture
 $1"
 }
 
+ensure_fixture_image
+
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
-  bash /src/runtimes/wsl/provision.sh
-  bash /src/runtimes/wsl/provision.sh
+  mkdir /tmp/inherited-path
+  printf "%s\n" "#!/bin/sh" "touch /tmp/inherited-path-used" "exec /usr/bin/id \"\$@\"" > /tmp/inherited-path/id
+  chmod 0755 /tmp/inherited-path/id
+  PATH=/tmp/inherited-path:/usr/sbin:/usr/bin:/sbin:/bin /bin/bash /src/runtimes/wsl/provision.sh
+  test ! -e /tmp/inherited-path-used
+  /bin/bash /src/runtimes/wsl/provision.sh
+  printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils" update "install -y --no-install-recommends ca-certificates curl xz-utils" > /tmp/apt-calls.expected
+  cmp -s /tmp/apt-calls.expected /tmp/apt-calls
 
   test "$(getent passwd agent | cut -d: -f6,7)" = "/home/agent:/bin/bash"
   test "$(id -nG agent)" = "agent"
@@ -230,10 +284,41 @@ run_container '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
-  CORRUPT_NODE_DOWNLOAD=1 bash /src/runtimes/wsl/provision.sh && exit 1
+  FIXTURE_CORRUPT_NODE_DOWNLOAD=1 bash /src/runtimes/wsl/provision.sh && exit 1
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
   test ! -e /opt/openhands/node-v22.23.2-linux-x64
   test ! -e /usr/local/bin/uv
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  if FIXTURE_RESERVED_MANIFEST=1 bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
+  test ! -e /opt/openhands/node-v22.23.2-linux-x64
+  test ! -e /usr/local/bin/uv
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  while IFS=: read -r destination pattern; do
+    /usr/bin/rm -rf -- /opt/openhands
+    /usr/bin/rm -f -- /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/uv /usr/local/bin/uvx
+    if FIXTURE_FAIL_RENAME_DEST="/usr/local/bin/$destination" bash /src/runtimes/wsl/provision.sh; then
+      exit 1
+    fi
+    test "$(/usr/bin/tail -n 1 /tmp/rename-failures)" = "/usr/local/bin/$destination"
+    if find /usr/local/bin -maxdepth 1 -name "$pattern" -print -quit | grep -q .; then
+      exit 1
+    fi
+  done <<EOF
+node:.node-link.*
+npm:.npm.*
+npx:.npx.*
+uv:.uv.*
+uvx:.uvx.*
+EOF
 '
 
 run_container '
