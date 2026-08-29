@@ -280,3 +280,24 @@ native amd64 runner with `GITHUB_TOKEN`; this local runner's command lifetime pr
 the Lua, pnpm, runtime, foreign-HOME, or final image stages. Removing the two cargo tools from
 the shared `ai-plugins` group also omits them from other hosts that select that group, although
 their tool definitions remain available for explicit installation.
+
+## Fix round 1 — 2026-08-29
+
+Review correction: `DOTFILES_COMMIT` now defaults to the exact final supporting dotfiles
+commit `80e4e773eece899ae854445230688a42aca76d4b`. `tests/docker-bake.sh` runs
+`docker buildx bake --file "$repo_dir/docker-bake.hcl" --print go` and asserts both that pin
+and `Containerfile.devbox`.
+
+The shared `ai-plugins` group again contains `deepwiki-rs` and `herdr-tether`. A new
+`devbox-ai-plugins` group keeps its complete agent metadata but omits only those two cargo
+tools; the devbox host and its Containerfile stage use that group. This preserves coder and
+topaz behavior while excluding both tools from the effective devbox profile.
+
+Commands passed: `jq -e .` for settings and groups, `bash tests/omni-devbox-profile.sh`,
+`bash tests/omni-static-tool-providers.sh`, `bash tests/docker-bake.sh`, `bash -n` on the
+amended image scripts, bake-print pin assertion, and `git diff --check`.
+
+Files: dotfiles `settings.json`, `settings.d/groups.json`, and
+`tests/omni-devbox-profile.sh`; devbox `docker-bake.hcl`, `image/Containerfile.devbox`,
+`tests/docker-bake.sh`, and this report. Commits: dotfiles `6bba4e4..80e4e77`; devbox
+`021e012..f2c46ec`.
