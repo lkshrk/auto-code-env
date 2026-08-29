@@ -118,8 +118,8 @@ The provisioner is root-only and refuses any `WSL_DISTRO_NAME` other than
 `openhands-worker`. It idempotently creates the unprivileged `agent` user and
 its private runtime directories, then installs `/etc/wsl.conf`.
 
-Stage 5A supports x86_64 only. It installs exactly Node.js `22.23.2` under
-`/opt/openhands/node-v22.23.2-linux-x64` and `uv`/`uvx` `0.12.7` under
+Stage 5A supports x86_64 only. It installs exactly Node.js `24.20.0` under
+`/opt/openhands/node-v24.20.0-linux-x64` and `uv`/`uvx` `0.12.7` under
 `/usr/local/bin`. Downloads use HTTPS and are checked against Node's official
 `SHASUMS256.txt` and the published uv asset checksum before extraction. Both
 archives are fully staged and validated before either tool is committed. The
@@ -199,7 +199,9 @@ production database credentials.
 Current upstream contract, verified 2026-08-29 at OpenHands commit
 `f26d734a848297d8dcf460b0bb739174e76511f0`:
 
-- Node.js 22.x and `uv` are prerequisites for the supported self-host flow.
+- OpenHands self-hosting documentation names Node.js 22.x and `uv` as
+  prerequisites. The pinned npm packages allow Node.js `>=22.12`; this project
+  selects current Node.js 24 LTS `24.20.0`.
 - Required launcher semantics are
   `npx @openhands/agent-canvas@1.16.0 --public`; public mode provides unified
   ingress on `127.0.0.1:8000` and must not be omitted.

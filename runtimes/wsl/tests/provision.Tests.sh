@@ -16,9 +16,9 @@ ensure_fixture_image() {
 }
 
 setup_fixture() {
-  local node_archive=node-v22.23.2-linux-x64.tar.xz
-  local node_directory=node-v22.23.2-linux-x64
-  local reserved_node_archive=reserved-node-v22.23.2-linux-x64.tar.xz
+  local node_archive=node-v24.20.0-linux-x64.tar.xz
+  local node_directory=node-v24.20.0-linux-x64
+  local reserved_node_archive=reserved-node-v24.20.0-linux-x64.tar.xz
   local uv_archive=uv-x86_64-unknown-linux-gnu.tar.gz
   local uv_directory=uv-x86_64-unknown-linux-gnu
 
@@ -30,8 +30,8 @@ setup_fixture() {
   printf '%s\n' \
     '#!/bin/sh' \
     'case "${1:-}" in' \
-    '  --version) printf "%s\n" v22.23.2 ;;' \
-    '  */npm-cli.js|*/npx-cli.js) test "${2:-}" = --version && printf "%s\n" 10.9.8 ;;' \
+    '  --version) printf "%s\n" v24.20.0 ;;' \
+    '  */npm-cli.js|*/npx-cli.js) test "${2:-}" = --version && printf "%s\n" 11.19.0 ;;' \
     '  *) exit 64 ;;' \
     'esac' > "/tmp/fixture-src/$node_directory/bin/node"
   chmod 0755 "/tmp/fixture-src/$node_directory/bin/node"
@@ -85,13 +85,13 @@ setup_fixture() {
     'test "$8" = --output' \
     'output=$9' \
     'url=${10}' \
-    'node_source=/fixtures/node-v22.23.2-linux-x64.tar.xz' \
-    'if test "${FIXTURE_RESERVED_MANIFEST:-}" = 1; then node_source=/fixtures/reserved-node-v22.23.2-linux-x64.tar.xz; fi' \
+    'node_source=/fixtures/node-v24.20.0-linux-x64.tar.xz' \
+    'if test "${FIXTURE_RESERVED_MANIFEST:-}" = 1; then node_source=/fixtures/reserved-node-v24.20.0-linux-x64.tar.xz; fi' \
     'case "$url" in' \
-    '  https://nodejs.org/dist/v22.23.2/SHASUMS256.txt)' \
+    '  https://nodejs.org/dist/v24.20.0/SHASUMS256.txt)' \
     '    hash=$(/usr/bin/sha256sum "$node_source"); hash=${hash%% *}' \
-    '    printf "%s  %s\n" "$hash" node-v22.23.2-linux-x64.tar.xz > "$output" ;;' \
-    '  https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz)' \
+    '    printf "%s  %s\n" "$hash" node-v24.20.0-linux-x64.tar.xz > "$output" ;;' \
+    '  https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.xz)' \
     '    /usr/bin/cp -- "$node_source" "$output"' \
     '    if test "${FIXTURE_CORRUPT_NODE_DOWNLOAD:-}" = 1; then printf corrupt >> "$output"; fi ;;' \
     '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-x86_64-unknown-linux-gnu.tar.gz.sha256)' \
@@ -139,17 +139,17 @@ run_container '
   test "$(stat -c "%U:%G %a" /etc/wsl.conf)" = "root:root 644"
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
 
-  node_home=/opt/openhands/node-v22.23.2-linux-x64
-  test "$("$node_home/bin/node" --version)" = "v22.23.2"
-  test "$(/usr/local/bin/npm --version)" = "10.9.8"
-  test "$(/usr/local/bin/npx --version)" = "10.9.8"
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
+  test "$("$node_home/bin/node" --version)" = "v24.20.0"
+  test "$(/usr/local/bin/npm --version)" = "11.19.0"
+  test "$(/usr/local/bin/npx --version)" = "11.19.0"
   test "$(/usr/local/bin/uv --version)" = "uv 0.12.7"
   test "$(/usr/local/bin/uvx --version)" = "uvx 0.12.7"
   mkdir /tmp/poison
   printf "%s\n" "#!/bin/sh" "exit 99" > /tmp/poison/node
   chmod 0755 /tmp/poison/node
-  test "$(PATH=/tmp/poison:/usr/bin:/bin /usr/local/bin/npm --version)" = "10.9.8"
-  test "$(PATH=/tmp/poison:/usr/bin:/bin /usr/local/bin/npx --version)" = "10.9.8"
+  test "$(PATH=/tmp/poison:/usr/bin:/bin /usr/local/bin/npm --version)" = "11.19.0"
+  test "$(PATH=/tmp/poison:/usr/bin:/bin /usr/local/bin/npx --version)" = "11.19.0"
   test "$(stat -c "%U:%G %a" /opt/openhands)" = "root:root 755"
   test "$(stat -c "%U:%G %a" "$node_home")" = "root:root 755"
   test "$(stat -c "%U:%G %a" "$node_home/.openhands-manifest")" = "root:root 644"
@@ -177,14 +177,14 @@ run_container '
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
   test "$(stat -c "%U:%G %a" /etc/wsl.conf)" = "root:root 644"
   test ! -e /tmp/foreign-uv-executed
-  test ! -e /opt/openhands/node-v22.23.2-linux-x64
+  test ! -e /opt/openhands/node-v24.20.0-linux-x64
   test ! -e /usr/local/bin/node
 '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
-  printf "%s\n" "#!/bin/sh" "touch /tmp/foreign-node-executed" > /opt/openhands/node-v22.23.2-linux-x64/bin/node
+  printf "%s\n" "#!/bin/sh" "touch /tmp/foreign-node-executed" > /opt/openhands/node-v24.20.0-linux-x64/bin/node
   rm /usr/local/bin/uvx
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
@@ -196,48 +196,48 @@ run_container '
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
-  printf corrupt > /opt/openhands/node-v22.23.2-linux-x64/lib/node_modules/npm/node_modules/example/index.js
+  printf corrupt > /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js
   rm /usr/local/bin/uvx
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
-  test "$(cat /opt/openhands/node-v22.23.2-linux-x64/lib/node_modules/npm/node_modules/example/index.js)" = corrupt
+  test "$(cat /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js)" = corrupt
   test ! -e /usr/local/bin/uvx
 '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
-  printf extra > /opt/openhands/node-v22.23.2-linux-x64/extra
+  printf extra > /opt/openhands/node-v24.20.0-linux-x64/extra
   rm /usr/local/bin/node
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
-  test "$(cat /opt/openhands/node-v22.23.2-linux-x64/extra)" = extra
+  test "$(cat /opt/openhands/node-v24.20.0-linux-x64/extra)" = extra
   test ! -e /usr/local/bin/node
 '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
-  rm /opt/openhands/node-v22.23.2-linux-x64/lib/node_modules/npm/node_modules/example/index.js
+  rm /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js
   rm /usr/local/bin/uvx
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
-  test ! -e /opt/openhands/node-v22.23.2-linux-x64/lib/node_modules/npm/node_modules/example/index.js
+  test ! -e /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js
   test ! -e /usr/local/bin/uvx
 '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
-  chmod 0666 /opt/openhands/node-v22.23.2-linux-x64/lib/node_modules/npm/node_modules/example/index.js
+  chmod 0666 /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js
   rm /usr/local/bin/node
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
-  test "$(stat -c "%a" /opt/openhands/node-v22.23.2-linux-x64/lib/node_modules/npm/node_modules/example/index.js)" = 666
+  test "$(stat -c "%a" /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js)" = 666
   test ! -e /usr/local/bin/node
 '
 
@@ -246,7 +246,7 @@ run_container '
   bash /src/runtimes/wsl/provision.sh
   rm /usr/local/bin/node /usr/local/bin/uvx
   bash /src/runtimes/wsl/provision.sh
-  test "$(readlink /usr/local/bin/node)" = /opt/openhands/node-v22.23.2-linux-x64/bin/node
+  test "$(readlink /usr/local/bin/node)" = /opt/openhands/node-v24.20.0-linux-x64/bin/node
   test "$(/usr/local/bin/uvx --version)" = "uvx 0.12.7"
 '
 
@@ -286,7 +286,7 @@ run_container '
   export WSL_DISTRO_NAME=openhands-worker
   FIXTURE_CORRUPT_NODE_DOWNLOAD=1 bash /src/runtimes/wsl/provision.sh && exit 1
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
-  test ! -e /opt/openhands/node-v22.23.2-linux-x64
+  test ! -e /opt/openhands/node-v24.20.0-linux-x64
   test ! -e /usr/local/bin/uv
 '
 
@@ -296,7 +296,7 @@ run_container '
     exit 1
   fi
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
-  test ! -e /opt/openhands/node-v22.23.2-linux-x64
+  test ! -e /opt/openhands/node-v24.20.0-linux-x64
   test ! -e /usr/local/bin/uv
 '
 
@@ -476,9 +476,9 @@ if [ "${RUN_WSL_REAL_TOOLCHAIN_TESTS:-0}" = 1 ]; then
       export WSL_DISTRO_NAME=openhands-worker
       bash /src/runtimes/wsl/provision.sh
       bash /src/runtimes/wsl/provision.sh
-      test "$(/opt/openhands/node-v22.23.2-linux-x64/bin/node --version)" = v22.23.2
-      test "$(/usr/local/bin/npm --version)" = 10.9.8
-      test "$(/usr/local/bin/npx --version)" = 10.9.8
+      test "$(/opt/openhands/node-v24.20.0-linux-x64/bin/node --version)" = v24.20.0
+      test "$(/usr/local/bin/npm --version)" = 11.19.0
+      test "$(/usr/local/bin/npx --version)" = 11.19.0
       test "$(/usr/local/bin/uv --version)" = "uv 0.12.7"
       test "$(/usr/local/bin/uvx --version)" = "uvx 0.12.7"
     '

@@ -3,7 +3,7 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 set -euo pipefail
 umask 022
 
-readonly NODE_VERSION=22.23.2
+readonly NODE_VERSION=24.20.0
 readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-x64"
 readonly NODE_ARCHIVE="${NODE_DIRECTORY}.tar.xz"
 readonly OPENHANDS_ROOT=/opt/openhands
@@ -317,9 +317,9 @@ stage_node() {
     /usr/bin/install -T -o root -g root -m 0644 "$staged_node_manifest" "$staged_node_home/$NODE_MANIFEST"
 
     [ "$("$staged_node_home/bin/node" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js archive'
-    [ "$("$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npm-cli.js" --version)" = '10.9.8' ] ||
+    [ "$("$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npm-cli.js" --version)" = '11.19.0' ] ||
         fail 'invalid npm archive'
-    [ "$("$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npx-cli.js" --version)" = '10.9.8' ] ||
+    [ "$("$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npx-cli.js" --version)" = '11.19.0' ] ||
         fail 'invalid npx archive'
 }
 
@@ -486,8 +486,8 @@ verify_toolchain() {
     /usr/bin/cmp -s /usr/local/bin/uvx "$staged_uv_directory/uvx" || fail 'invalid uvx installation'
 
     [ "$("$NODE_BINARY" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js installation'
-    [ "$("$NODE_BINARY" "$NPM_CLI" --version)" = '10.9.8' ] || fail 'invalid npm installation'
-    [ "$("$NODE_BINARY" "$NPX_CLI" --version)" = '10.9.8' ] || fail 'invalid npx installation'
+    [ "$("$NODE_BINARY" "$NPM_CLI" --version)" = '11.19.0' ] || fail 'invalid npm installation'
+    [ "$("$NODE_BINARY" "$NPX_CLI" --version)" = '11.19.0' ] || fail 'invalid npx installation'
     [ "$(/usr/local/bin/uv --version)" = "uv $UV_VERSION" ] || fail 'invalid uv installation'
     [ "$(/usr/local/bin/uvx --version)" = "uvx $UV_VERSION" ] || fail 'invalid uvx installation'
 }
