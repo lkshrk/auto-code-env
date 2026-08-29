@@ -102,14 +102,21 @@ Stage 3 starts only `openhands-worker` noninteractively as `root`, verifies
 only that distribution on every verification path. It does not provision Linux
 users, files, packages, configuration, or firewall rules.
 
-Stage 4A provides `provision.sh` and the exact `wsl.conf` payload. The script
-is root-only and refuses any `WSL_DISTRO_NAME` other than `openhands-worker`.
-It idempotently creates the unprivileged `agent` user and its private runtime
-directories, then installs `/etc/wsl.conf`. It installs no packages, services,
-OpenHands components, nginx configuration, firewall rules, or secrets. Stage
-4B must copy these assets into the target Linux filesystem, invoke provisioning
-as root, and restart only `openhands-worker` to activate the WSL configuration;
-it must not wire those steps into `install.ps1` before that stage is verified.
+Stage 4 copies `provision.sh` and `wsl.conf` as exact base64-encoded bytes into
+the root-owned `/root/openhands-bootstrap` directory. The Windows installer
+rejects missing, non-file, and reparse-point sources; verifies each transferred
+SHA-256 before root executes the provisioner; and never relies on `/mnt` or
+Windows interop after isolation is enabled. It restarts only
+`openhands-worker`, verifies the default `agent`, systemd PID 1, absent
+`/mnt/c` and WSLInterop, and the four private agent directories, then stops
+only that worker. Reruns reuse only safe root-owned bootstrap files.
+
+The provisioner is root-only and refuses any `WSL_DISTRO_NAME` other than
+`openhands-worker`. It idempotently creates the unprivileged `agent` user and
+its private runtime directories, then installs `/etc/wsl.conf`. Stage 4 installs
+no packages, services, OpenHands components, nginx configuration, firewall
+rules, or secrets. The next stage may add a separately verified runtime only
+after preserving this isolation boundary.
 
 ## WSL configuration
 

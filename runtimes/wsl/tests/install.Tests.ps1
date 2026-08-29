@@ -134,6 +134,18 @@ if [ "$1" = "--terminate" ]; then
     exit "${FAKE_WSL_TERMINATE_EXIT:-0}"
 fi
 
+if [ "$1" = "--distribution" ] && [ "$3" = "--user" ] && [ "$4" = "root" ] && [ "$5" = "--exec" ] && [ "$6" = "sh" ]; then
+    exit "${FAKE_WSL_STAGE4B_TRANSFER_EXIT:-0}"
+fi
+
+if [ "$1" = "--distribution" ] && [ "$3" = "--user" ] && [ "$4" = "root" ] && [ "$5" = "--exec" ] && [ "$6" = "/bin/bash" ]; then
+    exit "${FAKE_WSL_STAGE4B_PROVISION_EXIT:-0}"
+fi
+
+if [ "$1" = "--distribution" ] && [ "$3" = "--exec" ] && [ "$4" = "sh" ]; then
+    exit "${FAKE_WSL_STAGE4B_VERIFY_EXIT:-0}"
+fi
+
 exit 99
 '@, [System.Text.UTF8Encoding]::new($false))
     & chmod +x $path
@@ -183,6 +195,9 @@ function Set-FakeWslScenario {
     $env:FAKE_WSL_TERMINATE_EXIT = "$TerminateExit"
     $env:FAKE_WSL_ID_NUL = if ($NulId) { "1" } else { "0" }
     $env:FAKE_WSL_RELEASE_NUL = if ($NulRelease) { "1" } else { "0" }
+    $env:FAKE_WSL_STAGE4B_TRANSFER_EXIT = "0"
+    $env:FAKE_WSL_STAGE4B_PROVISION_EXIT = "0"
+    $env:FAKE_WSL_STAGE4B_VERIFY_EXIT = "0"
 }
 
 function Get-FakeWslCalls {
@@ -214,6 +229,8 @@ try {
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Restore-WslConfig")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-UbuntuRelease")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Assert-WslDistributionIdentity")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBootstrapAsset")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Invoke-WslBaseProvisioning")))
 
     Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $true -Is64BitOperatingSystem $true) "64-bit process WSL path"
     Assert-Equal "C:\Windows\Sysnative\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $true) "32-bit process WSL path"
@@ -381,6 +398,54 @@ try {
     $newConfigChanged = Set-WslMirroredNetworking -Path $newConfigPath
     Restore-WslConfig -Path $newConfigPath -BackupPath $newConfigChanged.BackupPath
     Assert-Equal $false (Test-Path -LiteralPath $newConfigPath) "rollback should delete a newly created config"
+
+    $assetDirectory = Join-Path $testRoot "assets"
+    New-Item -ItemType Directory -Path $assetDirectory | Out-Null
+    $provisionAsset = Join-Path $assetDirectory "provision.sh"
+    $configAsset = Join-Path $assetDirectory "wsl.conf"
+    [System.IO.File]::WriteAllBytes($provisionAsset, [byte[]](35, 33, 47, 98, 105, 110, 47, 115, 104, 10))
+    [System.IO.File]::WriteAllBytes($configAsset, [byte[]](91, 117, 115, 101, 114, 93, 10))
+    $asset = Get-WslBootstrapAsset -Path $provisionAsset
+    Assert-Equal "IyEvYmluL3NoCg==" $asset.Base64 "asset bytes should use base64 without text conversion"
+    Assert-Equal "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" $asset.Sha256 "asset hash should cover exact bytes"
+    $linkedAsset = Join-Path $assetDirectory "linked.conf"
+    New-Item -ItemType SymbolicLink -Path $linkedAsset -Target $configAsset | Out-Null
+    Assert-Throws { Get-WslBootstrapAsset -Path $linkedAsset } "reparse-point bootstrap source should fail"
+
+    Set-FakeWslScenario -Root $testRoot
+    Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset
+    $stage4bCalls = Get-FakeWslCalls
+    Assert-Match '(?s)^--distribution openhands-worker --user root --exec sh -ec .*\n--distribution openhands-worker --user root --exec /bin/bash /root/openhands-bootstrap/provision.sh\n--terminate openhands-worker\n--distribution openhands-worker --exec sh -ec .*\n--terminate openhands-worker\n$' $stage4bCalls "Stage 4B should transfer, provision, restart, verify, and stop only the target"
+    Assert-Match 'IyEvYmluL3NoCg== a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf W3VzZXJdCg== 37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2' $stage4bCalls "Stage 4B should pass exact asset bytes and hashes"
+    Assert-Match '\[ ! -e /mnt/c \]' $stage4bCalls "Stage 4B should verify mount isolation after restart"
+
+    Set-FakeWslScenario -Root $testRoot
+    $env:FAKE_WSL_STAGE4B_TRANSFER_EXIT = "1"
+    $env:FAKE_WSL_TERMINATE_EXIT = "1"
+    Assert-ThrowsMessage -Action { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset } -Patterns @("transfer", "terminate") -Message "transfer and cleanup failures should both be reported"
+    Assert-Match '(?s)^--distribution openhands-worker --user root --exec sh -ec .*\n--terminate openhands-worker\n$' (Get-FakeWslCalls) "transfer failure should terminate only the target"
+
+    Set-FakeWslScenario -Root $testRoot
+    $env:FAKE_WSL_STAGE4B_PROVISION_EXIT = "1"
+    Assert-Throws { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset } "provision failure should fail"
+    Assert-Match '(?s)^--distribution openhands-worker --user root --exec sh -ec .*\n--distribution openhands-worker --user root --exec /bin/bash /root/openhands-bootstrap/provision.sh\n--terminate openhands-worker\n$' (Get-FakeWslCalls) "provision failure should terminate only the target"
+
+    Set-FakeWslScenario -Root $testRoot
+    $env:FAKE_WSL_STAGE4B_VERIFY_EXIT = "1"
+    Assert-Throws { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset } "verification failure should fail"
+    Assert-Match '(?s)--distribution openhands-worker --exec sh -ec .*\n--terminate openhands-worker\n$' (Get-FakeWslCalls) "verification failure should leave only the target stopped"
+
+    Set-FakeWslScenario -Root $testRoot
+    $env:FAKE_WSL_STAGE4B_VERIFY_EXIT = "1"
+    $env:FAKE_WSL_TERMINATE_EXIT = "1"
+    Assert-ThrowsMessage -Action { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset } -Patterns @("restart", "terminate") -Message "restart and cleanup failures should both be reported"
+
+    Assert-Throws { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath (Join-Path $assetDirectory "missing.sh") -ConfigPath $configAsset } "missing bootstrap source should fail before WSL starts"
+
+    Set-FakeWslScenario -Root $testRoot
+    Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset
+    Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset
+    Assert-Equal 4 ([regex]::Matches((Get-FakeWslCalls), '(?m)^--terminate openhands-worker$')).Count "reruns should stop only the target after each restart and verification"
 
     $formattedPath = Join-Path $testRoot "formatted.wslconfig"
     [System.IO.File]::WriteAllText($formattedPath, "[wsl2]`n  networkingMode = nat ; retain this`n`tdnsTunneling = false # retain this too`n", [System.Text.UTF8Encoding]::new($false))

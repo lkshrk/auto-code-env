@@ -313,6 +313,130 @@ function Restore-WslConfig {
     }
 }
 
+function Get-WslBootstrapAsset {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Bootstrap asset '$Path' must be a regular file."
+    }
+
+    $item = Get-Item -LiteralPath $Path -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or -not ($item -is [IO.FileInfo])) {
+        throw "Bootstrap asset '$Path' must be a non-reparse regular file."
+    }
+
+    $bytes = [IO.File]::ReadAllBytes($item.FullName)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [pscustomobject]@{
+            Base64 = [Convert]::ToBase64String($bytes)
+            Sha256 = ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+        }
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Invoke-WslBaseProvisioning {
+    param(
+        [Parameter(Mandatory)][string]$WslPath,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$ProvisionPath,
+        [Parameter(Mandatory)][string]$ConfigPath
+    )
+
+    $provision = Get-WslBootstrapAsset -Path $ProvisionPath
+    $config = Get-WslBootstrapAsset -Path $ConfigPath
+    $transferCommand = @'
+set -eu
+bootstrap=/root/openhands-bootstrap
+if [ -e "$bootstrap" ] || [ -L "$bootstrap" ]; then
+    [ ! -L "$bootstrap" ] && [ -d "$bootstrap" ] && [ "$(stat -c '%U:%G %a' "$bootstrap")" = 'root:root 700' ]
+else
+    mkdir -m 0700 "$bootstrap"
+fi
+install_asset() {
+    payload=$1 expected=$2 destination=$3 mode=$4
+    encoded=$(mktemp "$bootstrap/.asset.XXXXXX")
+    temporary=$(mktemp "$bootstrap/.asset.XXXXXX")
+    trap 'rm -f "$encoded" "$temporary"' EXIT
+    printf '%s' "$payload" > "$encoded"
+    base64 -d "$encoded" > "$temporary"
+    set -- $(sha256sum "$temporary")
+    [ "$1" = "$expected" ]
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+        [ ! -L "$destination" ] && [ -f "$destination" ] && [ "$(stat -c '%U:%G %a' "$destination")" = "root:root $mode" ]
+    fi
+    chown root:root "$temporary"
+    chmod "$mode" "$temporary"
+    mv -f "$temporary" "$destination"
+    rm -f "$encoded"
+    trap - EXIT
+}
+install_asset "$1" "$2" "$bootstrap/provision.sh" 0700
+install_asset "$3" "$4" "$bootstrap/wsl.conf" 0600
+'@
+    $verificationCommand = @'
+set -eu
+[ "$(id -un)" = agent ]
+[ "$(cat /proc/1/comm)" = systemd ]
+[ ! -e /mnt/c ]
+[ ! -e /run/WSLInterop ]
+for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do
+    [ ! -L "$path" ] && [ -d "$path" ] && [ "$(stat -c '%U:%G %a' "$path")" = 'agent:agent 700' ]
+done
+'@
+
+    $failure = $null
+    $terminationFailure = $null
+    try {
+        & $WslPath --distribution $Name --user root --exec sh -ec $transferCommand sh $provision.Base64 $provision.Sha256 $config.Base64 $config.Sha256
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to transfer verified bootstrap assets to WSL distribution '$Name'."
+        }
+
+        & $WslPath --distribution $Name --user root --exec /bin/bash /root/openhands-bootstrap/provision.sh
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to provision WSL distribution '$Name'."
+        }
+
+        & $WslPath --terminate $Name
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to restart WSL distribution '$Name'."
+        }
+
+        & $WslPath --distribution $Name --exec sh -ec $verificationCommand
+        if ($LASTEXITCODE -ne 0) {
+            throw "WSL distribution '$Name' failed post-provision verification."
+        }
+    }
+    catch {
+        $failure = $_
+    }
+    finally {
+        try {
+            & $WslPath --terminate $Name
+            if ($LASTEXITCODE -ne 0) {
+                $terminationFailure = "Unable to terminate WSL distribution '$Name'."
+            }
+        }
+        catch {
+            $terminationFailure = $_.Exception.Message
+        }
+    }
+
+    if ($failure -and $terminationFailure) {
+        throw "$($failure.Exception.Message) $terminationFailure"
+    }
+    if ($failure) {
+        throw $failure
+    }
+    if ($terminationFailure) {
+        throw $terminationFailure
+    }
+}
+
 function Assert-WslPrerequisites {
     param([Parameter(Mandatory)][string]$Distribution)
 
@@ -373,3 +497,7 @@ Write-Host "WSL bootstrap Stage 2 completed."
 
 Assert-WslDistributionIdentity -WslPath $wslPath -Name $DistroName
 Write-Host "WSL bootstrap Stage 3 completed."
+
+$assetRoot = Split-Path -Parent $PSCommandPath
+Invoke-WslBaseProvisioning -WslPath $wslPath -Name $DistroName -ProvisionPath (Join-Path $assetRoot "provision.sh") -ConfigPath (Join-Path $assetRoot "wsl.conf")
+Write-Host "WSL bootstrap Stage 4 completed."
