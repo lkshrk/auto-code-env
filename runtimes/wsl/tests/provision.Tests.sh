@@ -46,8 +46,14 @@ setup_fixture() {
   rm "/tmp/fixture-src/$node_directory/.openhands-manifest"
   test "$(od -An -tx1 -N6 "/fixtures/$node_archive" | tr -d ' \n')" = fd377a585a00
 
-  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "uv 0.12.7"' > "/tmp/fixture-src/$uv_directory/uv"
-  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "uvx 0.12.7"' > "/tmp/fixture-src/$uv_directory/uvx"
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'printf "%s\n" "${FIXTURE_UV_VERSION_OUTPUT:-uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)}"' \
+    > "/tmp/fixture-src/$uv_directory/uv"
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'printf "%s\n" "${FIXTURE_UVX_VERSION_OUTPUT:-uvx 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)}"' \
+    > "/tmp/fixture-src/$uv_directory/uvx"
   chmod 0755 "/tmp/fixture-src/$uv_directory/uv" "/tmp/fixture-src/$uv_directory/uvx"
   tar -czf "/fixtures/$uv_archive" -C /tmp/fixture-src "$uv_directory"
 
@@ -108,7 +114,11 @@ run_container() {
   local setup
 
   setup=$(declare -f setup_fixture)
-  docker run --rm --tmpfs /opt:rw,exec,mode=755,size=64m \
+  docker run --rm \
+    --tmpfs /opt:rw,exec,mode=755,size=64m \
+    --tmpfs /tmp:rw,exec,mode=1777,size=64m \
+    --tmpfs /fixtures:rw,mode=755,size=32m \
+    --tmpfs /home:rw,exec,mode=755,size=16m \
     -v "$repo_root:/src:ro" "$fixture_image" bash -euo pipefail -c "$setup
 setup_fixture
 $1"
@@ -143,8 +153,8 @@ run_container '
   test "$("$node_home/bin/node" --version)" = "v24.20.0"
   test "$(/usr/local/bin/npm --version)" = "11.19.0"
   test "$(/usr/local/bin/npx --version)" = "11.19.0"
-  test "$(/usr/local/bin/uv --version)" = "uv 0.12.7"
-  test "$(/usr/local/bin/uvx --version)" = "uvx 0.12.7"
+  test "$(/usr/local/bin/uv --version)" = "uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)"
+  test "$(/usr/local/bin/uvx --version)" = "uvx 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)"
   mkdir /tmp/poison
   printf "%s\n" "#!/bin/sh" "exit 99" > /tmp/poison/node
   chmod 0755 /tmp/poison/node
@@ -247,7 +257,7 @@ run_container '
   rm /usr/local/bin/node /usr/local/bin/uvx
   bash /src/runtimes/wsl/provision.sh
   test "$(readlink /usr/local/bin/node)" = /opt/openhands/node-v24.20.0-linux-x64/bin/node
-  test "$(/usr/local/bin/uvx --version)" = "uvx 0.12.7"
+  test "$(/usr/local/bin/uvx --version)" = "uvx 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)"
 '
 
 run_container '
@@ -319,6 +329,30 @@ npx:.npx.*
 uv:.uv.*
 uvx:.uvx.*
 EOF
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  while IFS= read -r output; do
+    if FIXTURE_UV_VERSION_OUTPUT="$output" /bin/bash /src/runtimes/wsl/provision.sh; then
+      exit 1
+    fi
+    test ! -e /opt/openhands/node-v24.20.0-linux-x64
+    test ! -e /usr/local/bin/uv
+  done <<EOF
+uv 0.12.8 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)
+uvx 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)
+uv 0.12.7 (a0b1c2d3 2026-08-29 aarch64-unknown-linux-gnu)
+uv 0.12.7 a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu
+uv 0.12.7+1 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)
+uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu
+EOF
+  if FIXTURE_UVX_VERSION_OUTPUT="uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)" \
+    /bin/bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test ! -e /opt/openhands/node-v24.20.0-linux-x64
+  test ! -e /usr/local/bin/uvx
 '
 
 run_container '
@@ -479,7 +513,9 @@ if [ "${RUN_WSL_REAL_TOOLCHAIN_TESTS:-0}" = 1 ]; then
       test "$(/opt/openhands/node-v24.20.0-linux-x64/bin/node --version)" = v24.20.0
       test "$(/usr/local/bin/npm --version)" = 11.19.0
       test "$(/usr/local/bin/npx --version)" = 11.19.0
-      test "$(/usr/local/bin/uv --version)" = "uv 0.12.7"
-      test "$(/usr/local/bin/uvx --version)" = "uvx 0.12.7"
+      uv_output=$(/usr/local/bin/uv --version)
+      uvx_output=$(/usr/local/bin/uvx --version)
+      [[ $uv_output == "uv 0.12.7 ("*" x86_64-unknown-linux-gnu)" ]]
+      [[ $uvx_output == "uvx 0.12.7 ("*" x86_64-unknown-linux-gnu)" ]]
     '
 fi

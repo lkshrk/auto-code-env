@@ -15,6 +15,7 @@ readonly NODE_MANIFEST=.openhands-manifest
 readonly UV_VERSION=0.12.7
 readonly UV_DIRECTORY=uv-x86_64-unknown-linux-gnu
 readonly UV_ARCHIVE="${UV_DIRECTORY}.tar.gz"
+readonly UV_TARGET=x86_64-unknown-linux-gnu
 
 node_stage_root=
 staged_node_home=
@@ -158,6 +159,29 @@ print_wrapper() {
     local cli=$1
 
     printf '#!/bin/sh\nexec %s %s "$@"\n' "$NODE_BINARY" "$cli"
+}
+
+assert_uv_version() {
+    local name=$1
+    local binary=$2
+    local context=$3
+    local output prefix metadata
+
+    output=$("$binary" --version)
+    prefix="$name $UV_VERSION ("
+    if [[ $output == *$'\n'* ]] || [[ $output != "$prefix"* ]] || [[ $output != *')' ]]; then
+        fail "invalid $name $context"
+    fi
+
+    metadata=${output#"$prefix"}
+    metadata=${metadata%')'}
+    if [[ $metadata == *'('* ]] || [[ $metadata == *')'* ]]; then
+        fail "invalid $name $context"
+    fi
+    case $metadata in
+        "$UV_TARGET"|*" $UV_TARGET") ;;
+        *) fail "invalid $name $context" ;;
+    esac
 }
 
 assert_node_link() {
@@ -343,8 +367,8 @@ stage_uv() {
     assert_safe_tree_links "$staged_uv_directory"
     assert_root_file "$staged_uv_directory/uv" 755
     assert_root_file "$staged_uv_directory/uvx" 755
-    [ "$("$staged_uv_directory/uv" --version)" = "uv $UV_VERSION" ] || fail 'invalid uv archive'
-    [ "$("$staged_uv_directory/uvx" --version)" = "uvx $UV_VERSION" ] || fail 'invalid uvx archive'
+    assert_uv_version uv "$staged_uv_directory/uv" archive
+    assert_uv_version uvx "$staged_uv_directory/uvx" archive
 }
 
 stage_toolchain() {
@@ -488,8 +512,8 @@ verify_toolchain() {
     [ "$("$NODE_BINARY" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js installation'
     [ "$("$NODE_BINARY" "$NPM_CLI" --version)" = '11.19.0' ] || fail 'invalid npm installation'
     [ "$("$NODE_BINARY" "$NPX_CLI" --version)" = '11.19.0' ] || fail 'invalid npx installation'
-    [ "$(/usr/local/bin/uv --version)" = "uv $UV_VERSION" ] || fail 'invalid uv installation'
-    [ "$(/usr/local/bin/uvx --version)" = "uvx $UV_VERSION" ] || fail 'invalid uvx installation'
+    assert_uv_version uv /usr/local/bin/uv installation
+    assert_uv_version uvx /usr/local/bin/uvx installation
 }
 
 trap cleanup EXIT
