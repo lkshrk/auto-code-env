@@ -116,10 +116,19 @@ that worker. Reruns reuse only safe root-owned bootstrap files.
 
 The provisioner is root-only and refuses any `WSL_DISTRO_NAME` other than
 `openhands-worker`. It idempotently creates the unprivileged `agent` user and
-its private runtime directories, then installs `/etc/wsl.conf`. Stage 4 installs
-no packages, services, OpenHands components, nginx configuration, firewall
-rules, or secrets. The next stage may add a separately verified runtime only
-after preserving this isolation boundary.
+its private runtime directories, then installs `/etc/wsl.conf`.
+
+Stage 5A supports x86_64 only. It installs exactly Node.js `22.23.2` under
+`/opt/openhands/node-v22.23.2-linux-x64` and `uv`/`uvx` `0.12.7` under
+`/usr/local/bin`. Downloads use HTTPS and are checked against Node's official
+`SHASUMS256.txt` and the published uv asset checksum before extraction. Existing
+paths must be the expected root-owned install; files, symlinks, or directories
+that collide with it fail closed without replacement. The only added apt
+packages are `ca-certificates`, `curl`, and `xz-utils`.
+
+This stage installs no npm packages, OpenHands components, services, nginx
+configuration, firewall rules, or secrets. The next stage may add a separately
+verified runtime only after preserving this isolation boundary.
 
 ## WSL configuration
 

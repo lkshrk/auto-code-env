@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 
 run_container() {
-  docker run --rm -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c "$1"
+  docker run --rm --platform linux/amd64 --tmpfs /opt:rw,mode=755,size=512m -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c "$1"
 }
 
 run_container '
@@ -24,8 +24,41 @@ run_container '
   test "$(stat -c "%U:%G %a" /etc/wsl.conf)" = "root:root 644"
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
 
+  test "$(node --version)" = "v22.23.2"
+  test "$(npm --version)" = "10.9.8"
+  test "$(npx --version)" = "10.9.8"
+  test "$(uv --version)" = "uv 0.12.7"
+  test "$(uvx --version)" = "uvx 0.12.7"
+  test "$(stat -c "%U:%G %a" /opt/openhands)" = "root:root 755"
+  test "$(stat -c "%U:%G %a" /opt/openhands/node-v22.23.2-linux-x64)" = "root:root 755"
+  for path in /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/uv /usr/local/bin/uvx; do
+    test "$(stat -c "%U:%G %a" "$path")" = "root:root 755"
+  done
+
   ! su -s /bin/sh agent -c "WSL_DISTRO_NAME=openhands-worker bash /src/runtimes/wsl/provision.sh"
   ! env WSL_DISTRO_NAME=wrong-distro bash /src/runtimes/wsl/provision.sh
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  printf corrupt > /opt/openhands/node-v22.23.2-linux-x64/bin/node
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(cat /opt/openhands/node-v22.23.2-linux-x64/bin/node)" = corrupt
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  rm /usr/local/bin/uv
+  printf foreign > /usr/local/bin/uv
+  chmod 0755 /usr/local/bin/uv
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(cat /usr/local/bin/uv)" = foreign
 '
 
 run_container '
