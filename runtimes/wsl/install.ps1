@@ -137,7 +137,7 @@ function Test-WslNamedInstallSupported {
 
 function Test-WslDistributionRegistered {
     param(
-        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Output,
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyString()][string[]]$Output,
         [Parameter(Mandatory)][string]$Name
     )
 

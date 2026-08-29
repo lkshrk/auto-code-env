@@ -70,7 +70,9 @@ if [ "$1" = "--list" ] && [ "$2" = "--quiet" ]; then
     fi
     count=$((count + 1))
     printf '%s\n' "$count" > "$FAKE_WSL_LIST_COUNT"
-    if [ "$count" -eq 1 ]; then
+    if [ "$count" -eq 1 ] && [ "$FAKE_WSL_EMPTY_INITIAL_LIST" = "1" ]; then
+        exit "${FAKE_WSL_LIST_EXIT:-0}"
+    elif [ "$count" -eq 1 ]; then
         printf '%s\n' "$FAKE_WSL_LIST_BEFORE"
     else
         printf '%s\n' "$FAKE_WSL_LIST_AFTER"
@@ -111,7 +113,8 @@ function Set-FakeWslScenario {
         [int]$HelpExit = 0,
         [int]$ListExit = 0,
         [int]$InstallExit = 0,
-        [bool]$NulHelp = $false
+        [bool]$NulHelp = $false,
+        [bool]$EmptyInitialList = $false
     )
 
     $env:FAKE_WSL_LOG = Join-Path $Root "fake-wsl.log"
@@ -125,6 +128,7 @@ function Set-FakeWslScenario {
     $env:FAKE_WSL_LIST_EXIT = "$ListExit"
     $env:FAKE_WSL_INSTALL_EXIT = "$InstallExit"
     $env:FAKE_WSL_HELP_NUL = if ($NulHelp) { "1" } else { "0" }
+    $env:FAKE_WSL_EMPTY_INITIAL_LIST = if ($EmptyInitialList) { "1" } else { "0" }
 }
 
 function Get-FakeWslCalls {
@@ -186,6 +190,7 @@ try {
     Assert-Equal $false (Test-WslDistributionRegistered -Output @("Ubuntu 26.04 LTS (openhands-worker)") -Name "openhands-worker") "friendly names should not register the target"
     $nulSeparatedRegistered = [string]::Join([char]0, [char[]]"openhands-worker")
     Assert-Equal $true (Test-WslDistributionRegistered -Output @($nulSeparatedRegistered) -Name "openhands-worker") "NUL-separated registered distribution should be found"
+    Assert-Equal $false (Test-WslDistributionRegistered -Output $null -Name "openhands-worker") "empty registered distribution output should not find the target"
 
     $fakeWslPath = New-FakeWslExecutable -Root $testRoot
     Set-FakeWslScenario -Root $testRoot -Before "openhands-worker" -Help "--name-suffix <Name>"
@@ -195,6 +200,10 @@ try {
     Set-FakeWslScenario -Root $testRoot -Before "docker-desktop" -After "docker-desktop`nopenhands-worker"
     Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "new target should install and verify"
     Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "named install call order"
+
+    Set-FakeWslScenario -Root $testRoot -After "openhands-worker" -EmptyInitialList $true
+    Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "clean host should install and verify"
+    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "clean host named install calls"
 
     Set-FakeWslScenario -Root $testRoot -Help "--name-suffix <Name>"
     Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "missing named-install help should fail"
