@@ -112,10 +112,38 @@ target "_devbox_common" {
   secret = ["type=env,id=github_token,env=GITHUB_TOKEN"]
 }
 
-target "devbox-go" { inherits = ["_devbox_common"]; args = { VARIANT = "go" }; tags = ["${DEVBOX_REGISTRY}/go:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/go:latest"] }
-target "devbox-python" { inherits = ["_devbox_common"]; args = { VARIANT = "python" }; tags = ["${DEVBOX_REGISTRY}/python:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/python:latest"] }
-target "devbox-ts" { inherits = ["_devbox_common"]; args = { VARIANT = "ts" }; tags = ["${DEVBOX_REGISTRY}/ts:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/ts:latest"] }
-target "devbox-lua" { inherits = ["_devbox_common"]; args = { VARIANT = "lua" }; tags = ["${DEVBOX_REGISTRY}/lua:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/lua:latest"] }
-target "devbox-full" { inherits = ["_devbox_common"]; args = { VARIANT = "full" }; tags = ["${DEVBOX_REGISTRY}/full:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/full:latest"] }
-target "devbox-hermes" { inherits = ["_devbox_common"]; args = { VARIANT = "hermes" }; tags = ["${DEVBOX_REGISTRY}/hermes:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/hermes:latest"] }
-target "devbox-pilot" { inherits = ["_devbox_common"]; args = { VARIANT = "pilot" }; tags = ["${DEVBOX_REGISTRY}/pilot:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/pilot:latest"] }
+target "devbox-go" {
+  inherits = ["_devbox_common"]
+  args = { VARIANT = "go" }
+  tags = ["${DEVBOX_REGISTRY}/go:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/go:latest"]
+}
+target "devbox-python" {
+  inherits = ["_devbox_common"]
+  args = { VARIANT = "python" }
+  tags = ["${DEVBOX_REGISTRY}/python:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/python:latest"]
+}
+target "devbox-ts" {
+  inherits = ["_devbox_common"]
+  args = { VARIANT = "ts" }
+  tags = ["${DEVBOX_REGISTRY}/ts:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/ts:latest"]
+}
+target "devbox-lua" {
+  inherits = ["_devbox_common"]
+  args = { VARIANT = "lua" }
+  tags = ["${DEVBOX_REGISTRY}/lua:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/lua:latest"]
+}
+target "devbox-full" {
+  inherits = ["_devbox_common"]
+  args = { VARIANT = "full" }
+  tags = ["${DEVBOX_REGISTRY}/full:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/full:latest"]
+}
+target "devbox-hermes" {
+  inherits = ["_devbox_common"]
+  args = { VARIANT = "hermes" }
+  tags = ["${DEVBOX_REGISTRY}/hermes:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/hermes:latest"]
+}
+target "devbox-pilot" {
+  inherits = ["_devbox_common"]
+  args = { VARIANT = "pilot" }
+  tags = ["${DEVBOX_REGISTRY}/pilot:${DEVBOX_VERSION}", "${DEVBOX_REGISTRY}/pilot:latest"]
+}
