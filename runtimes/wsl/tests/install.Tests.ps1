@@ -480,6 +480,25 @@ try {
         $env:WSL_INTEROP = $previousInterop
     }
 
+    $wrapperTempRoot = Join-Path $testRoot ("wrapper-temp-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $wrapperTempRoot | Out-Null
+    $previousTmpDir = $env:TMPDIR
+    try {
+        $env:TMPDIR = $wrapperTempRoot
+        & sh -ec (Get-WslShellProgramWrapper) sh "not-base64"
+        Assert-Equal 1 $LASTEXITCODE "wrapper should preserve decode failure status"
+        Assert-Equal 0 @(Get-ChildItem -LiteralPath $wrapperTempRoot -Force).Count "wrapper should remove its temporary program after decode failure"
+
+        $failingProgram = ConvertTo-WslShellProgramBase64 -Program "exit 23"
+        & sh -ec (Get-WslShellProgramWrapper) sh $failingProgram
+        Assert-Equal 23 $LASTEXITCODE "wrapper should preserve inner program failure status"
+        Assert-Equal 0 @(Get-ChildItem -LiteralPath $wrapperTempRoot -Force).Count "wrapper should remove its temporary program after inner program failure"
+    }
+    finally {
+        $env:TMPDIR = $previousTmpDir
+        Remove-Item -LiteralPath $wrapperTempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     Set-FakeWslScenario -Root $testRoot
     $env:FAKE_WSL_STAGE4B_TRANSFER_EXIT = "1"
     $env:FAKE_WSL_TERMINATE_EXIT = "1"

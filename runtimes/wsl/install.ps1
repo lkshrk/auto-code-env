@@ -339,7 +339,7 @@ function Get-WslBootstrapAsset {
 }
 
 function Get-WslShellProgramWrapper {
-    return 'program=$(mktemp); printf %s $1 | base64 -d >$program && sh $program $2 $3 $4 $5; result=$?; rm -f $program; exit $result'
+    return 'program=$(mktemp); if printf %s $1 | base64 -d >$program && sh $program $2 $3 $4 $5; then result=0; else result=$?; fi; rm -f $program; exit $result'
 }
 
 function ConvertTo-WslShellProgramBase64 {
