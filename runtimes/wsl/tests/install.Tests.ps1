@@ -66,13 +66,14 @@ try {
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslVersionSupported")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Restore-WslConfig")))
 
-    Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -SystemRoot "C:\Windows" -Is64BitProcess $true -Is64BitOperatingSystem $true) "64-bit process WSL path"
-    Assert-Equal "C:\Windows\Sysnative\wsl.exe" (Get-WslExecutablePath -SystemRoot "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $true) "32-bit process WSL path"
-    Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -SystemRoot "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $false) "32-bit OS WSL path"
+    Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $true -Is64BitOperatingSystem $true) "64-bit process WSL path"
+    Assert-Equal "C:\Windows\Sysnative\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $true) "32-bit process WSL path"
+    Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $false) "32-bit OS WSL path"
 
     Assert-Equal $true (Test-WslVersionSupported -Output @("WSL version: 2.7.0", "Kernel version: 6.6")) "WSL 2.7.0 should be supported"
     Assert-Equal $false (Test-WslVersionSupported -Output @("WSL version: 2.6.9")) "WSL 2.6.9 should be rejected"
     Assert-Equal $false (Test-WslVersionSupported -Output @("WSL version: unknown")) "malformed WSL version should be rejected"
+    Assert-Equal $true (Test-WslVersionSupported -Output @("WSL-Version: 2.7.10.0", "Kernel-Version: 6.6")) "localized WSL 2.7.10.0 should be supported"
     $nulSeparatedVersion = [string]::Join([char]0, [char[]]"WSL version: 2.7.0")
     Assert-Equal $true (Test-WslVersionSupported -Output @($nulSeparatedVersion)) "NUL-separated WSL 2.7.0 should be supported"
 
@@ -116,7 +117,16 @@ try {
     $rollbackChanged = Set-WslMirroredNetworking -Path $rollbackPath
     Restore-WslConfig -Path $rollbackPath -BackupPath $rollbackChanged.BackupPath
     Assert-Equal $rollbackOriginal (Get-Content $rollbackPath -Raw) "rollback should restore an existing config"
+    Assert-Equal $rollbackOriginal (Get-Content $rollbackChanged.BackupPath -Raw) "rollback should retain the audit backup"
     Assert-Equal $true (Set-WslMirroredNetworking -Path $rollbackPath).Changed "retry after rollback should change again"
+
+    $missingActivePath = Join-Path $testRoot "missing-active.wslconfig"
+    $rollbackBackupPath = Join-Path $testRoot "missing-active.wslconfig.audit.bak"
+    [System.IO.File]::WriteAllText($rollbackBackupPath, $rollbackOriginal, [System.Text.UTF8Encoding]::new($false))
+    Assert-Throws { Restore-WslConfig -Path $missingActivePath -BackupPath $rollbackBackupPath } "rollback should not non-atomically recreate a missing active config"
+    Assert-Equal $false (Test-Path -LiteralPath $missingActivePath) "failed rollback should not leave a partial active config"
+    Assert-Equal $rollbackOriginal (Get-Content $rollbackBackupPath -Raw) "failed rollback should retain the audit backup"
+    Assert-Equal 0 @((Get-ChildItem -LiteralPath $testRoot -Filter ".missing-active.wslconfig.*.tmp")).Count "failed rollback should clean up its sibling temporary file"
 
     $newConfigPath = Join-Path $testRoot "new-config.wslconfig"
     $newConfigChanged = Set-WslMirroredNetworking -Path $newConfigPath
@@ -151,6 +161,8 @@ try {
 
     $source = Get-Content $installPath -Raw
     Assert-NotMatch 'IsWindowsVersionAtLeast|File\]::Move\([^\r\n]+,\s*[^\r\n]+,\s*\$true\)|::new\(' $source "Windows PowerShell 5.1 compatibility"
+    Assert-NotMatch '\$env:SystemRoot' $source "trusted Windows directory source"
+    Assert-Match 'GetFolderPath\s*\(' $source "trusted Windows directory API"
 
     Write-Host "PASS: WSL mirrored networking configuration"
 }

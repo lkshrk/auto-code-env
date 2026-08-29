@@ -134,12 +134,16 @@ function Test-WslDistributionAvailable {
 
 function Get-WslExecutablePath {
     param(
-        [string]$SystemRoot = $env:SystemRoot,
+        [string]$WindowsDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows),
         [bool]$Is64BitProcess = [Environment]::Is64BitProcess,
         [bool]$Is64BitOperatingSystem = [Environment]::Is64BitOperatingSystem
     )
 
-    $directory = if (-not $Is64BitProcess -and $Is64BitOperatingSystem) { "$SystemRoot\Sysnative" } else { "$SystemRoot\System32" }
+    if ([string]::IsNullOrWhiteSpace($WindowsDirectory)) {
+        throw "Unable to locate the Windows directory."
+    }
+
+    $directory = if (-not $Is64BitProcess -and $Is64BitOperatingSystem) { "$WindowsDirectory\Sysnative" } else { "$WindowsDirectory\System32" }
     return "$directory\wsl.exe"
 }
 
@@ -147,7 +151,7 @@ function Test-WslVersionSupported {
     param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Output)
 
     $normalized = ($Output -replace [string][char]0, "") -join "`n"
-    $match = [regex]::Match($normalized, '(?m)^\s*WSL version:\s*(\d+\.\d+(?:\.\d+){0,2})')
+    $match = [regex]::Match($normalized, '(?m)^\s*[^:\r\n]+:\s*(\d+(?:\.\d+){1,3})\s*$')
     if (-not $match.Success) {
         return $false
     }
@@ -167,7 +171,24 @@ function Restore-WslConfig {
     )
 
     if ($BackupPath) {
-        [System.IO.File]::Copy($BackupPath, $Path, $true)
+        $directory = Split-Path -Parent $Path
+        if (-not $directory) {
+            $directory = "."
+        }
+        $leaf = Split-Path -Leaf $Path
+        $temporaryPath = Join-Path $directory (".$leaf." + [Guid]::NewGuid().ToString("N") + ".tmp")
+        $replacedPath = Join-Path $directory (".$leaf." + [Guid]::NewGuid().ToString("N") + ".tmp")
+        try {
+            [System.IO.File]::Copy($BackupPath, $temporaryPath, $false)
+            [System.IO.File]::Replace($temporaryPath, $Path, $replacedPath)
+        }
+        finally {
+            foreach ($cleanupPath in @($temporaryPath, $replacedPath)) {
+                if (Test-Path -LiteralPath $cleanupPath) {
+                    Remove-Item -LiteralPath $cleanupPath -Force
+                }
+            }
+        }
     }
     elseif (Test-Path -LiteralPath $Path -PathType Leaf) {
         Remove-Item -LiteralPath $Path -Force
