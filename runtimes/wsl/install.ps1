@@ -3,6 +3,7 @@ param(
     [string]$Distribution = "Ubuntu-26.04"
 )
 
+$DistroName = "openhands-worker"
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -132,6 +133,61 @@ function Test-WslDistributionAvailable {
     return [bool]((($Output -replace [string][char]0, "") -join "`n") -match ("(?m)^\s*" + [regex]::Escape($Distribution) + "(?:\s|$)"))
 }
 
+function Test-WslNamedInstallSupported {
+    param([Parameter(Mandatory)][AllowEmptyString()][string[]]$Output)
+
+    return [bool]((($Output -replace [string][char]0, "") -join "`n") -match '(?m)^\s*--name(?:\s|$)')
+}
+
+function Test-WslDistributionRegistered {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Output,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    return [bool]((($Output -replace [string][char]0, "") -join "`n") -match ("(?m)^\s*" + [regex]::Escape($Name) + "\s*$"))
+}
+
+function Install-WslDistribution {
+    param(
+        [Parameter(Mandatory)][string]$WslPath,
+        [Parameter(Mandatory)][string]$Distribution,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    $help = & $WslPath --help
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to read WSL help."
+    }
+    if (-not (Test-WslNamedInstallSupported -Output $help)) {
+        throw "Installed WSL does not support named distribution installation."
+    }
+
+    $registered = & $WslPath --list --quiet
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to list installed WSL distributions."
+    }
+    if (Test-WslDistributionRegistered -Output $registered -Name $Name) {
+        Write-Host "WSL distribution '$Name' already exists."
+        return $false
+    }
+
+    & $WslPath --install --distribution $Distribution --name $Name --no-launch
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to install WSL distribution '$Name'."
+    }
+
+    $registered = & $WslPath --list --quiet
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to verify WSL distribution registration."
+    }
+    if (-not (Test-WslDistributionRegistered -Output $registered -Name $Name)) {
+        throw "WSL distribution '$Name' was not registered."
+    }
+
+    return $true
+}
+
 function Get-WslExecutablePath {
     param(
         [string]$WindowsDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows),
@@ -249,3 +305,6 @@ if ($result.Changed) {
 }
 
 Write-Host "WSL bootstrap Stage 1 completed."
+
+Install-WslDistribution -WslPath $wslPath -Distribution $Distribution -Name $DistroName | Out-Null
+Write-Host "WSL bootstrap Stage 2 completed."

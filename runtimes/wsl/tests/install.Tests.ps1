@@ -62,6 +62,9 @@ try {
     $installPath = Join-Path $PSScriptRoot ".." "install.ps1"
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Set-WslMirroredNetworking")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionAvailable")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslNamedInstallSupported")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionRegistered")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Install-WslDistribution")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslExecutablePath")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslVersionSupported")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Restore-WslConfig")))
@@ -88,6 +91,25 @@ try {
     Assert-Equal $false (Test-WslDistributionAvailable -Output @("Ubuntu-26.04-extra             Wrong") -Distribution "Ubuntu-26.04") "near-match distribution should be unavailable"
     $nulSeparatedLine = [string]::Join([char]0, [char[]]"Ubuntu-26.04                    Ubuntu 26.04 LTS")
     Assert-Equal $true (Test-WslDistributionAvailable -Output @($nulSeparatedLine) -Distribution "Ubuntu-26.04") "NUL-separated online distribution should be available"
+
+    $installHelp = @(
+        "Usage: wsl.exe [Argument] [Options...] [CommandLine]",
+        "    --install [Distro] [Options]",
+        "        --distribution, -d <Distro>",
+        "        --name <Name>",
+        "        --no-launch"
+    )
+    Assert-Equal $true (Test-WslNamedInstallSupported -Output $installHelp) "literal named-install help should be supported"
+    Assert-Equal $false (Test-WslNamedInstallSupported -Output @("        --name-suffix <Name>")) "near-match named-install help should be rejected"
+    $nulSeparatedHelp = [string]::Join([char]0, [char[]]"        --name <Name>")
+    Assert-Equal $true (Test-WslNamedInstallSupported -Output @($nulSeparatedHelp)) "NUL-separated named-install help should be supported"
+
+    $registered = @("docker-desktop", "openhands-worker")
+    Assert-Equal $true (Test-WslDistributionRegistered -Output $registered -Name "openhands-worker") "exact registered distribution should be found"
+    Assert-Equal $false (Test-WslDistributionRegistered -Output @("openhands-worker-old") -Name "openhands-worker") "similarly prefixed distribution should be rejected"
+    Assert-Equal $false (Test-WslDistributionRegistered -Output @("Ubuntu 26.04 LTS (openhands-worker)") -Name "openhands-worker") "friendly names should not register the target"
+    $nulSeparatedRegistered = [string]::Join([char]0, [char[]]"openhands-worker")
+    Assert-Equal $true (Test-WslDistributionRegistered -Output @($nulSeparatedRegistered) -Name "openhands-worker") "NUL-separated registered distribution should be found"
 
     $configPath = Join-Path $testRoot ".wslconfig"
     $original = "[wsl2]`nfirewall=true`nlocalhostForwarding=false`n"
