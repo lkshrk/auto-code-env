@@ -121,10 +121,19 @@ its private runtime directories, then installs `/etc/wsl.conf`.
 Stage 5A supports x86_64 only. It installs exactly Node.js `22.23.2` under
 `/opt/openhands/node-v22.23.2-linux-x64` and `uv`/`uvx` `0.12.7` under
 `/usr/local/bin`. Downloads use HTTPS and are checked against Node's official
-`SHASUMS256.txt` and the published uv asset checksum before extraction. Existing
-paths must be the expected root-owned install; files, symlinks, or directories
-that collide with it fail closed without replacement. The only added apt
-packages are `ca-certificates`, `curl`, and `xz-utils`.
+`SHASUMS256.txt` and the published uv asset checksum before extraction. Both
+archives are fully staged and validated before either tool is committed.
+
+The Node tree carries a root-owned manifest of every directory, symlink, and
+regular file, including exact modes and hashes. Reruns compare that manifest
+and a freshly generated tree manifest with the verified release without
+executing an existing installation. `/usr/local/bin/node` is a fixed symlink;
+the root-owned `npm` and `npx` wrappers invoke the versioned Node binary and
+absolute CLI files, independent of `PATH`. Missing entry points are repaired
+with sibling temporary files and atomic renames. Existing mismatches, unsafe
+ancestors, writable trusted directories, and foreign files fail closed without
+replacement. The only added apt packages are `ca-certificates`, `curl`, and
+`xz-utils`.
 
 This stage installs no npm packages, OpenHands components, services, nginx
 configuration, firewall rules, or secrets. The next stage may add a separately

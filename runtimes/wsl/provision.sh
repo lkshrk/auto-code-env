@@ -1,14 +1,503 @@
 #!/usr/bin/env bash
 set -euo pipefail
-N=22.23.2; ND=node-v22.23.2-linux-x64; NH=/opt/openhands/$ND; NA=$ND.tar.xz
-U=0.12.7; UA=uv-x86_64-unknown-linux-gnu.tar.gz; UD=uv-x86_64-unknown-linux-gnu
-fail(){ echo "$1" >&2; exit 1; }
-rootdir(){ local s m; [ ! -L "$1" ]&&[ -d "$1" ]||fail "invalid root directory: $1"; s=$(stat -c '%U:%G %a' "$1");m=${s##* };[ "${s%% *}" = root:root ]&&((!(8#$m&0022)))||fail "unsafe root directory: $1"; }
-rootfile(){ [ ! -L "$1" ]&&[ -f "$1" ]&&[ "$(stat -c '%U:%G %a' "$1")" = "root:root $2" ]||fail "invalid root file: $1"; }
-dl(){ curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$2" "$1"; }
-entry(){ printf '#!/bin/sh\nexec %s/bin/%s "$@"\n' "$NH" "$1"; }
-assets(){ script_path=$(readlink -f -- "${BASH_SOURCE[0]}")||fail 'unable to resolve provisioning script'; asset_dir=$(dirname "$script_path"); config_path=$asset_dir/wsl.conf; [ ! -L "$config_path" ]&&[ -f "$config_path" ]||fail 'wsl.conf must be a regular sibling file'; }
-preflight(){ local p; for p in /opt /usr/local /usr/local/bin;do rootdir "$p";done; for p in /opt/openhands "$NH" /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/uv /usr/local/bin/uvx;do if [ -e "$p" ]||[ -L "$p" ];then if [[ $p == /opt/* ]];then rootdir "$p";else rootfile "$p" 755;fi;fi;done; }
-stage(){ nt=$(mktemp -d /opt/.openhands-node.XXXXXX);ut=$(mktemp -d); dl "https://nodejs.org/dist/v$N/SHASUMS256.txt" "$nt/s";dl "https://nodejs.org/dist/v$N/$NA" "$nt/$NA"; h=$(awk -v a="$NA" '$2==a{print; n++}END{if(n!=1)exit 1}' "$nt/s")||fail 'Node.js checksum is missing or ambiguous';printf '%s\n' "$h"|(cd "$nt"&&sha256sum -c -)||fail 'Node.js checksum verification failed';tar -xJf "$nt/$NA" --no-same-owner --no-same-permissions --touch -C "$nt" "$ND/bin/node" "$ND/bin/npm" "$ND/bin/npx" "$ND/lib/node_modules/npm";(cd "$nt/$ND"&&sha256sum bin/node lib/node_modules/npm/bin/npm-cli.js lib/node_modules/npm/bin/npx-cli.js >.openhands-sha256);install -o root -g root -m644 "$nt/$ND/.openhands-sha256" "$nt/$ND/.openhands-sha256";dl "https://github.com/astral-sh/uv/releases/download/$U/$UA.sha256" "$ut/s";dl "https://github.com/astral-sh/uv/releases/download/$U/$UA" "$ut/$UA";h=$(awk 'NF{print $1;n++}END{if(n!=1)exit 1}' "$ut/s")||fail 'uv checksum is missing or ambiguous';[[ $h =~ ^[0-9a-f]{64}$ ]]||fail 'uv checksum is invalid';printf '%s  %s\n' "$h" "$UA"|(cd "$ut"&&sha256sum -c -)||fail 'uv checksum verification failed';tar -xzf "$ut/$UA" --no-same-owner --no-same-permissions --touch -C "$ut"; }
-install_tools(){ if [ -e "$NH" ]||[ -L "$NH" ];then rootdir "$NH";rootfile "$NH/.openhands-sha256" 644;(cd "$NH"&&sha256sum -c .openhands-sha256 >/dev/null)||fail 'invalid Node.js installation';cmp -s "$NH/bin/node" "$nt/$ND/bin/node"&&cmp -s "$NH/lib/node_modules/npm/bin/npm-cli.js" "$nt/$ND/lib/node_modules/npm/bin/npm-cli.js"&&cmp -s "$NH/lib/node_modules/npm/bin/npx-cli.js" "$nt/$ND/lib/node_modules/npm/bin/npx-cli.js"||fail 'foreign Node.js installation';else install -d -o root -g root -m755 /opt/openhands;mv "$nt/$ND" "$NH";fi; if [ -e /usr/local/bin/node ]||[ -L /usr/local/bin/node ];then cmp -s "$NH/bin/node" /usr/local/bin/node||fail 'foreign node entry point';else install -T -o root -g root -m755 "$NH/bin/node" /usr/local/bin/node;fi;for x in npm npx;do if [ -e /usr/local/bin/$x ]||[ -L /usr/local/bin/$x ];then cmp -s /usr/local/bin/$x <(entry "$x")||fail "foreign $x entry point";else entry "$x"|install -T -o root -g root -m755 /dev/stdin /usr/local/bin/$x;fi;done;for x in uv uvx;do if [ -e /usr/local/bin/$x ]||[ -L /usr/local/bin/$x ];then cmp -s /usr/local/bin/$x "$ut/$UD/$x"||fail "foreign $x installation";else install -T -o root -g root -m755 "$ut/$UD/$x" /usr/local/bin/$x;fi;done; }
-[ "$(id -u)" -eq 0 ]||fail 'provisioning must run as root';[ "${WSL_DISTRO_NAME:-}" = openhands-worker ]||fail 'provisioning must run in openhands-worker';assets;if [ -L /etc/wsl.conf ]||[ -d /etc/wsl.conf ]||{ [ -e /etc/wsl.conf ]&&[ ! -f /etc/wsl.conf ];};then fail 'unsafe path: /etc/wsl.conf';fi;install -T -o root -g root -m644 "$config_path" /etc/wsl.conf;preflight;id agent >/dev/null 2>&1||useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent;for p in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces;do if [ -e "$p" ]||[ -L "$p" ];then [ ! -L "$p" ]&&[ "$(stat -c '%U:%G %a' "$p")" = 'agent:agent 700' ]||fail "invalid agent directory: $p";else runuser -u agent -- mkdir -m700 "$p";fi;done;[ "$(uname -m)" = x86_64 ]||fail 'unsupported architecture: only x86_64 is supported';DEBIAN_FRONTEND=noninteractive apt-get update;DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl xz-utils;nt=;ut=;trap 'rm -rf -- "$nt" "$ut"' EXIT;stage;install_tools
+umask 022
+
+readonly NODE_VERSION=22.23.2
+readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-x64"
+readonly NODE_ARCHIVE="${NODE_DIRECTORY}.tar.xz"
+readonly OPENHANDS_ROOT=/opt/openhands
+readonly NODE_HOME="${OPENHANDS_ROOT}/${NODE_DIRECTORY}"
+readonly NODE_BINARY="${NODE_HOME}/bin/node"
+readonly NPM_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npm-cli.js"
+readonly NPX_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npx-cli.js"
+readonly NODE_MANIFEST=.openhands-manifest
+readonly UV_VERSION=0.12.7
+readonly UV_DIRECTORY=uv-x86_64-unknown-linux-gnu
+readonly UV_ARCHIVE="${UV_DIRECTORY}.tar.gz"
+
+node_stage_root=
+staged_node_home=
+staged_node_manifest=
+uv_stage_root=
+staged_uv_directory=
+
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+path_exists() {
+    [ -e "$1" ] || [ -L "$1" ]
+}
+
+assert_agent_directory() {
+    local path=$1
+
+    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(stat -c '%U:%G %a' "$path")" != 'agent:agent 700' ]; then
+        fail "invalid agent directory: $path"
+    fi
+}
+
+assert_agent() {
+    local entry name uid gid home shell
+
+    entry=$(getent passwd agent) || fail 'agent account is missing'
+    IFS=: read -r name _ uid gid _ home shell <<< "$entry"
+    case $uid in
+        ''|*[!0-9]*) fail 'agent UID is invalid' ;;
+    esac
+    if [ "$name" != 'agent' ] || [ "$home" != '/home/agent' ] || [ "$shell" != '/bin/bash' ] || [ "$uid" -eq 0 ] ||
+        [ "$(id -gn agent)" != 'agent' ] || [ "$(id -nG agent)" != 'agent' ]; then
+        fail 'agent account does not match the runtime contract'
+    fi
+}
+
+resolve_assets() {
+    local payload_path
+
+    if ! script_path=$(readlink -f -- "${BASH_SOURCE[0]}"); then
+        fail 'unable to resolve provisioning script'
+    fi
+    if [ -z "$script_path" ] || [ ! -f "$script_path" ]; then
+        fail 'provisioning script must be a regular file'
+    fi
+    asset_dir=$(dirname "$script_path")
+    payload_path="$asset_dir/wsl.conf"
+    if [ -L "$payload_path" ] || [ ! -f "$payload_path" ]; then
+        fail 'wsl.conf must be a regular sibling file'
+    fi
+    if ! config_path=$(readlink -f -- "$payload_path"); then
+        fail 'unable to resolve wsl.conf'
+    fi
+    if [ -z "$config_path" ] || [ ! -f "$config_path" ] || [ "$(dirname "$config_path")" != "$asset_dir" ]; then
+        fail 'wsl.conf must resolve to the provisioning script directory'
+    fi
+}
+
+ensure_private_directory() {
+    local path=$1
+
+    if path_exists "$path"; then
+        assert_agent_directory "$path"
+        return
+    fi
+    runuser -u agent -- mkdir -m 0700 -- "$path"
+    assert_agent_directory "$path"
+}
+
+install_wsl_config() {
+    if [ -L /etc/wsl.conf ] || [ -d /etc/wsl.conf ] || { [ -e /etc/wsl.conf ] && [ ! -f /etc/wsl.conf ]; }; then
+        fail 'unsafe path: /etc/wsl.conf'
+    fi
+    install -T -o root -g root -m 0644 "$config_path" /etc/wsl.conf
+}
+
+assert_trusted_root_directory() {
+    local path=$1
+    local mode
+
+    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(stat -c '%u:%g' "$path")" != '0:0' ]; then
+        fail "invalid trusted directory: $path"
+    fi
+    mode=$(stat -c '%a' "$path")
+    case $mode in
+        ''|*[!0-7]*) fail "invalid trusted directory mode: $path" ;;
+    esac
+    if (( (8#$mode & 0022) != 0 )); then
+        fail "writable trusted directory: $path"
+    fi
+}
+
+assert_exact_root_directory() {
+    local path=$1
+
+    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(stat -c '%u:%g %a' "$path")" != '0:0 755' ]; then
+        fail "invalid root directory: $path"
+    fi
+}
+
+assert_root_file() {
+    local path=$1
+    local expected_mode=$2
+
+    if [ -L "$path" ] || [ ! -f "$path" ] || [ "$(stat -c '%u:%g %a' "$path")" != "0:0 $expected_mode" ]; then
+        fail "invalid root file: $path"
+    fi
+}
+
+assert_root_nonwritable_file() {
+    local path=$1
+    local mode
+
+    if [ -L "$path" ] || [ ! -f "$path" ] || [ "$(stat -c '%u:%g' "$path")" != '0:0' ]; then
+        fail "invalid root file: $path"
+    fi
+    mode=$(stat -c '%a' "$path")
+    if (( (8#$mode & 0022) != 0 )); then
+        fail "writable root file: $path"
+    fi
+}
+
+print_wrapper() {
+    local cli=$1
+
+    printf '#!/bin/sh\nexec %s %s "$@"\n' "$NODE_BINARY" "$cli"
+}
+
+assert_node_link() {
+    if [ ! -L /usr/local/bin/node ] || [ "$(stat -c '%u:%g' /usr/local/bin/node)" != '0:0' ] ||
+        [ "$(readlink /usr/local/bin/node)" != "$NODE_BINARY" ]; then
+        fail 'invalid node entry point'
+    fi
+}
+
+assert_wrapper() {
+    local name=$1
+    local cli=$2
+    local path="/usr/local/bin/$name"
+
+    assert_root_file "$path" 755
+    cmp -s "$path" <(print_wrapper "$cli") || fail "invalid $name entry point"
+}
+
+preflight_tool_paths() {
+    local path
+
+    for path in /opt /usr/local /usr/local/bin; do
+        assert_trusted_root_directory "$path"
+    done
+
+    if ! path_exists "$OPENHANDS_ROOT"; then
+        mkdir -m 0755 -- "$OPENHANDS_ROOT" || true
+    fi
+    assert_exact_root_directory "$OPENHANDS_ROOT"
+
+    if path_exists "$NODE_HOME"; then
+        assert_exact_root_directory "$NODE_HOME"
+    fi
+    if path_exists /usr/local/bin/node; then
+        assert_node_link
+    fi
+    if path_exists /usr/local/bin/npm; then
+        assert_root_file /usr/local/bin/npm 755
+    fi
+    if path_exists /usr/local/bin/npx; then
+        assert_root_file /usr/local/bin/npx 755
+    fi
+    if path_exists /usr/local/bin/uv; then
+        assert_root_file /usr/local/bin/uv 755
+    fi
+    if path_exists /usr/local/bin/uvx; then
+        assert_root_file /usr/local/bin/uvx 755
+    fi
+}
+
+download() {
+    local url=$1
+    local output=$2
+
+    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$output" "$url"
+}
+
+assert_safe_archive() {
+    local archive=$1
+    local expected_root=$2
+    local member
+    local members=0
+
+    tar -tf "$archive" >/dev/null || fail "unreadable archive: $archive"
+    while IFS= read -r member; do
+        members=$((members + 1))
+        case $member in
+            "$expected_root"|"$expected_root/"|"$expected_root/"*) ;;
+            *) fail "unsafe archive member: $member" ;;
+        esac
+        case "/$member/" in
+            *'/../'*) fail "unsafe archive member: $member" ;;
+        esac
+    done < <(tar -tf "$archive")
+    [ "$members" -gt 0 ] || fail "empty archive: $archive"
+}
+
+assert_safe_tree_links() {
+    local root=$1
+    local link target resolved
+
+    while IFS= read -r -d '' link; do
+        [ "$(stat -c '%u:%g' "$link")" = '0:0' ] || fail "invalid symlink owner: $link"
+        target=$(readlink "$link")
+        case $target in
+            /*) fail "unsafe symlink target: $link" ;;
+        esac
+        [[ $target != *$'\t'* && $target != *$'\n'* ]] || fail "unsafe symlink target: $link"
+        resolved=$(readlink -m -- "$(dirname "$link")/$target")
+        case $resolved in
+            "$root/"*) ;;
+            *) fail "unsafe symlink target: $link" ;;
+        esac
+        [ -e "$link" ] || fail "dangling symlink: $link"
+    done < <(find "$root" -type l -print0)
+}
+
+generate_node_manifest() {
+    local root=$1
+    local output=$2
+
+    (
+        cd "$root"
+        while IFS= read -r -d '' path; do
+            local relative mode uid gid hash target
+
+            relative=${path#./}
+            [[ $relative != *$'\t'* && $relative != *$'\n'* ]] || fail "unsupported Node.js path: $relative"
+            IFS=' ' read -r mode uid gid < <(stat -c '%a %u %g' -- "$path")
+            [ "$uid:$gid" = '0:0' ] || fail "invalid Node.js ownership: $relative"
+
+            if [ -L "$path" ]; then
+                target=$(readlink "$path")
+                [[ $target != *$'\t'* && $target != *$'\n'* ]] || fail "unsupported Node.js symlink: $relative"
+                printf 'L\t%s\t%s\t%s\n' "$mode" "$target" "$relative"
+            elif [ -d "$path" ]; then
+                (( (8#$mode & 0022) == 0 )) || fail "writable Node.js directory: $relative"
+                printf 'D\t%s\t%s\n' "$mode" "$relative"
+            elif [ -f "$path" ]; then
+                (( (8#$mode & 0022) == 0 )) || fail "writable Node.js file: $relative"
+                hash=$(sha256sum -- "$path")
+                hash=${hash%% *}
+                printf 'F\t%s\t%s\t%s\n' "$mode" "$hash" "$relative"
+            else
+                fail "unsupported Node.js file type: $relative"
+            fi
+        done < <(find . -mindepth 1 ! -path "./$NODE_MANIFEST" -print0 | LC_ALL=C sort -z)
+    ) > "$output" || fail 'unable to generate Node.js manifest'
+}
+
+stage_node() {
+    local checksums="$node_stage_root/SHASUMS256.txt"
+    local archive="$node_stage_root/$NODE_ARCHIVE"
+    local checksum
+
+    download "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" "$checksums"
+    download "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ARCHIVE}" "$archive"
+    checksum=$(awk -v archive="$NODE_ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' "$checksums") ||
+        fail 'Node.js checksum is missing or ambiguous'
+    printf '%s\n' "$checksum" | (cd "$node_stage_root" && sha256sum -c -) ||
+        fail 'Node.js checksum verification failed'
+
+    assert_safe_archive "$archive" "$NODE_DIRECTORY"
+    tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$node_stage_root"
+    staged_node_home="$node_stage_root/$NODE_DIRECTORY"
+    assert_exact_root_directory "$staged_node_home"
+    assert_safe_tree_links "$staged_node_home"
+    assert_root_nonwritable_file "$staged_node_home/bin/node"
+    assert_root_nonwritable_file "$staged_node_home/lib/node_modules/npm/bin/npm-cli.js"
+    assert_root_nonwritable_file "$staged_node_home/lib/node_modules/npm/bin/npx-cli.js"
+
+    staged_node_manifest="$node_stage_root/$NODE_MANIFEST"
+    generate_node_manifest "$staged_node_home" "$staged_node_manifest"
+    install -T -o root -g root -m 0644 "$staged_node_manifest" "$staged_node_home/$NODE_MANIFEST"
+
+    [ "$("$staged_node_home/bin/node" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js archive'
+    [ "$("$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npm-cli.js" --version)" = '10.9.8' ] ||
+        fail 'invalid npm archive'
+    [ "$("$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npx-cli.js" --version)" = '10.9.8' ] ||
+        fail 'invalid npx archive'
+}
+
+stage_uv() {
+    local checksum_file="$uv_stage_root/${UV_ARCHIVE}.sha256"
+    local archive="$uv_stage_root/$UV_ARCHIVE"
+    local checksum
+
+    download "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_ARCHIVE}.sha256" "$checksum_file"
+    download "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_ARCHIVE}" "$archive"
+    checksum=$(awk 'NF { print $1; count++ } END { if (count != 1) exit 1 }' "$checksum_file") ||
+        fail 'uv checksum is missing or ambiguous'
+    [[ $checksum =~ ^[0-9a-f]{64}$ ]] || fail 'uv checksum is invalid'
+    printf '%s  %s\n' "$checksum" "$UV_ARCHIVE" | (cd "$uv_stage_root" && sha256sum -c -) ||
+        fail 'uv checksum verification failed'
+
+    assert_safe_archive "$archive" "$UV_DIRECTORY"
+    tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$uv_stage_root"
+    staged_uv_directory="$uv_stage_root/$UV_DIRECTORY"
+    assert_exact_root_directory "$staged_uv_directory"
+    assert_safe_tree_links "$staged_uv_directory"
+    assert_root_file "$staged_uv_directory/uv" 755
+    assert_root_file "$staged_uv_directory/uvx" 755
+    [ "$("$staged_uv_directory/uv" --version)" = "uv $UV_VERSION" ] || fail 'invalid uv archive'
+    [ "$("$staged_uv_directory/uvx" --version)" = "uvx $UV_VERSION" ] || fail 'invalid uvx archive'
+}
+
+stage_toolchain() {
+    node_stage_root=$(mktemp -d "$OPENHANDS_ROOT/.node-stage.XXXXXX")
+    uv_stage_root=$(mktemp -d /usr/local/bin/.uv-stage.XXXXXX)
+    trap 'rm -rf -- "$node_stage_root" "$uv_stage_root"' EXIT
+
+    stage_node
+    stage_uv
+}
+
+validate_installed_node_tree() {
+    local current_manifest
+
+    assert_exact_root_directory "$NODE_HOME"
+    assert_root_file "$NODE_HOME/$NODE_MANIFEST" 644
+    cmp -s "$NODE_HOME/$NODE_MANIFEST" "$staged_node_manifest" || fail 'foreign Node.js manifest'
+    assert_safe_tree_links "$NODE_HOME"
+
+    current_manifest=$(mktemp "$node_stage_root/installed-manifest.XXXXXX")
+    generate_node_manifest "$NODE_HOME" "$current_manifest"
+    cmp -s "$current_manifest" "$staged_node_manifest" || fail 'invalid Node.js installation'
+}
+
+validate_existing_tool_paths() {
+    if path_exists /usr/local/bin/uv; then
+        cmp -s /usr/local/bin/uv "$staged_uv_directory/uv" || fail 'foreign uv installation'
+    fi
+    if path_exists /usr/local/bin/uvx; then
+        cmp -s /usr/local/bin/uvx "$staged_uv_directory/uvx" || fail 'foreign uvx installation'
+    fi
+
+    if path_exists "$NODE_HOME"; then
+        validate_installed_node_tree
+    fi
+    if path_exists /usr/local/bin/node; then
+        assert_node_link
+    fi
+    if path_exists /usr/local/bin/npm; then
+        assert_wrapper npm "$NPM_CLI"
+    fi
+    if path_exists /usr/local/bin/npx; then
+        assert_wrapper npx "$NPX_CLI"
+    fi
+}
+
+commit_node_tree() {
+    if path_exists "$NODE_HOME"; then
+        validate_installed_node_tree
+        return
+    fi
+
+    mv -T -n -- "$staged_node_home" "$NODE_HOME"
+    if path_exists "$staged_node_home"; then
+        validate_installed_node_tree
+    else
+        assert_exact_root_directory "$NODE_HOME"
+    fi
+}
+
+commit_node_link() {
+    local temp_directory
+
+    if path_exists /usr/local/bin/node; then
+        assert_node_link
+        return
+    fi
+
+    temp_directory=$(mktemp -d /usr/local/bin/.node-link.XXXXXX)
+    ln -s "$NODE_BINARY" "$temp_directory/node"
+    chown -h root:root "$temp_directory/node"
+    mv -T -n -- "$temp_directory/node" /usr/local/bin/node
+    rm -rf -- "$temp_directory"
+    assert_node_link
+}
+
+commit_wrapper() {
+    local name=$1
+    local cli=$2
+    local destination="/usr/local/bin/$name"
+    local temp
+
+    if path_exists "$destination"; then
+        assert_wrapper "$name" "$cli"
+        return
+    fi
+
+    temp=$(mktemp "/usr/local/bin/.${name}.XXXXXX")
+    print_wrapper "$cli" > "$temp"
+    chown root:root "$temp"
+    chmod 0755 "$temp"
+    mv -T -n -- "$temp" "$destination"
+    rm -f -- "$temp"
+    assert_wrapper "$name" "$cli"
+}
+
+commit_uv_binary() {
+    local name=$1
+    local source="$staged_uv_directory/$name"
+    local destination="/usr/local/bin/$name"
+    local temp
+
+    if path_exists "$destination"; then
+        assert_root_file "$destination" 755
+        cmp -s "$destination" "$source" || fail "foreign $name installation"
+        return
+    fi
+
+    temp=$(mktemp "/usr/local/bin/.${name}.XXXXXX")
+    install -T -o root -g root -m 0755 "$source" "$temp"
+    mv -T -n -- "$temp" "$destination"
+    rm -f -- "$temp"
+    assert_root_file "$destination" 755
+    cmp -s "$destination" "$source" || fail "foreign $name installation"
+}
+
+commit_toolchain() {
+    commit_node_tree
+    commit_node_link
+    commit_wrapper npm "$NPM_CLI"
+    commit_wrapper npx "$NPX_CLI"
+    commit_uv_binary uv
+    commit_uv_binary uvx
+}
+
+verify_toolchain() {
+    validate_installed_node_tree
+    assert_node_link
+    assert_wrapper npm "$NPM_CLI"
+    assert_wrapper npx "$NPX_CLI"
+    assert_root_file /usr/local/bin/uv 755
+    assert_root_file /usr/local/bin/uvx 755
+    cmp -s /usr/local/bin/uv "$staged_uv_directory/uv" || fail 'invalid uv installation'
+    cmp -s /usr/local/bin/uvx "$staged_uv_directory/uvx" || fail 'invalid uvx installation'
+
+    [ "$("$NODE_BINARY" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js installation'
+    [ "$("$NODE_BINARY" "$NPM_CLI" --version)" = '10.9.8' ] || fail 'invalid npm installation'
+    [ "$("$NODE_BINARY" "$NPX_CLI" --version)" = '10.9.8' ] || fail 'invalid npx installation'
+    [ "$(/usr/local/bin/uv --version)" = "uv $UV_VERSION" ] || fail 'invalid uv installation'
+    [ "$(/usr/local/bin/uvx --version)" = "uvx $UV_VERSION" ] || fail 'invalid uvx installation'
+}
+
+if [ "$(id -u)" -ne 0 ]; then
+    fail 'provisioning must run as root'
+fi
+
+if [ "${WSL_DISTRO_NAME:-}" != 'openhands-worker' ]; then
+    fail 'provisioning must run in openhands-worker'
+fi
+
+resolve_assets
+if ! id agent >/dev/null 2>&1; then
+    if [ -e /home/agent ] || [ -L /home/agent ]; then
+        fail 'agent home must be absent before account creation'
+    fi
+    useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent
+fi
+assert_agent
+assert_agent_directory /home/agent
+for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do
+    ensure_private_directory "$path"
+done
+
+install_wsl_config
+
+if [ "$(uname -m)" != 'x86_64' ]; then
+    fail 'unsupported architecture: only x86_64 is supported'
+fi
+preflight_tool_paths
+DEBIAN_FRONTEND=noninteractive apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl xz-utils
+stage_toolchain
+validate_existing_tool_paths
+commit_toolchain
+verify_toolchain
