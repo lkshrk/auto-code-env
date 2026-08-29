@@ -109,8 +109,9 @@ SHA-256 before root executes the provisioner; and never relies on `/mnt` or
 Windows interop after isolation is enabled. Its native WSL calls carry only a
 fixed single-line decoder and base64 tokens, not multiline shell programs. It restarts only
 `openhands-worker`, verifies the default `agent`, systemd PID 1, that the
-Windows drive is not mounted at `/mnt/c`, empty `WSL_INTEROP`, absent WSLInterop
-binfmt registration, and the four private agent directories, then stops only
+Windows drive is not mounted at `/mnt/c` (accepting only mountpoint status 32
+when that directory exists), empty `WSL_INTEROP`, absent WSLInterop binfmt
+registration, and the four private agent directories, then stops only
 that worker. Reruns reuse only safe root-owned bootstrap files.
 
 The provisioner is root-only and refuses any `WSL_DISTRO_NAME` other than

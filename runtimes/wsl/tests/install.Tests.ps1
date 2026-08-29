@@ -488,17 +488,36 @@ try {
     $previousInterop = $env:WSL_INTEROP
     try {
         $env:WSL_INTEROP = ""
+        $absentDriveVerificationProgram = $safeVerificationProgram.Replace((Join-Path $verificationRoot "mnt-c"), (Join-Path $verificationRoot "missing-mnt-c"))
+        & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $absentDriveVerificationProgram)
+        Assert-Equal 0 $LASTEXITCODE "combined verification program should accept an absent Windows drive path"
         & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $safeVerificationProgram)
         Assert-Equal 0 $LASTEXITCODE "combined verification program should execute with mapped target facts"
         $mountedDriveVerificationProgram = $safeVerificationProgram.Replace((Join-Path $verificationRoot "mnt-c"), "/")
         & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $mountedDriveVerificationProgram)
         Assert-Equal 1 $LASTEXITCODE "combined verification program should reject a mounted Windows drive"
+        $mountpointShimDirectory = Join-Path $verificationRoot "mountpoint-shim"
+        New-Item -ItemType Directory -Path $mountpointShimDirectory | Out-Null
+        $mountpointShimPath = Join-Path $mountpointShimDirectory "mountpoint"
+        [System.IO.File]::WriteAllText($mountpointShimPath, "#!/bin/sh`nexit 127`n", [System.Text.UTF8Encoding]::new($false))
+        & chmod +x $mountpointShimPath
+        Assert-Equal 0 $LASTEXITCODE "mountpoint shim should be executable"
+        $previousPath = $env:PATH
+        try {
+            $env:PATH = "${mountpointShimDirectory}:$previousPath"
+            & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $safeVerificationProgram)
+            Assert-Equal 1 $LASTEXITCODE "combined verification program should reject mountpoint errors"
+        }
+        finally {
+            $env:PATH = $previousPath
+        }
         $verificationLines = @($verificationProgram -split "`n")
-        Assert-Equal 10 $verificationLines.Count "combined verification program line count"
-        Assert-Equal 'if mountpoint -q /mnt/c; then exit 1; fi' $verificationLines[3] "mount check line boundary"
-        Assert-Equal 'set -e' $verificationLines[4] "isolation fragment start line boundary"
-        Assert-Equal '[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ]' $verificationLines[6] "isolation fragment end line boundary"
-        Assert-Equal 'for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do' $verificationLines[7] "directory loop line boundary"
+        Assert-Equal 16 $verificationLines.Count "combined verification program line count"
+        Assert-Equal 'if [ -e /mnt/c ] || [ -L /mnt/c ]; then' $verificationLines[3] "mount check line boundary"
+        Assert-Equal '    elif [ "$?" -ne 32 ]; then' $verificationLines[6] "mount status boundary"
+        Assert-Equal 'set -e' $verificationLines[10] "isolation fragment start line boundary"
+        Assert-Equal '[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ]' $verificationLines[12] "isolation fragment end line boundary"
+        Assert-Equal 'for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do' $verificationLines[13] "directory loop line boundary"
 
         $isolationWrapper = Get-WslShellProgramWrapper
         $isolationProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBaseProvisioningIsolationCommand)
