@@ -42,3 +42,17 @@
 - Focused fixtures passed for dpkg discrepancy, nonzero verification, raced
   destination, normal protocol/rerun; Bash syntax, ShellCheck, and whitespace
   checks passed.
+
+## Python integration fix
+
+- Commit: `69fcf45e0e4fd42b18353de4c5fc1b71dc216f77`
+- Adds `python3-minimal` to the apt contract and fixture image requirements.
+  Before pinentry use, its installed status, package ownership, `dpkg --verify`
+  result, root-owned executable, and Python-versioned symlink target are checked.
+- Focused counterfeit/discrepancy and nonzero-verification fixtures passed without
+  executing the replacement Python binary. Bash syntax, ShellCheck, and
+  whitespace checks passed.
+- Full fixture invocation was attempted but could not rebuild the required image:
+  Docker's `apt install python3-minimal xz-utils` exited 100 because the Docker
+  build cache/archive filesystem lacks free space. Real target validation remains
+  outstanding.
