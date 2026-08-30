@@ -85,6 +85,7 @@ setup_fixture() {
     '      ln -sf "../lib/node_modules/$name/bin/$bin" "$prefix/bin/$bin"' \
     '      test ! -e /tmp/fixture-npm-fail || test "$bin" != agent-canvas || exit 84' \
     '    done' \
+    '    test ! -e /tmp/fixture-corrupt-agent-root || chmod 0755 "$prefix"' \
     '    test ! -e /tmp/fixture-extra-package || { mkdir -p "$prefix/lib/node_modules/unexpected/bin"; printf "{\"name\":\"unexpected\",\"version\":\"1.0.0\"}\n" > "$prefix/lib/node_modules/unexpected/package.json"; printf "#!/bin/sh\n" > "$prefix/lib/node_modules/unexpected/bin/unexpected"; chmod 0700 "$prefix/lib/node_modules/unexpected/bin/unexpected"; ln -sf ../lib/node_modules/unexpected/bin/unexpected "$prefix/bin/unexpected"; }' \
     '    test ! -e /tmp/fixture-foreign-bin || { rm "$prefix/bin/codex"; ln -s /tmp/foreign-bin "$prefix/bin/codex"; }' \
     '    test ! -e /tmp/fixture-extra-bin || ln -sf ../lib/node_modules/@openai/codex/bin/codex "$prefix/bin/unexpected" ;;' \
@@ -700,6 +701,15 @@ run_container '
     exit 1
   fi
   test -L /home/agent/.local/bin/unexpected
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-corrupt-agent-root
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%a" /home/agent/.local)" = 755
 '
 
 run_container '

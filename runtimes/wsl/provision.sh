@@ -237,6 +237,9 @@ install_agent_packages() {
 }
 
 verify_agent_packages() {
+    assert_agent_directory "$AGENT_PREFIX"
+    assert_agent_directory /home/agent/.cache
+    assert_agent_directory "$NPM_CACHE"
     assert_exact_agent_packages
     assert_agent_package @openhands/agent-canvas 1.16.0
     assert_agent_package @agentclientprotocol/claude-agent-acp 0.63.0
