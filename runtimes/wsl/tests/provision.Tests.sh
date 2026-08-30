@@ -132,8 +132,9 @@ setup_fixture() {
   printf '%s\n' \
     '#!/bin/sh' \
     'if test "${1:-}" = --version; then printf "%s\\n" "omni version v0.10.4 (fixture)"; exit 0; fi' \
-    'test "$1" = --config && test "$2" = /etc/openhands/omni/settings.json && test "$3" = --cache-dir && test "$5" = --state-dir && test "$7" = --yes && test "$8" = tools && test "$9" = sync && test "${10}" = --group || exit 91' \
+    'test "$1" = --config && test -f "$2" && test "$2" != /etc/openhands/omni/settings.json && test "$3" = --cache-dir && test "$5" = --state-dir && test "$7" = --yes && test "$8" = tools && test "$9" = sync && test "${10}" = --group || exit 91' \
     'group=${11}' \
+    'touch "$(dirname "$2")/.omni-config.lock"; cp "$2" "$2.bak"' \
     'printf "%s|%s|%s|%s|%s\\n" "$group" "$(id -un)" "${NPM_CONFIG_IGNORE_SCRIPTS-}" "${NPM_CONFIG_STRICT_ALLOW_SCRIPTS-}" "${NPM_CONFIG_ALLOW_SCRIPTS-}" >> /tmp/omni-calls' \
     'case "$group" in' \
     '  openhands-system)' \
@@ -347,6 +348,10 @@ run_container '
   test "$(stat -c "%U:%G %a" /etc/openhands/omni)" = "root:root 755"
   test "$(stat -c "%U:%G %a" /etc/openhands/omni/settings.json)" = "root:root 644"
   cmp -s /etc/openhands/omni/settings.json /src/runtimes/wsl/omni/settings.json
+  test ! -e /etc/openhands/omni/.omni-config.lock
+  test ! -e /etc/openhands/omni/settings.json.bak
+  ! compgen -G "/var/lib/openhands/omni/.config.*" >/dev/null
+  ! compgen -G "/home/agent/.cache/omni/.config.*" >/dev/null
   test "$(stat -c "%U:%G %a" /var/cache/openhands/omni)" = "root:root 755"
   test "$(stat -c "%U:%G %a" /var/lib/openhands/omni)" = "root:root 755"
   test "$(stat -c "%U:%G %a" /home/agent/.cache/omni)" = "agent:agent 700"

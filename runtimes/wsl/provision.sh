@@ -884,16 +884,112 @@ prepare_omni_state() {
     ensure_private_directory "$OMNI_AGENT_STATE"
 }
 
+assert_root_private_directory() {
+    local path=$1
+
+    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(/usr/bin/stat -c '%u:%g %a' "$path")" != '0:0 700' ]; then
+        fail "invalid private root directory: $path"
+    fi
+}
+
+assert_omni_canonical_config() {
+    local path
+
+    assert_root_file "$OMNI_CONFIG" 644
+    /usr/bin/cmp -s "$OMNI_CONFIG" "$omni_config_source" || fail 'invalid Omni configuration'
+    for path in "$OMNI_CONFIG_DIRECTORY/.omni-config.lock" "$OMNI_CONFIG.bak"; do
+        if path_exists "$path"; then
+            fail "unexpected Omni config artifact: $path"
+        fi
+    done
+}
+
+remove_omni_config_directory() {
+    local directory=$1
+    local owner=$2
+
+    case "$directory" in
+        "$OMNI_ROOT_STATE"/.config.*|"$OMNI_AGENT_CACHE"/.config.*) ;;
+        *) fail "unsafe Omni config directory: $directory" ;;
+    esac
+    case "$owner" in
+        root) assert_root_private_directory "$directory" ;;
+        agent) assert_agent_directory "$directory" ;;
+        *) fail "invalid Omni config owner: $owner" ;;
+    esac
+    /usr/bin/rm -rf -- "$directory" || fail "unable to clean Omni config directory: $directory"
+    if path_exists "$directory"; then
+        fail "unable to clean Omni config directory: $directory"
+    fi
+}
+
+sync_omni_system_group() {
+    local directory config status=0
+
+    directory=$(/usr/bin/mktemp -d "$OMNI_ROOT_STATE/.config.XXXXXX") || fail 'unable to stage root Omni configuration'
+    assert_root_private_directory "$directory"
+    config="$directory/settings.json"
+    if ! /usr/bin/install -T -o root -g root -m 0600 "$OMNI_CONFIG" "$config"; then
+        remove_omni_config_directory "$directory" root
+        fail 'unable to stage root Omni configuration'
+    fi
+    if run_clean "$OMNI_BINARY" --config "$config" --cache-dir "$OMNI_ROOT_CACHE" --state-dir "$OMNI_ROOT_STATE" \
+        --yes tools sync --group openhands-system; then
+        :
+    else
+        status=$?
+    fi
+    remove_omni_config_directory "$directory" root
+    assert_omni_canonical_config
+    [ "$status" -eq 0 ] || fail 'Omni system tool sync failed'
+}
+
+sync_omni_agent_group() {
+    local group=$1
+    local lifecycle=$2
+    local directory config status=0
+
+    directory=$(run_agent_clean /usr/bin/mktemp -d "$OMNI_AGENT_CACHE/.config.XXXXXX") ||
+        fail 'unable to stage agent Omni configuration'
+    assert_agent_directory "$directory"
+    config="$directory/settings.json"
+    if ! run_agent_clean /usr/bin/install -T -m 0600 "$OMNI_CONFIG" "$config"; then
+        remove_omni_config_directory "$directory" agent
+        fail 'unable to stage agent Omni configuration'
+    fi
+    case "$lifecycle" in
+        no-scripts)
+            if NPM_CONFIG_IGNORE_SCRIPTS=true run_agent_omni "$OMNI_BINARY" --config "$config" \
+                --cache-dir "$OMNI_AGENT_CACHE" --state-dir "$OMNI_AGENT_STATE" --yes tools sync --group "$group"; then
+                :
+            else
+                status=$?
+            fi
+            ;;
+        claude)
+            if NPM_CONFIG_STRICT_ALLOW_SCRIPTS=true NPM_CONFIG_ALLOW_SCRIPTS=@anthropic-ai/claude-code \
+                run_agent_omni "$OMNI_BINARY" --config "$config" --cache-dir "$OMNI_AGENT_CACHE" \
+                --state-dir "$OMNI_AGENT_STATE" --yes tools sync --group "$group"; then
+                :
+            else
+                status=$?
+            fi
+            ;;
+        *)
+            remove_omni_config_directory "$directory" agent
+            fail "invalid Omni lifecycle: $lifecycle"
+            ;;
+    esac
+    remove_omni_config_directory "$directory" agent
+    assert_omni_canonical_config
+    [ "$status" -eq 0 ] || fail "Omni $lifecycle agent tool sync failed"
+}
+
 sync_omni_tools() {
-    run_clean "$OMNI_BINARY" --config "$OMNI_CONFIG" --cache-dir "$OMNI_ROOT_CACHE" --state-dir "$OMNI_ROOT_STATE" \
-        --yes tools sync --group openhands-system || fail 'Omni system tool sync failed'
-    NPM_CONFIG_IGNORE_SCRIPTS=true run_agent_omni "$OMNI_BINARY" --config "$OMNI_CONFIG" \
-        --cache-dir "$OMNI_AGENT_CACHE" --state-dir "$OMNI_AGENT_STATE" --yes tools sync \
-        --group openhands-agent-no-scripts || fail 'Omni no-script agent tool sync failed'
-    NPM_CONFIG_STRICT_ALLOW_SCRIPTS=true NPM_CONFIG_ALLOW_SCRIPTS=@anthropic-ai/claude-code \
-        run_agent_omni "$OMNI_BINARY" --config "$OMNI_CONFIG" --cache-dir "$OMNI_AGENT_CACHE" \
-        --state-dir "$OMNI_AGENT_STATE" --yes tools sync --group openhands-agent-claude ||
-        fail 'Omni Claude Code tool sync failed'
+    assert_omni_canonical_config
+    sync_omni_system_group
+    sync_omni_agent_group openhands-agent-no-scripts no-scripts
+    sync_omni_agent_group openhands-agent-claude claude
 }
 
 stage_toolchain() {

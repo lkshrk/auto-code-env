@@ -34,3 +34,19 @@ creation, the test trace stopped at `test -f .../omni/settings.json`.
 While wiring the fixture, found `env -i` discarded lifecycle environment
 variables. `run_agent_omni` now forwards only the three explicit npm lifecycle
 variables, so no-script and Claude-only behavior reaches Omni's npm process.
+
+## Follow-up — immutable canonical config
+
+Native arm64 smoke showed Omni creates `.omni-config.lock` and
+`settings.json.bak` beside its config. The canonical root-owned config now
+remains immutable: each root/agent sync gets a newly copied, private temporary
+config directory, while its existing cache/state directory remains persistent.
+The temporary directory is validated before deletion, deleted after both
+success and failure, and deletion failure is fatal. The fixture makes Omni
+write both artifacts and verifies the canonical directory and all temporary
+directories are clean after both provisioning passes.
+
+Follow-up static checks (`bash -n`, ShellCheck, JSON validation, runtime suite,
+and `git diff --check`) pass. The full fixture was rerun through all expected
+negative security cases; native BuildKit remains blocked by local Docker
+storage exhaustion.
