@@ -259,6 +259,8 @@ try {
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionAvailable")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslNamedInstallSupported")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionRegistered")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslArtifactArchitecture")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Resolve-WslImage")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Install-WslDistribution")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslExecutablePath")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslVersionSupported")))
@@ -371,41 +373,54 @@ try {
 
     Set-FakeWslScenario -Root $testRoot
     Assert-ThrowsMessage -Action { Assert-WslDistributionIdentity -WslPath "Invoke-ThrowingTerminateWsl" -Name "openhands-worker" } -Patterns @("Simulated termination exception") -Message "thrown termination failure should be fatal after a successful identity check"
+    Assert-Equal "amd64" (Get-WslArtifactArchitecture -Architecture "AMD64") "AMD64 artifact architecture"
+    Assert-Equal "arm64" (Get-WslArtifactArchitecture -Architecture "ARM64") "ARM64 artifact architecture"
+    Assert-Throws { Get-WslArtifactArchitecture -Architecture "x86" } "unsupported architecture should fail"
+
+    $imagePath = Join-Path $testRoot "openhands-worker-1.2.3-amd64.wsl"
+    [System.IO.File]::WriteAllText($imagePath, "image", [System.Text.UTF8Encoding]::new($false))
+    $imageHash = (Get-FileHash -LiteralPath $imagePath -Algorithm SHA256).Hash
+    Assert-Equal $imagePath (Resolve-WslImage -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64").Path "local image should resolve"
+    Assert-Equal $imagePath (Resolve-WslImage -ImagePath $imagePath -ImageSha256 $imageHash.ToLowerInvariant() -Architecture "AMD64").Path "lowercase image hash should resolve"
+    function Invoke-WebRequest {
+        param([Uri]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
+
+        [System.IO.File]::WriteAllText($OutFile, "image", [System.Text.UTF8Encoding]::new($false))
+    }
+    $downloadedImage = Resolve-WslImage -ImageUri "https://example.invalid/openhands-worker-1.2.3-amd64.wsl" -ImageSha256 $imageHash -Architecture "AMD64"
+    Assert-Match 'openhands-worker-[0-9a-f]+$' $downloadedImage.TemporaryDirectory "HTTPS image should use an installer-owned temporary directory"
+    Assert-Equal $true (Test-Path -LiteralPath $downloadedImage.Path -PathType Leaf) "HTTPS image should download"
+    Remove-Item -LiteralPath $downloadedImage.TemporaryDirectory -Recurse -Force
+    Assert-Throws { Resolve-WslImage -ImagePath $imagePath -ImageUri "https://example.invalid/openhands-worker-1.2.3-amd64.wsl" -ImageSha256 $imageHash -Architecture "AMD64" } "both artifact sources should fail"
+    Assert-Throws { Resolve-WslImage -ImageSha256 $imageHash -Architecture "AMD64" } "missing artifact source should fail"
+    Assert-Throws { Resolve-WslImage -ImagePath $imagePath -ImageSha256 "not-a-hash" -Architecture "AMD64" } "invalid image hash should fail"
+    Assert-Throws { Resolve-WslImage -ImageUri "http://example.invalid/openhands-worker-1.2.3-amd64.wsl" -ImageSha256 $imageHash -Architecture "AMD64" } "non-HTTPS image URI should fail"
+    Assert-Throws { Resolve-WslImage -ImagePath $imagePath -ImageSha256 ("0" * 64) -Architecture "AMD64" } "wrong image hash should fail"
+    Assert-Throws { Resolve-WslImage -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "ARM64" } "wrong image architecture should fail"
+
     Set-FakeWslScenario -Root $testRoot -Before "openhands-worker" -Help "--name-suffix <Name>"
-    Assert-Equal $false (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "existing target should be a no-op before help gating"
+    Assert-Equal $false (Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 "not-a-hash" -Architecture "AMD64") "existing target should be a no-op before artifact validation"
     Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "existing target should only be listed"
 
+    Set-FakeWslScenario -Root $testRoot -Before "openhands-worker"
+    Assert-Equal $false (Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker") "existing target should not require artifact arguments"
+    Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "existing target should not resolve an artifact"
+
     Set-FakeWslScenario -Root $testRoot -Before "docker-desktop" -After "docker-desktop`nopenhands-worker"
-    Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "new target should install and verify"
-    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "named install call order"
-
-    Set-FakeWslScenario -Root $testRoot -After "openhands-worker" -EmptyInitialList $true
-    Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "clean host should install and verify"
-    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "clean host named install calls"
-
-    Set-FakeWslScenario -Root $testRoot -Help "--name-suffix <Name>"
-    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "missing named-install help should fail"
-    Assert-Equal "--list --quiet`n--help`n" (Get-FakeWslCalls) "missing named-install help calls"
-
-    Set-FakeWslScenario -Root $testRoot -After "openhands-worker" -HelpExit 1 -NulHelp $true
-    Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker") "valid NUL-separated help should override its nonzero exit"
-    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "nonzero informational help calls"
-
-    Set-FakeWslScenario -Root $testRoot -Help "--name-suffix <Name>" -HelpExit 1
-    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "nonzero help without named install should fail"
-    Assert-Equal "--list --quiet`n--help`n" (Get-FakeWslCalls) "nonzero unsupported help calls"
+    Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64") "new target should import and verify"
+    Assert-Equal "--list --quiet`n--install --from-file $imagePath --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "from-file install call order"
 
     Set-FakeWslScenario -Root $testRoot -ListExit 1
-    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "nonzero list should fail"
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64" } "nonzero list should fail"
     Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "nonzero list calls"
 
     Set-FakeWslScenario -Root $testRoot -InstallExit 1
-    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "nonzero install should fail"
-    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n" (Get-FakeWslCalls) "nonzero install calls"
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64" } "nonzero import should fail"
+    Assert-Equal "--list --quiet`n--install --from-file $imagePath --name openhands-worker --no-launch`n" (Get-FakeWslCalls) "nonzero import calls"
 
     Set-FakeWslScenario -Root $testRoot -After "docker-desktop"
-    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Distribution "Ubuntu-26.04" -Name "openhands-worker" } "missing post-install target should fail"
-    Assert-Equal "--list --quiet`n--help`n--install --distribution Ubuntu-26.04 --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "missing post-install target calls"
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64" } "missing post-import target should fail"
+    Assert-Equal "--list --quiet`n--install --from-file $imagePath --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "missing post-import target calls"
 
     $configPath = Join-Path $testRoot ".wslconfig"
     $original = "[wsl2]`nfirewall=true`nlocalhostForwarding=false`n"
@@ -826,6 +841,7 @@ try {
     Assert-NotMatch 'IsWindowsVersionAtLeast|File\]::Move\([^\r\n]+,\s*[^\r\n]+,\s*\$true\)|::new\(' $source "Windows PowerShell 5.1 compatibility"
     Assert-NotMatch '\$env:SystemRoot' $source "trusted Windows directory source"
     Assert-Match 'GetFolderPath\s*\(' $source "trusted Windows directory API"
+    Assert-NotMatch '--list --online|Invoke-WslBaseProvisioning\s+-WslPath' $source "installer should not use online discovery or dynamic provisioning"
 
     Write-Host "PASS: WSL mirrored networking configuration"
 }

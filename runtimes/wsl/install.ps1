@@ -1,5 +1,11 @@
-$Distribution = "Ubuntu-26.04"
-$DistroName = "openhands-worker"
+[CmdletBinding()]
+param(
+    [string]$DistroName = "openhands-worker",
+    [string]$ImagePath,
+    [string]$ImageUri,
+    [string]$ImageSha256
+)
+
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
@@ -213,11 +219,86 @@ function Assert-WslDistributionIdentity {
     }
 }
 
+function Get-WslArtifactArchitecture {
+    param([Parameter(Mandatory)][string]$Architecture)
+
+    switch ($Architecture.ToUpperInvariant()) {
+        "AMD64" { return "amd64" }
+        "ARM64" { return "arm64" }
+        default { throw "Unsupported Windows architecture '$Architecture'." }
+    }
+}
+
+function Resolve-WslImage {
+    param(
+        [string]$ImagePath,
+        [string]$ImageUri,
+        [Parameter(Mandatory)][string]$ImageSha256,
+        [Parameter(Mandatory)][string]$Architecture
+    )
+
+    $hasPath = -not [string]::IsNullOrWhiteSpace($ImagePath)
+    $hasUri = -not [string]::IsNullOrWhiteSpace($ImageUri)
+    if ($hasPath -eq $hasUri) {
+        throw "Specify exactly one of ImagePath or ImageUri."
+    }
+    if ($ImageSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
+        throw "ImageSha256 must be a 64-character hexadecimal SHA-256 value."
+    }
+
+    $artifactArchitecture = Get-WslArtifactArchitecture -Architecture $Architecture
+    $temporaryDirectory = $null
+    if ($hasUri) {
+        $uri = $null
+        if (-not [Uri]::TryCreate($ImageUri, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -cne "https") {
+            throw "ImageUri must be an absolute HTTPS URI."
+        }
+        $leaf = [IO.Path]::GetFileName($uri.AbsolutePath)
+        $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("openhands-worker-" + [Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+        $resolvedPath = Join-Path $temporaryDirectory $leaf
+        try {
+            Invoke-WebRequest -Uri $uri -OutFile $resolvedPath -UseBasicParsing
+        }
+        catch {
+            Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
+            throw
+        }
+    }
+    else {
+        if (-not (Test-Path -LiteralPath $ImagePath -PathType Leaf)) {
+            throw "ImagePath '$ImagePath' must be a file."
+        }
+        $resolvedPath = (Get-Item -LiteralPath $ImagePath).FullName
+        $leaf = Split-Path -Leaf $resolvedPath
+    }
+
+    if ($leaf -notmatch ("-" + [regex]::Escape($artifactArchitecture) + '\.wsl$')) {
+        if ($temporaryDirectory) {
+            Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        throw "WSL image '$leaf' does not match architecture '$artifactArchitecture'."
+    }
+
+    $actualHash = (Get-FileHash -LiteralPath $resolvedPath -Algorithm SHA256).Hash
+    if ($actualHash -ine $ImageSha256) {
+        if ($temporaryDirectory) {
+            Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        throw "WSL image SHA-256 does not match ImageSha256."
+    }
+
+    return [pscustomobject]@{ Path = $resolvedPath; TemporaryDirectory = $temporaryDirectory }
+}
+
 function Install-WslDistribution {
     param(
         [Parameter(Mandatory)][string]$WslPath,
-        [Parameter(Mandatory)][string]$Distribution,
-        [Parameter(Mandatory)][string]$Name
+        [Parameter(Mandatory)][string]$Name,
+        [string]$ImagePath,
+        [string]$ImageUri,
+        [string]$ImageSha256,
+        [string]$Architecture = $env:PROCESSOR_ARCHITECTURE
     )
 
     $registered = & $WslPath --list --quiet
@@ -229,22 +310,25 @@ function Install-WslDistribution {
         return $false
     }
 
-    $help = & $WslPath --help
-    if (-not (Test-WslNamedInstallSupported -Output $help)) {
-        throw "Installed WSL does not support named distribution installation."
-    }
+    $image = Resolve-WslImage -ImagePath $ImagePath -ImageUri $ImageUri -ImageSha256 $ImageSha256 -Architecture $Architecture
+    try {
+        & $WslPath --install --from-file $image.Path --name $Name --no-launch
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to import WSL distribution '$Name'."
+        }
 
-    & $WslPath --install --distribution $Distribution --name $Name --no-launch
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to install WSL distribution '$Name'."
+        $registered = & $WslPath --list --quiet
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to verify WSL distribution registration."
+        }
+        if (-not (Test-WslDistributionRegistered -Output $registered -Name $Name)) {
+            throw "WSL distribution '$Name' was not registered."
+        }
     }
-
-    $registered = & $WslPath --list --quiet
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to verify WSL distribution registration."
-    }
-    if (-not (Test-WslDistributionRegistered -Output $registered -Name $Name)) {
-        throw "WSL distribution '$Name' was not registered."
+    finally {
+        if ($image.TemporaryDirectory) {
+            Remove-Item -LiteralPath $image.TemporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     return $true
@@ -619,7 +703,6 @@ function Invoke-WslBaseProvisioning {
 }
 
 function Assert-WslPrerequisites {
-    param([Parameter(Mandatory)][string]$Distribution)
 
     if ($env:OS -ne "Windows_NT") {
         throw "Windows 11 is required."
@@ -648,18 +731,10 @@ function Assert-WslPrerequisites {
         throw "WSL version 2.7 or later is required."
     }
 
-    $online = & $wslPath --list --online
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to list online WSL distributions."
-    }
-    if (-not (Test-WslDistributionAvailable -Output $online -Distribution $Distribution)) {
-        throw "Required online WSL distribution '$Distribution' is unavailable."
-    }
-
     return $wslPath
 }
 
-$wslPath = Assert-WslPrerequisites -Distribution $Distribution
+$wslPath = Assert-WslPrerequisites
 
 $configPath = Join-Path $env:USERPROFILE ".wslconfig"
 $result = Set-WslMirroredNetworking -Path $configPath
@@ -673,12 +748,10 @@ if ($result.Changed) {
 
 Write-Host "WSL bootstrap Stage 1 completed."
 
-Install-WslDistribution -WslPath $wslPath -Distribution $Distribution -Name $DistroName | Out-Null
+if (-not (Install-WslDistribution -WslPath $wslPath -Name $DistroName -ImagePath $ImagePath -ImageUri $ImageUri -ImageSha256 $ImageSha256)) {
+    return
+}
 Write-Host "WSL bootstrap Stage 2 completed."
 
 Assert-WslDistributionIdentity -WslPath $wslPath -Name $DistroName
 Write-Host "WSL bootstrap Stage 3 completed."
-
-$assetRoot = Split-Path -Parent $PSCommandPath
-Invoke-WslBaseProvisioning -WslPath $wslPath -Name $DistroName -ProvisionPath (Join-Path $assetRoot "provision.sh") -ConfigPath (Join-Path $assetRoot "wsl.conf")
-Write-Host "WSL bootstrap Stage 4 completed."
