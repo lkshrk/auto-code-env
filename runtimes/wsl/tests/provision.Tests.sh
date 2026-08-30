@@ -142,6 +142,7 @@ setup_fixture() {
     '    if test ! -e /usr/bin/rbw; then printf "%s\\n" "#!/bin/sh" "case \"\${1:-}\" in" "  --version) printf \"%s\\n\" \"rbw 1.13.2\" ;;" "  *) exit 0 ;;" "esac" > /usr/bin/rbw; chmod 0755 /usr/bin/rbw; fi; chmod 0666 /tmp/omni-calls ;;' \
     '  openhands-agent-no-scripts)' \
     '    test "$(id -un)" = agent && test "$4" = /home/agent/.cache/omni && test "$6" = /home/agent/.local/state/omni && test "$NPM_CONFIG_IGNORE_SCRIPTS" = true && test -z "${NPM_CONFIG_STRICT_ALLOW_SCRIPTS-}${NPM_CONFIG_ALLOW_SCRIPTS-}" || exit 93' \
+    '    for path in /home/agent/.local/bin /home/agent/.local/lib /home/agent/.local/lib/node_modules; do test ! -L "$path" && test "$(stat -c "%U:%G %a" "$path")" = "agent:agent 700" || exit 96; done' \
     '    /usr/local/bin/node /opt/openhands/node-v24.20.0-linux-*/lib/node_modules/npm/bin/npm-cli.js --prefix /home/agent/.local --cache /home/agent/.cache/npm --global --no-audit --no-fund --no-update-notifier --ignore-scripts install @openhands/agent-canvas@1.16.0 @agentclientprotocol/claude-agent-acp@0.63.0 @agentclientprotocol/codex-acp@1.1.7 @openai/codex@0.151.0 ;;' \
     '  openhands-agent-claude)' \
     '    test "$(id -un)" = agent && test "$4" = /home/agent/.cache/omni && test "$6" = /home/agent/.local/state/omni && test "$NPM_CONFIG_STRICT_ALLOW_SCRIPTS" = true && test "$NPM_CONFIG_ALLOW_SCRIPTS" = @anthropic-ai/claude-code && test -z "${NPM_CONFIG_IGNORE_SCRIPTS-}" || exit 94' \
@@ -948,6 +949,17 @@ run_container '
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent
+  mkdir /tmp/foreign-npm-root
+  ln -s /tmp/foreign-npm-root /home/agent/.local
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test -L /home/agent/.local
 '
 
 run_container '

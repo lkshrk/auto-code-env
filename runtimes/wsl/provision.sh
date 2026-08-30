@@ -292,6 +292,9 @@ ensure_openhands_etc() {
 preflight_agent_npm_paths() {
     ensure_npm_global_config
     ensure_private_directory "$AGENT_PREFIX"
+    ensure_private_directory "$AGENT_BIN"
+    ensure_private_directory "${AGENT_PREFIX}/lib"
+    ensure_private_directory "${AGENT_PREFIX}/lib/node_modules"
     ensure_private_directory /home/agent/.cache
     ensure_private_directory "$NPM_CACHE"
     assert_agent_npm_ancestors false

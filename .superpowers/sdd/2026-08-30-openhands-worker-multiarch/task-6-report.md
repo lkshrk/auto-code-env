@@ -50,3 +50,17 @@ Follow-up static checks (`bash -n`, ShellCheck, JSON validation, runtime suite,
 and `git diff --check`) pass. The full fixture was rerun through all expected
 negative security cases; native BuildKit remains blocked by local Docker
 storage exhaustion.
+
+Controller verification after `bef885f`: persistent full
+`bash runtimes/wsl/tests/provision.Tests.sh` exited `0`.
+
+## Follow-up — npm scan skeleton
+
+Native arm64 smoke confirmed the root Omni group, including the exact rbw
+package, then failed before agent installation because npm's bulk scan needs
+the global prefix skeleton to exist. The fixture first required that skeleton
+and failed at the missing `~/.local/bin` path. `preflight_agent_npm_paths` now
+creates only the agent-owned, mode-0700 `bin`, `lib`, and `lib/node_modules`
+directories before agent Omni sync; package scope directories remain created by
+npm. A pre-existing `.local` symlink is rejected before Omni runs. Bash syntax,
+ShellCheck, runtime validation, and diff checks pass.
