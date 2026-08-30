@@ -113,6 +113,12 @@ if [ "$1" = "--help" ]; then
 fi
 
 if [ "$1" = "--install" ]; then
+    if [ "$FAKE_WSL_REQUIRE_STAGED_IMAGE" = "1" ]; then
+        case "$3" in
+            */openhands-worker-*) test -f "$3" || exit 98 ;;
+            *) exit 98 ;;
+        esac
+    fi
     exit "${FAKE_WSL_INSTALL_EXIT:-0}"
 fi
 
@@ -217,6 +223,7 @@ function Set-FakeWslScenario {
     $env:FAKE_WSL_STAGE4B_VERIFY_EXIT = "0"
     $env:FAKE_WSL_STAGE4C_FAIL_CALL = "0"
     $env:FAKE_WSL_STAGE4C_FAIL_EXIT = "1"
+    $env:FAKE_WSL_REQUIRE_STAGED_IMAGE = "0"
 }
 
 function Get-FakeWslCalls {
@@ -375,13 +382,26 @@ try {
     Assert-ThrowsMessage -Action { Assert-WslDistributionIdentity -WslPath "Invoke-ThrowingTerminateWsl" -Name "openhands-worker" } -Patterns @("Simulated termination exception") -Message "thrown termination failure should be fatal after a successful identity check"
     Assert-Equal "amd64" (Get-WslArtifactArchitecture -Architecture "AMD64") "AMD64 artifact architecture"
     Assert-Equal "arm64" (Get-WslArtifactArchitecture -Architecture "ARM64") "ARM64 artifact architecture"
+    Assert-Equal "amd64" (Get-WslArtifactArchitecture -Architecture "ARM64" -Wow64Architecture "AMD64") "WOW64 architecture should take precedence"
+    Assert-Equal "arm64" (Get-WslArtifactArchitecture -Architecture "ARM64" -Wow64Architecture "") "empty WOW64 architecture should fall back"
+    Assert-Equal "arm64" (Get-WslArtifactArchitecture -Architecture "" -Wow64Architecture "" -RuntimeArchitecture "ARM64") "runtime architecture should be the final fallback"
     Assert-Throws { Get-WslArtifactArchitecture -Architecture "x86" } "unsupported architecture should fail"
 
     $imagePath = Join-Path $testRoot "openhands-worker-1.2.3-amd64.wsl"
     [System.IO.File]::WriteAllText($imagePath, "image", [System.Text.UTF8Encoding]::new($false))
     $imageHash = (Get-FileHash -LiteralPath $imagePath -Algorithm SHA256).Hash
-    Assert-Equal $imagePath (Resolve-WslImage -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64").Path "local image should resolve"
-    Assert-Equal $imagePath (Resolve-WslImage -ImagePath $imagePath -ImageSha256 $imageHash.ToLowerInvariant() -Architecture "AMD64").Path "lowercase image hash should resolve"
+    $localImage = Resolve-WslImage -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64"
+    Assert-Match 'openhands-worker-[0-9a-f]+$' $localImage.TemporaryDirectory "local image should use an installer-owned temporary directory"
+    Assert-NotMatch ([regex]::Escape($imagePath)) $localImage.Path "local image should be staged"
+    Assert-Equal $true $localImage.Stream.CanRead "staged image stream should remain open"
+    if ($env:OS -eq "Windows_NT") {
+        Assert-Throws { [System.IO.File]::Open($localImage.Path, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::Read) } "staged image handle should deny writers"
+    }
+    $localImage.Dispose()
+    Remove-Item -LiteralPath $localImage.TemporaryDirectory -Recurse -Force
+    $lowercaseImage = Resolve-WslImage -ImagePath $imagePath -ImageSha256 $imageHash.ToLowerInvariant() -Architecture "AMD64"
+    $lowercaseImage.Dispose()
+    Remove-Item -LiteralPath $lowercaseImage.TemporaryDirectory -Recurse -Force
     function Invoke-WebRequest {
         param([Uri]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
 
@@ -390,12 +410,16 @@ try {
     $downloadedImage = Resolve-WslImage -ImageUri "https://example.invalid/openhands-worker-1.2.3-amd64.wsl" -ImageSha256 $imageHash -Architecture "AMD64"
     Assert-Match 'openhands-worker-[0-9a-f]+$' $downloadedImage.TemporaryDirectory "HTTPS image should use an installer-owned temporary directory"
     Assert-Equal $true (Test-Path -LiteralPath $downloadedImage.Path -PathType Leaf) "HTTPS image should download"
+    $downloadedImage.Dispose()
     Remove-Item -LiteralPath $downloadedImage.TemporaryDirectory -Recurse -Force
     Assert-Throws { Resolve-WslImage -ImagePath $imagePath -ImageUri "https://example.invalid/openhands-worker-1.2.3-amd64.wsl" -ImageSha256 $imageHash -Architecture "AMD64" } "both artifact sources should fail"
     Assert-Throws { Resolve-WslImage -ImageSha256 $imageHash -Architecture "AMD64" } "missing artifact source should fail"
     Assert-Throws { Resolve-WslImage -ImagePath $imagePath -ImageSha256 "not-a-hash" -Architecture "AMD64" } "invalid image hash should fail"
     Assert-Throws { Resolve-WslImage -ImageUri "http://example.invalid/openhands-worker-1.2.3-amd64.wsl" -ImageSha256 $imageHash -Architecture "AMD64" } "non-HTTPS image URI should fail"
+    $temporaryImagesBefore = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter "openhands-worker-*" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
     Assert-Throws { Resolve-WslImage -ImagePath $imagePath -ImageSha256 ("0" * 64) -Architecture "AMD64" } "wrong image hash should fail"
+    $temporaryImagesAfter = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter "openhands-worker-*" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    Assert-Equal ($temporaryImagesBefore -join "`n") ($temporaryImagesAfter -join "`n") "failed image resolution should clean its temporary directory"
     Assert-Throws { Resolve-WslImage -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "ARM64" } "wrong image architecture should fail"
 
     Set-FakeWslScenario -Root $testRoot -Before "openhands-worker" -Help "--name-suffix <Name>"
@@ -406,9 +430,14 @@ try {
     Assert-Equal $false (Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker") "existing target should not require artifact arguments"
     Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "existing target should not resolve an artifact"
 
+    Set-FakeWslScenario -Root $testRoot
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 ("0" * 64) -Architecture "AMD64" } "wrong hash should fail before import"
+    Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "wrong hash should not invoke WSL import"
+
     Set-FakeWslScenario -Root $testRoot -Before "docker-desktop" -After "docker-desktop`nopenhands-worker"
+    $env:FAKE_WSL_REQUIRE_STAGED_IMAGE = "1"
     Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64") "new target should import and verify"
-    Assert-Equal "--list --quiet`n--install --from-file $imagePath --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "from-file install call order"
+    Assert-Match '(?s)^--list --quiet\n--install --from-file .+openhands-worker-1\.2\.3-amd64\.wsl --name openhands-worker --no-launch\n--list --quiet\n$' (Get-FakeWslCalls) "from-file install call order"
 
     Set-FakeWslScenario -Root $testRoot -ListExit 1
     Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64" } "nonzero list should fail"
@@ -416,11 +445,11 @@ try {
 
     Set-FakeWslScenario -Root $testRoot -InstallExit 1
     Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64" } "nonzero import should fail"
-    Assert-Equal "--list --quiet`n--install --from-file $imagePath --name openhands-worker --no-launch`n" (Get-FakeWslCalls) "nonzero import calls"
+    Assert-Match '(?s)^--list --quiet\n--install --from-file .+openhands-worker-1\.2\.3-amd64\.wsl --name openhands-worker --no-launch\n$' (Get-FakeWslCalls) "nonzero import calls"
 
     Set-FakeWslScenario -Root $testRoot -After "docker-desktop"
     Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64" } "missing post-import target should fail"
-    Assert-Equal "--list --quiet`n--install --from-file $imagePath --name openhands-worker --no-launch`n--list --quiet`n" (Get-FakeWslCalls) "missing post-import target calls"
+    Assert-Match '(?s)^--list --quiet\n--install --from-file .+openhands-worker-1\.2\.3-amd64\.wsl --name openhands-worker --no-launch\n--list --quiet\n$' (Get-FakeWslCalls) "missing post-import target calls"
 
     $configPath = Join-Path $testRoot ".wslconfig"
     $original = "[wsl2]`nfirewall=true`nlocalhostForwarding=false`n"

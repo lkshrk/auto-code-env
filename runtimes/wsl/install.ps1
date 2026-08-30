@@ -220,9 +220,14 @@ function Assert-WslDistributionIdentity {
 }
 
 function Get-WslArtifactArchitecture {
-    param([Parameter(Mandatory)][string]$Architecture)
+    param(
+        [string]$Architecture = $env:PROCESSOR_ARCHITECTURE,
+        [string]$Wow64Architecture = $env:PROCESSOR_ARCHITEW6432,
+        [string]$RuntimeArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    )
 
-    switch ($Architecture.ToUpperInvariant()) {
+    $detectedArchitecture = if (-not [string]::IsNullOrWhiteSpace($Wow64Architecture)) { $Wow64Architecture } elseif (-not [string]::IsNullOrWhiteSpace($Architecture)) { $Architecture } else { $RuntimeArchitecture }
+    switch ($detectedArchitecture.ToUpperInvariant()) {
         "AMD64" { return "amd64" }
         "ARM64" { return "arm64" }
         default { throw "Unsupported Windows architecture '$Architecture'." }
@@ -247,48 +252,64 @@ function Resolve-WslImage {
     }
 
     $artifactArchitecture = Get-WslArtifactArchitecture -Architecture $Architecture
-    $temporaryDirectory = $null
     if ($hasUri) {
         $uri = $null
         if (-not [Uri]::TryCreate($ImageUri, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -cne "https") {
             throw "ImageUri must be an absolute HTTPS URI."
         }
         $leaf = [IO.Path]::GetFileName($uri.AbsolutePath)
-        $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("openhands-worker-" + [Guid]::NewGuid().ToString("N"))
-        New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
-        $resolvedPath = Join-Path $temporaryDirectory $leaf
-        try {
-            Invoke-WebRequest -Uri $uri -OutFile $resolvedPath -UseBasicParsing
-        }
-        catch {
-            Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
-            throw
-        }
     }
     else {
-        if (-not (Test-Path -LiteralPath $ImagePath -PathType Leaf)) {
-            throw "ImagePath '$ImagePath' must be a file."
+        $source = Get-Item -LiteralPath $ImagePath -Force -ErrorAction Stop
+        if (-not ($source -is [IO.FileInfo]) -or ($source.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "ImagePath '$ImagePath' must be a non-reparse regular file."
         }
-        $resolvedPath = (Get-Item -LiteralPath $ImagePath).FullName
-        $leaf = Split-Path -Leaf $resolvedPath
+        $leaf = $source.Name
     }
 
     if ($leaf -notmatch ("-" + [regex]::Escape($artifactArchitecture) + '\.wsl$')) {
-        if ($temporaryDirectory) {
-            Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
-        }
         throw "WSL image '$leaf' does not match architecture '$artifactArchitecture'."
     }
 
-    $actualHash = (Get-FileHash -LiteralPath $resolvedPath -Algorithm SHA256).Hash
-    if ($actualHash -ine $ImageSha256) {
-        if ($temporaryDirectory) {
-            Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("openhands-worker-" + [Guid]::NewGuid().ToString("N"))
+    $resolvedPath = Join-Path $temporaryDirectory $leaf
+    $stream = $null
+    try {
+        New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+        if ($hasUri) {
+            Invoke-WebRequest -Uri $uri -OutFile $resolvedPath -UseBasicParsing
         }
-        throw "WSL image SHA-256 does not match ImageSha256."
-    }
+        else {
+            [IO.File]::Copy($source.FullName, $resolvedPath, $false)
+        }
 
-    return [pscustomobject]@{ Path = $resolvedPath; TemporaryDirectory = $temporaryDirectory }
+        $staged = Get-Item -LiteralPath $resolvedPath -Force -ErrorAction Stop
+        if (-not ($staged -is [IO.FileInfo]) -or ($staged.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $staged.Name -cne $leaf) {
+            throw "Staged WSL image '$resolvedPath' must be a regular file."
+        }
+        $stream = [IO.File]::Open($staged.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            $actualHash = ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "")
+        }
+        finally {
+            $sha256.Dispose()
+        }
+        if ($actualHash -ine $ImageSha256) {
+            throw "WSL image SHA-256 does not match ImageSha256."
+        }
+
+        $image = [pscustomobject]@{ Path = $staged.FullName; TemporaryDirectory = $temporaryDirectory; Stream = $stream }
+        $image | Add-Member -MemberType ScriptMethod -Name Dispose -Value { $this.Stream.Dispose() }
+        return $image
+    }
+    catch {
+        if ($stream) {
+            $stream.Dispose()
+        }
+        Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
 }
 
 function Install-WslDistribution {
@@ -326,6 +347,9 @@ function Install-WslDistribution {
         }
     }
     finally {
+        if ($image) {
+            $image.Dispose()
+        }
         if ($image.TemporaryDirectory) {
             Remove-Item -LiteralPath $image.TemporaryDirectory -Recurse -Force -ErrorAction SilentlyContinue
         }

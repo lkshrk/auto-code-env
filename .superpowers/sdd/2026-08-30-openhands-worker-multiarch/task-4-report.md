@@ -24,3 +24,10 @@ Implemented verified architecture-specific WSL image imports.
 ## Limitations
 
 - Validation uses the pinned Linux PowerShell container; no Windows host or real WSL import was available.
+
+## Round 1 review fixes
+
+- Local and HTTPS artifacts are both staged into an installer-owned temporary directory.
+- The staged image stays open with read-only sharing while its SHA-256 is calculated and through WSL import; cleanup disposes the handle before removing only the owned directory.
+- WOW64 architecture now takes precedence via `PROCESSOR_ARCHITEW6432`, then process architecture, then `RuntimeInformation`.
+- Tests cover staged-path lifecycle, Windows-only write denial, cleanup on failed hashing, and no import after a hash mismatch.
