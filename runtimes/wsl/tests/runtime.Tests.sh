@@ -35,7 +35,7 @@ grep -F 'ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348e
 grep -F "ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash" "$containerfile"
 grep -F "ubuntu:x:1000:" "$containerfile"
 grep -F '/usr/sbin/userdel -r ubuntu' "$containerfile"
-grep -F '/usr/sbin/groupdel ubuntu' "$containerfile"
+if grep -F '/usr/sbin/groupdel ubuntu' "$containerfile"; then exit 1; fi
 grep -F '! -e /home/ubuntu' "$containerfile"
 grep -F 'OPENHANDS_IMAGE_BUILD=1' "$containerfile"
 grep -F 'openhands-agent-server==1.44.0' "$containerfile"
@@ -128,6 +128,20 @@ if grep -F 'command: "uvx"' "$fixture"; then exit 1; fi
 if sed -n '/else if (version)/,/} else {/p' "$fixture" | grep -F 'uvxArgs.push('; then exit 1; fi
 if sed -n '/} else {/,/return {/p' "$fixture" | grep -F 'uvxArgs.push('; then exit 1; fi
 if node "$canvas_patch" "$fixture"; then exit 1; fi
+
+docker run --rm ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b bash -euo pipefail -c '
+  test "$(getent passwd ubuntu)" = "ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash"
+  test "$(getent group ubuntu)" = "ubuntu:x:1000:"
+  userdel -r ubuntu
+  ! getent passwd ubuntu
+  ! getent group ubuntu
+  ! test -e /home/ubuntu
+  useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent
+  test "$(id -u agent)" = 1000
+  test "$(id -g agent)" = 1000
+  test "$(id -nG agent)" = agent
+  test "$(getent passwd agent | cut -d: -f6,7)" = /home/agent:/bin/bash
+'
 
 docker run --rm -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c '
   credential_command() {
