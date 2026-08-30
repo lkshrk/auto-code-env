@@ -498,13 +498,16 @@ write_node_manifest() {
 
 node_manifest_digest() {
     local manifest=$1
+    local digest
     local -a lines=()
 
     mapfile -t lines < "$manifest" || return 1
     if [ "${#lines[@]}" -ne 1 ] || [[ ! ${lines[0]} =~ ^v2\ sha256\ ([0-9a-f]{64})$ ]]; then
         return 1
     fi
-    printf '%s\n' "${BASH_REMATCH[1]}"
+    digest=${BASH_REMATCH[1]}
+    /usr/bin/cmp -s "$manifest" <(printf 'v2 sha256 %s\n' "$digest") || return 1
+    printf '%s\n' "$digest"
 }
 
 replace_node_manifest() {

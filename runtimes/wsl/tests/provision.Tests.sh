@@ -444,6 +444,16 @@ run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
   node_home=/opt/openhands/node-v24.20.0-linux-x64
+  cp "$node_home/.openhands-manifest" /tmp/manifest.expected
+  /usr/bin/truncate -s -1 "$node_home/.openhands-manifest"
+  bash /src/runtimes/wsl/provision.sh
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
   printf "arbitrary non-v2 marker\n" > "$node_home/.openhands-manifest"
   bash /src/runtimes/wsl/provision.sh
   marker_digest=$(/usr/bin/awk "NR == 1 && NF == 3 && \$1 == \"v2\" && \$2 == \"sha256\" && \$3 ~ /^[0-9a-f]{64}$/ { print \$3; next } { exit 1 } END { if (NR != 1) exit 1 }" "$node_home/.openhands-manifest")
