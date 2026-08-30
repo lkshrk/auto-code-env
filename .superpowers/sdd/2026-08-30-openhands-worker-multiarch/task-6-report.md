@@ -88,6 +88,12 @@ The stale symlink fixture makes its parent agent-owned so recovery is reached,
 and the interruption fixture requires the provisioning process exit status to
 be exactly `143`; an ancestor-lookup fallback exit (`99`) cannot pass.
 
+Controller verification after `ea128b4`: persistent full
+`bash runtimes/wsl/tests/provision.Tests.sh` exited `0`. Native arm64 smoke
+before `79656fe` exited `0`; after that commit it reached real Omni agent npm
+installation before Docker ran out of storage. The latter is an environment
+limit, not a worker failure.
+
 Controller verification after `bef885f` and `c08cb32`: native `linux/arm64`
 smoke target with cache-only inputs exited `0`. Real Omni installed the root
 git/nginx/python/exact-rbw group, then Canvas/ACP/Codex with lifecycle scripts
