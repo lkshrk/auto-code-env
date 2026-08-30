@@ -41,3 +41,8 @@ Implemented verified architecture-specific WSL image imports.
 
 - Removed unreachable Store-install discovery and all dynamic WSL bootstrap asset-transfer/provisioning helpers, tests, and fake-WSL support.
 - The installer source contract now rejects their reintroduction; retained coverage is limited to host networking, verified artifact import, and distribution identity.
+
+## Cleanup follow-up
+
+- Removed unused fake-Wsl help emulation and its scenario parameters.
+- Source contract now rejects Store-install help/distribution fallback signatures and bootstrap paths while permitting only `--install --from-file`.

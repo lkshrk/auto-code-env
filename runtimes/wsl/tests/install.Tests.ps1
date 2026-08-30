@@ -111,16 +111,6 @@ if [ "$1" = "--list" ] && [ "$2" = "--quiet" ]; then
     exit "${FAKE_WSL_LIST_EXIT:-0}"
 fi
 
-if [ "$1" = "--help" ]; then
-    if [ "$FAKE_WSL_HELP_NUL" = "1" ]; then
-        printf '%s' "$FAKE_WSL_HELP" | awk '{ for (i = 1; i <= length($0); i++) { printf "%s%c", substr($0, i, 1), 0 } }'
-        printf '\n'
-    else
-        printf '%s\n' "$FAKE_WSL_HELP"
-    fi
-    exit "${FAKE_WSL_HELP_EXIT:-0}"
-fi
-
 if [ "$1" = "--install" ]; then
     if [ "$FAKE_WSL_REQUIRE_STAGED_IMAGE" = "1" ]; then
         case "$3" in
@@ -169,11 +159,8 @@ function Set-FakeWslScenario {
         [string]$Root,
         [string]$Before = "",
         [string]$After = "",
-        [string]$Help = "--name <Name>",
-        [int]$HelpExit = 0,
         [int]$ListExit = 0,
         [int]$InstallExit = 0,
-        [bool]$NulHelp = $false,
         [bool]$EmptyInitialList = $false,
         [string]$Id = "0",
         [string]$Release = "ID=ubuntu`nVERSION_ID=`"26.04`"",
@@ -192,11 +179,8 @@ function Set-FakeWslScenario {
     Remove-Item -LiteralPath $env:FAKE_WSL_LIST_COUNT -Force -ErrorAction SilentlyContinue
     $env:FAKE_WSL_LIST_BEFORE = $Before
     $env:FAKE_WSL_LIST_AFTER = $After
-    $env:FAKE_WSL_HELP = $Help
-    $env:FAKE_WSL_HELP_EXIT = "$HelpExit"
     $env:FAKE_WSL_LIST_EXIT = "$ListExit"
     $env:FAKE_WSL_INSTALL_EXIT = "$InstallExit"
-    $env:FAKE_WSL_HELP_NUL = if ($NulHelp) { "1" } else { "0" }
     $env:FAKE_WSL_EMPTY_INITIAL_LIST = if ($EmptyInitialList) { "1" } else { "0" }
     $env:FAKE_WSL_ID = $Id
     $env:FAKE_WSL_RELEASE = $Release
@@ -363,7 +347,7 @@ try {
     Assert-Equal ($temporaryImagesBefore -join "`n") ($temporaryImagesAfter -join "`n") "failed image resolution should clean its temporary directory"
     Assert-Throws { Resolve-WslImage -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "ARM64" } "wrong image architecture should fail"
 
-    Set-FakeWslScenario -Root $testRoot -Before "openhands-worker" -Help "--name-suffix <Name>"
+    Set-FakeWslScenario -Root $testRoot -Before "openhands-worker"
     Assert-Equal $false (Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 "not-a-hash" -Architecture "AMD64") "existing target should be a no-op before artifact validation"
     Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "existing target should only be listed"
 
@@ -515,7 +499,7 @@ try {
     Assert-NotMatch 'IsWindowsVersionAtLeast|File\]::Move\([^\r\n]+,\s*[^\r\n]+,\s*\$true\)|::new\(' $source "Windows PowerShell 5.1 compatibility"
     Assert-NotMatch '\$env:SystemRoot' $source "trusted Windows directory source"
     Assert-Match 'GetFolderPath\s*\(' $source "trusted Windows directory API"
-    Assert-NotMatch 'Test-WslDistributionAvailable|Test-WslNamedInstallSupported|Get-WslBootstrapAsset|Invoke-WslBootstrapAssetTransfer|Invoke-WslBaseProvisioning|--list --online' $source "installer should not retain online discovery or dynamic provisioning"
+    Assert-NotMatch 'Test-WslDistributionAvailable|Test-WslNamedInstallSupported|Get-WslBootstrapAsset|Invoke-WslBootstrapAssetTransfer|Invoke-WslBaseProvisioning|--list --online|--help|--install --distribution|Ubuntu-26\.04|/root/openhands-bootstrap' $source "installer should not retain dynamic fallback paths"
 
     Write-Host "PASS: WSL mirrored networking configuration"
 }
