@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-openhands-worker-${{ github.ref_name }}
+  group: release-openhands-worker
   cancel-in-progress: false
 
 env:
@@ -117,8 +117,7 @@ jobs:
           merge-multiple: true
           path: release
 
-      - name: Verify artifacts and publish manifest
-        id: publish
+      - name: Verify artifacts and prepare draft release
         shell: bash
         run: |
           set -euo pipefail
@@ -126,6 +125,13 @@ jobs:
           [[ "$tag" == openhands-worker-v* ]]
           VERSION=${tag#openhands-worker-v}
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          tag_commit=$(git ls-remote --tags origin "refs/tags/$tag" | awk -v direct="refs/tags/$tag" -v peeled="refs/tags/$tag^{}" '
+            $2 == direct { direct_oid = $1 }
+            $2 == peeled { peeled_oid = $1 }
+            END { print peeled_oid != "" ? peeled_oid : direct_oid }
+          ')
+          test -n "$tag_commit"
+          test "$tag_commit" = "$GITHUB_SHA"
           for arch in amd64 arm64; do
             test -f "release/openhands-worker-${VERSION}-${arch}.wsl"
             test -f "release/openhands-worker-${VERSION}-${arch}.wsl.sha256"
@@ -134,34 +140,92 @@ jobs:
           cat release/openhands-worker-"${VERSION}"-amd64.wsl.sha256 \
             release/openhands-worker-"${VERSION}"-arm64.wsl.sha256 > release/checksums.txt
           (cd release && sha256sum -c checksums.txt)
-          if docker buildx imagetools inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
-            echo "::error::$IMAGE:$VERSION already exists"
+          release_json="$RUNNER_TEMP/release.json"
+          release_error="$RUNNER_TEMP/release-error.log"
+          if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json" 2> "$release_error"; then
+            if ! grep -Eqi 'HTTP 404|not found' "$release_error"; then
+              cat "$release_error" >&2
+              exit 1
+            fi
+            gh release create "$tag" \
+              --verify-tag \
+              --draft \
+              --title "OpenHands worker $VERSION" \
+              --generate-notes
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json"
+          fi
+          test "$(jq -r '.target_commitish' "$release_json")" = "$GITHUB_SHA"
+          release_draft=$(jq -r '.draft' "$release_json")
+          case "$release_draft" in
+            true)
+              gh release upload "$tag" --clobber \
+                release/openhands-worker-"$VERSION"-amd64.wsl \
+                release/openhands-worker-"$VERSION"-arm64.wsl \
+                release/checksums.txt
+              ;;
+            false)
+              for asset in \
+                "openhands-worker-$VERSION-amd64.wsl" \
+                "openhands-worker-$VERSION-arm64.wsl" \
+                checksums.txt; do
+                jq -e --arg asset "$asset" '.assets[] | select(.name == $asset)' "$release_json" >/dev/null
+              done
+              ;;
+            *)
+              echo "::error::Unexpected release draft state: $release_draft"
+              exit 1
+              ;;
+          esac
+          {
+            echo "VERSION=$VERSION"
+            echo "RELEASE_TAG=$tag"
+            echo "RELEASE_IS_DRAFT=$release_draft"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify or create immutable manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/manifest.json"
+          inspect_error="$RUNNER_TEMP/manifest-inspect-error.log"
+          amd64_digest=$(< release/image-digest-amd64.txt)
+          arm64_digest=$(< release/image-digest-arm64.txt)
+          verify_manifest() {
+            jq -e --arg amd64 "$amd64_digest" --arg arm64 "$arm64_digest" '
+              [(.manifests // [])[] | select(
+                .platform.os == "linux" and
+                (.platform.architecture == "amd64" or .platform.architecture == "arm64")
+              )] as $platforms |
+              $platforms | length == 2 and
+              any($platforms[]; .platform.architecture == "amd64" and .digest == $amd64) and
+              any($platforms[]; .platform.architecture == "arm64" and .digest == $arm64)
+            ' "$manifest" >/dev/null
+          }
+          if docker buildx imagetools inspect --raw "$IMAGE:$VERSION" > "$manifest" 2> "$inspect_error"; then
+            verify_manifest
+            exit 0
+          fi
+          if ! grep -Eqi 'manifest unknown|not found|HTTP 404|404' "$inspect_error"; then
+            cat "$inspect_error" >&2
             exit 1
           fi
           docker buildx imagetools create \
             --tag "$IMAGE:$VERSION" \
-            "$IMAGE@$(< release/image-digest-amd64.txt)" \
-            "$IMAGE@$(< release/image-digest-arm64.txt)"
-          {
-            echo "version=$VERSION"
-            echo "release_tag=$tag"
-          } >> "$GITHUB_OUTPUT"
+            "$IMAGE@$amd64_digest" \
+            "$IMAGE@$arm64_digest"
+          docker buildx imagetools inspect --raw "$IMAGE:$VERSION" > "$manifest"
+          verify_manifest
 
-      - name: Publish GitHub release
+      - name: Publish verified draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.publish.outputs.release_tag }}
-          VERSION: ${{ steps.publish.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::GitHub release $RELEASE_TAG already exists"
+          tag=$RELEASE_TAG
+          if test "$RELEASE_IS_DRAFT" = true; then
+            gh release edit "$tag" --draft=false
+          elif test "$RELEASE_IS_DRAFT" != false; then
+            echo "::error::Unexpected release draft state: $RELEASE_IS_DRAFT"
             exit 1
           fi
-          gh release create "$RELEASE_TAG" \
-            --title "OpenHands worker $VERSION" \
-            --generate-notes \
-            release/openhands-worker-"$VERSION"-amd64.wsl \
-            release/openhands-worker-"$VERSION"-arm64.wsl \
-            release/checksums.txt

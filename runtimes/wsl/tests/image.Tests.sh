@@ -16,42 +16,80 @@ for file in "$validation_workflow" "$release_workflow"; do
   test -f "$file"
 done
 
-python3 - "$validation_workflow" "$release_workflow" <<'PY'
-import re
-import sys
-from pathlib import Path
+ruby -ryaml - "$validation_workflow" "$release_workflow" <<'RUBY'
+def assert(condition, message)
+  abort(message) unless condition
+end
 
-validation, release = map(lambda path: Path(path).read_text(), sys.argv[1:])
+def workflow(path)
+  YAML.safe_load(File.read(path), aliases: true)
+end
 
-def require(text, pattern, message):
-    if not re.search(pattern, text, re.MULTILINE):
-        raise SystemExit(message)
+def trigger(document)
+  document['on'] || document[true]
+end
 
-require(validation, r'pull_request:', 'validation must run on pull requests')
-require(validation, r'runtimes/wsl/\*\*', 'validation must filter worker paths')
-require(validation, r'ubuntu-24\.04-arm', 'validation must use native arm64 runner')
-require(validation, r'linux/amd64', 'validation must validate amd64')
-require(validation, r'linux/arm64', 'validation must validate arm64')
-require(validation, r'type=cacheonly', 'validation must smoke cache-only build')
-require(validation, r'build-wsl\.sh', 'validation must export WSL artifact')
+def step(job, name)
+  job.fetch('steps').find { |item| item['name'] == name } || abort("missing step: #{name}")
+end
 
-require(release, r'openhands-worker-v\*', 'release must only run for worker tags')
-require(release, r'packages:\s*write', 'release must publish OCI packages')
-require(release, r'contents:\s*write', 'release must create GitHub release only in release job')
-require(release, r'push-by-digest=true', 'release must push architecture images by digest')
-require(release, r'--sbom=true', 'release must publish SBOM')
-require(release, r'--provenance=mode=max', 'release must publish provenance')
-require(release, r'openhands-worker-\$\{VERSION\}-\$\{\{ matrix\.arch \}\}\.wsl', 'release must preserve architecture WSL filenames')
-require(release, r'checksums\.txt', 'release must publish combined checksums')
-require(release, r'imagetools create', 'release must create immutable multi-arch manifest')
-require(release, r'gh release create', 'release must publish WSL artifacts')
-if ':latest' in release:
-    raise SystemExit('release must not publish a mutable latest tag')
-for workflow in (validation, release):
-    for action in re.findall(r'^\s*uses:\s+[^@\s]+@([^\s#]+)', workflow, re.MULTILINE):
-        if not re.fullmatch(r'[0-9a-f]{40}', action):
-            raise SystemExit(f'action ref must be immutable: {action}')
-PY
+def run(job, name)
+  step(job, name).fetch('run')
+end
+
+validation, release = ARGV.map { |path| workflow(path) }
+native_matrix = [
+  { 'arch' => 'amd64', 'platform' => 'linux/amd64', 'runner' => 'ubuntu-24.04' },
+  { 'arch' => 'arm64', 'platform' => 'linux/arm64', 'runner' => 'ubuntu-24.04-arm' }
+]
+
+assert(trigger(validation).dig('pull_request', 'paths') == [
+  '.github/workflows/validate-openhands-worker.yaml',
+  '.github/workflows/release-openhands-worker.yaml',
+  'runtimes/wsl/**'
+], 'validation paths must be worker-only')
+assert(validation['permissions'] == { 'contents' => 'read' }, 'validation permissions must be read-only')
+validate = validation.fetch('jobs').fetch('validate')
+assert(validate.dig('strategy', 'matrix', 'include') == native_matrix, 'validation must use exact native matrix')
+assert(validate.fetch('steps').none? { |item| item['uses'].to_s.include?('qemu') }, 'validation must not enable emulation')
+assert(run(validate, 'Smoke native image build').include?('type=cacheonly'), 'validation must smoke cache-only build')
+assert(run(validate, 'Export and inspect native WSL image').include?('build-wsl.sh'), 'validation must export WSL image')
+
+assert(trigger(release).dig('push', 'tags') == ['openhands-worker-v*'], 'release must only run for worker tags')
+assert(release['permissions'] == { 'contents' => 'read' }, 'release default permissions must be read-only')
+assert(release['concurrency'] == {
+  'group' => 'release-openhands-worker',
+  'cancel-in-progress' => false
+}, 'release must serialize all worker versions')
+build = release.fetch('jobs').fetch('build')
+publish = release.fetch('jobs').fetch('publish')
+assert(build['permissions'] == { 'contents' => 'read', 'packages' => 'write' }, 'build must have only package publishing permission')
+assert(publish['permissions'] == { 'contents' => 'write', 'packages' => 'write' }, 'only publish job may write release contents')
+assert(build.dig('strategy', 'matrix', 'include') == native_matrix, 'release must use exact native matrix')
+assert(build.fetch('steps').none? { |item| item['uses'].to_s.include?('qemu') }, 'release must not enable emulation')
+build_run = run(build, 'Build architecture image and WSL artifact')
+assert(build_run.include?('push-by-digest=true'), 'release must push architecture images by digest')
+assert(build_run.include?('--sbom=true') && build_run.include?('--provenance=mode=max'), 'release must publish SBOM and provenance')
+upload = step(build, 'Upload architecture release inputs').fetch('with')
+assert(upload['name'] == 'worker-release-${{ matrix.arch }}', 'release artifact name must be architecture-scoped')
+assert(upload['path'].include?('${{ steps.build.outputs.artifact }}') && upload['path'].include?('image-digest-${{ matrix.arch }}.txt'), 'release must upload WSL files and digests')
+prepare = run(publish, 'Verify artifacts and prepare draft release')
+assert(prepare.include?('git ls-remote') && prepare.include?('GITHUB_SHA'), 'release must verify triggering tag target')
+assert(prepare.include?('gh release create "$tag"') && prepare.include?('--verify-tag') && prepare.include?('--draft'), 'release must create or reuse verified draft')
+assert(prepare.include?('gh release upload "$tag" --clobber'), 'draft asset upload must be idempotent')
+manifest = run(publish, 'Verify or create immutable manifest')
+assert(manifest.include?('imagetools inspect --raw') && manifest.include?('manifest unknown'), 'manifest lookup must distinguish absence from errors')
+assert(manifest.include?('--tag "$IMAGE:$VERSION"') && !manifest.include?(':latest'), 'manifest must use only immutable version tag')
+assert(manifest.include?('image-digest-amd64.txt') && manifest.include?('image-digest-arm64.txt'), 'manifest must contain exact child digests')
+assert((prepare + manifest).include?('sha256sum -c checksums.txt'), 'release must verify combined checksums')
+finalize = run(publish, 'Publish verified draft release')
+assert(finalize.include?('gh release edit "$tag" --draft=false'), 'only verified draft may be published')
+(validation.fetch('jobs').values + release.fetch('jobs').values).each do |job|
+  job.fetch('steps').map { |item| item['uses'] }.compact.each do |uses|
+    assert(uses.match?(%r{@[0-9a-f]{40}$}), "action ref must be immutable: #{uses}")
+  end
+end
+RUBY
 
 bake_json=$(VERSION=1.2.3 docker buildx bake -f "$bake_file" --print image wsl-amd64 wsl-arm64)
 printf '%s' "$bake_json" | jq -e '
