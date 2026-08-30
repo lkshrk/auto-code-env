@@ -106,13 +106,27 @@ Stage 4 copies `provision.sh` and `wsl.conf` as exact base64-encoded bytes into
 the root-owned `/root/openhands-bootstrap` directory. The Windows installer
 rejects missing, non-file, and reparse-point sources; verifies each transferred
 SHA-256 before root executes the provisioner; and never relies on `/mnt` or
-Windows interop after isolation is enabled. Its native WSL calls carry only a
-fixed single-line decoder and base64 tokens, not multiline shell programs. It restarts only
-`openhands-worker`, verifies the default `agent`, systemd PID 1, that the
-Windows drive is not mounted at `/mnt/c` (accepting only mountpoint status 32
-when that directory exists), empty `WSL_INTEROP`, absent WSLInterop binfmt
-registration, and the four private agent directories, then stops only
-that worker. Reruns reuse only safe root-owned bootstrap files.
+Windows interop after isolation is enabled. Each asset is split into ordered
+base64 chunks of at most 8192 characters, always on a four-character boundary,
+and sent through fixed-argument WSL calls. Those calls carry only the existing
+single-line decoder plus base64 shell-program and data tokens, never multiline
+shell programs or a whole large asset.
+
+Transfer initialization uses fixed per-asset encoded and decoded staging files
+beside the destination. It removes stale staging only when every collision is a
+root-owned regular file with the expected mode; symlink, type, ownership, and
+mode collisions fail untouched. Finalization decodes into the sibling temporary
+file, verifies the exact SHA-256, applies root ownership and the destination
+mode, then atomically renames it. Init, chunk, and finalize failures clean safe
+staging before retry. The installer is intentionally serial: one installer
+instance is the concurrency ceiling; add a remote `flock` only if concurrent
+installers become a real requirement.
+
+Stage 4 restarts only `openhands-worker`, verifies the default `agent`, systemd
+PID 1, that the Windows drive is not mounted at `/mnt/c` (accepting only
+mountpoint status 32 when that directory exists), empty `WSL_INTEROP`, absent
+WSLInterop binfmt registration, and the four private agent directories, then
+stops only that worker. Reruns reuse only safe root-owned bootstrap files.
 
 The provisioner is root-only and refuses any `WSL_DISTRO_NAME` other than
 `openhands-worker`. It idempotently creates the unprivileged `agent` user and

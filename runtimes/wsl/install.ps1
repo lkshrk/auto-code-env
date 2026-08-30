@@ -326,10 +326,17 @@ function Get-WslBootstrapAsset {
     }
 
     $bytes = [IO.File]::ReadAllBytes($item.FullName)
+    $base64 = [Convert]::ToBase64String($bytes)
+    $chunks = New-Object 'System.Collections.Generic.List[string]'
+    for ($offset = 0; $offset -lt $base64.Length; $offset += 8192) {
+        $length = [Math]::Min(8192, $base64.Length - $offset)
+        $chunks.Add($base64.Substring($offset, $length))
+    }
     $sha256 = [Security.Cryptography.SHA256]::Create()
     try {
         return [pscustomobject]@{
-            Base64 = [Convert]::ToBase64String($bytes)
+            Base64 = $base64
+            Chunks = [string[]]$chunks
             Sha256 = ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
         }
     }
@@ -349,36 +356,175 @@ function ConvertTo-WslShellProgramBase64 {
     return [Convert]::ToBase64String($encoding.GetBytes(($Program -replace "`r`n?", "`n")))
 }
 
-function Get-WslBaseProvisioningTransferCommand {
+function Get-WslBootstrapTransferInitCommand {
     return @'
 set -eu
 bootstrap=/root/openhands-bootstrap
+asset=$1
+case "$asset" in
+    provision.sh|wsl.conf) ;;
+    *) exit 1 ;;
+esac
 if [ -e "$bootstrap" ] || [ -L "$bootstrap" ]; then
-    [ ! -L "$bootstrap" ] && [ -d "$bootstrap" ] && [ "$(stat -c '%U:%G %a' "$bootstrap")" = 'root:root 700' ]
+    [ ! -L "$bootstrap" ] && [ -d "$bootstrap" ] && [ "$(stat -c '%U:%G %a' "$bootstrap")" = 'root:root 700' ] || exit 1
 else
     mkdir -m 0700 "$bootstrap"
 fi
-install_asset() {
-    payload=$1 expected=$2 destination=$3 mode=$4
-    encoded=$(mktemp "$bootstrap/.asset.XXXXXX")
-    temporary=$(mktemp "$bootstrap/.asset.XXXXXX")
-    trap 'rm -f "$encoded" "$temporary"' EXIT
-    printf '%s' "$payload" > "$encoded"
-    base64 -d "$encoded" > "$temporary"
-    set -- $(sha256sum "$temporary")
-    [ "$1" = "$expected" ]
-    if [ -e "$destination" ] || [ -L "$destination" ]; then
-        [ ! -L "$destination" ] && [ -f "$destination" ] && [ "$(stat -c '%U:%G %a' "$destination")" = "root:root $mode" ]
+encoded="$bootstrap/.$asset.base64.tmp"
+temporary="$bootstrap/.$asset.decoded.tmp"
+for path in "$encoded" "$temporary"; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        [ ! -L "$path" ] && [ -f "$path" ] && [ "$(stat -c '%U:%G %a' "$path")" = 'root:root 600' ] || exit 1
     fi
-    chown root:root "$temporary"
-    chmod "$mode" "$temporary"
-    mv -f "$temporary" "$destination"
-    rm -f "$encoded"
-    trap - EXIT
-}
-install_asset "$1" "$2" "$bootstrap/provision.sh" 700
-install_asset "$3" "$4" "$bootstrap/wsl.conf" 600
+done
+trap 'rm -f "$encoded" "$temporary"' EXIT
+rm -f "$encoded" "$temporary"
+(umask 077; : > "$encoded")
+chown root:root "$encoded"
+chmod 600 "$encoded"
+trap - EXIT
 '@
+}
+
+function Get-WslBootstrapTransferChunkCommand {
+    return @'
+set -eu
+bootstrap=/root/openhands-bootstrap
+asset=$1
+chunk=$2
+case "$asset" in
+    provision.sh|wsl.conf) ;;
+    *) exit 1 ;;
+esac
+[ ! -L "$bootstrap" ] && [ -d "$bootstrap" ] && [ "$(stat -c '%U:%G %a' "$bootstrap")" = 'root:root 700' ] || exit 1
+encoded="$bootstrap/.$asset.base64.tmp"
+temporary="$bootstrap/.$asset.decoded.tmp"
+[ ! -L "$encoded" ] && [ -f "$encoded" ] && [ "$(stat -c '%U:%G %a' "$encoded")" = 'root:root 600' ] || exit 1
+if [ -e "$temporary" ] || [ -L "$temporary" ]; then
+    [ ! -L "$temporary" ] && [ -f "$temporary" ] && [ "$(stat -c '%U:%G %a' "$temporary")" = 'root:root 600' ] || exit 1
+fi
+trap 'rm -f "$encoded" "$temporary"' EXIT
+[ "${#chunk}" -le 8192 ] && [ $(( ${#chunk} % 4 )) -eq 0 ] || exit 1
+case "$chunk" in
+    *[!A-Za-z0-9+/=]*) exit 1 ;;
+esac
+printf '%s' "$chunk" >> "$encoded"
+trap - EXIT
+'@
+}
+
+function Get-WslBootstrapTransferFinalizeCommand {
+    return @'
+set -eu
+bootstrap=/root/openhands-bootstrap
+asset=$1
+expected=$2
+case "$asset" in
+    provision.sh) mode=700 ;;
+    wsl.conf) mode=600 ;;
+    *) exit 1 ;;
+esac
+[ ! -L "$bootstrap" ] && [ -d "$bootstrap" ] && [ "$(stat -c '%U:%G %a' "$bootstrap")" = 'root:root 700' ] || exit 1
+encoded="$bootstrap/.$asset.base64.tmp"
+temporary="$bootstrap/.$asset.decoded.tmp"
+destination="$bootstrap/$asset"
+[ ! -L "$encoded" ] && [ -f "$encoded" ] && [ "$(stat -c '%U:%G %a' "$encoded")" = 'root:root 600' ] || exit 1
+if [ -e "$temporary" ] || [ -L "$temporary" ]; then
+    [ ! -L "$temporary" ] && [ -f "$temporary" ] && [ "$(stat -c '%U:%G %a' "$temporary")" = 'root:root 600' ] || exit 1
+fi
+if [ -e "$destination" ] || [ -L "$destination" ]; then
+    [ ! -L "$destination" ] && [ -f "$destination" ] && [ "$(stat -c '%U:%G %a' "$destination")" = "root:root $mode" ] || exit 1
+fi
+trap 'rm -f "$encoded" "$temporary"' EXIT
+rm -f "$temporary"
+(umask 077; base64 -d "$encoded" > "$temporary")
+set -- $(sha256sum "$temporary")
+[ "$1" = "$expected" ]
+chown root:root "$temporary"
+chmod "$mode" "$temporary"
+mv -f "$temporary" "$destination"
+rm -f "$encoded"
+trap - EXIT
+'@
+}
+
+function Get-WslBootstrapTransferCleanupCommand {
+    return @'
+set -eu
+bootstrap=/root/openhands-bootstrap
+asset=$1
+case "$asset" in
+    provision.sh|wsl.conf) ;;
+    *) exit 1 ;;
+esac
+if [ ! -e "$bootstrap" ] && [ ! -L "$bootstrap" ]; then
+    exit 0
+fi
+[ ! -L "$bootstrap" ] && [ -d "$bootstrap" ] && [ "$(stat -c '%U:%G %a' "$bootstrap")" = 'root:root 700' ] || exit 1
+encoded="$bootstrap/.$asset.base64.tmp"
+temporary="$bootstrap/.$asset.decoded.tmp"
+for path in "$encoded" "$temporary"; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        [ ! -L "$path" ] && [ -f "$path" ] && [ "$(stat -c '%U:%G %a' "$path")" = 'root:root 600' ] || exit 1
+    fi
+done
+rm -f "$encoded" "$temporary"
+'@
+}
+
+function Invoke-WslBootstrapAssetTransfer {
+    param(
+        [Parameter(Mandatory)][string]$WslPath,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$AssetName,
+        [Parameter(Mandatory)]$Asset
+    )
+
+    $wrapper = Get-WslShellProgramWrapper
+    $initProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBootstrapTransferInitCommand)
+    $chunkProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBootstrapTransferChunkCommand)
+    $finalizeProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBootstrapTransferFinalizeCommand)
+    $cleanupProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBootstrapTransferCleanupCommand)
+    $failure = $null
+    try {
+        & $WslPath --distribution $Name --user root --exec sh -ec $wrapper sh $initProgram $AssetName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to initialize bootstrap asset '$AssetName' in WSL distribution '$Name'."
+        }
+
+        for ($index = 0; $index -lt $Asset.Chunks.Count; $index++) {
+            & $WslPath --distribution $Name --user root --exec sh -ec $wrapper sh $chunkProgram $AssetName $Asset.Chunks[$index]
+            if ($LASTEXITCODE -ne 0) {
+                throw "Unable to transfer bootstrap asset '$AssetName' chunk $($index + 1) in WSL distribution '$Name'."
+            }
+        }
+
+        & $WslPath --distribution $Name --user root --exec sh -ec $wrapper sh $finalizeProgram $AssetName $Asset.Sha256
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to finalize bootstrap asset '$AssetName' in WSL distribution '$Name'."
+        }
+    }
+    catch {
+        $failure = $_
+    }
+
+    if ($failure) {
+        $cleanupFailure = $null
+        try {
+            & $WslPath --distribution $Name --user root --exec sh -ec $wrapper sh $cleanupProgram $AssetName
+            if ($LASTEXITCODE -ne 0) {
+                $cleanupFailure = "Unable to clean bootstrap asset '$AssetName' staging in WSL distribution '$Name'."
+            }
+        }
+        catch {
+            $cleanupFailure = $_.Exception.Message
+        }
+
+        if ($cleanupFailure) {
+            throw "$($failure.Exception.Message) $cleanupFailure"
+        }
+        throw $failure
+    }
 }
 
 function Get-WslBaseProvisioningVerificationCommand {
@@ -419,15 +565,16 @@ function Invoke-WslBaseProvisioning {
     $provision = Get-WslBootstrapAsset -Path $ProvisionPath
     $config = Get-WslBootstrapAsset -Path $ConfigPath
     $wrapper = Get-WslShellProgramWrapper
-    $transferProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBaseProvisioningTransferCommand)
     $verificationProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBaseProvisioningVerificationCommand)
 
     $failure = $null
     $terminationFailure = $null
     try {
-        & $WslPath --distribution $Name --user root --exec sh -ec $wrapper sh $transferProgram $provision.Base64 $provision.Sha256 $config.Base64 $config.Sha256
-        if ($LASTEXITCODE -ne 0) {
-            throw "Unable to transfer verified bootstrap assets to WSL distribution '$Name'."
+        foreach ($asset in @(
+            [pscustomobject]@{ Name = "provision.sh"; Value = $provision },
+            [pscustomobject]@{ Name = "wsl.conf"; Value = $config }
+        )) {
+            Invoke-WslBootstrapAssetTransfer -WslPath $WslPath -Name $Name -AssetName $asset.Name -Asset $asset.Value
         }
 
         & $WslPath --distribution $Name --user root --exec /bin/bash /root/openhands-bootstrap/provision.sh
