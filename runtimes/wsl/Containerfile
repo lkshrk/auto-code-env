@@ -25,3 +25,9 @@ COPY --chown=root:root runtimes/wsl/wsl.conf /etc/wsl.conf
 COPY --chown=root:root runtimes/wsl/wsl-distribution.conf /etc/wsl-distribution.conf
 COPY --chown=root:root runtimes/wsl/runtime/agent-canvas.service /etc/systemd/system/agent-canvas.service
 COPY --chown=root:root runtimes/wsl/runtime/nginx-site.conf /etc/nginx/conf.d/openhands.conf
+RUN /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update && \
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends systemd systemd-sysv && \
+    /usr/bin/rm -f /etc/systemd/system/multi-user.target.wants/nginx.service && \
+    test -x /sbin/init && test -x /usr/bin/systemctl && \
+    test ! -e /etc/systemd/system/multi-user.target.wants/nginx.service && \
+    /usr/bin/rm -rf /var/lib/apt/lists/*

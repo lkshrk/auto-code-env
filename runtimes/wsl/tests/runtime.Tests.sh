@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
@@ -15,15 +16,26 @@ done
 grep -Fx 'User=agent' "$unit"
 grep -Fx 'LoadCredential=local_backend_api_key' "$unit"
 grep -F 'CREDENTIALS_DIRECTORY' "$unit"
+grep -F 'ExecStart=/bin/bash -eu -c' "$unit"
+grep -F 'test -r "$$credential"' "$unit"
+grep -F 'test -n "$$LOCAL_BACKEND_API_KEY"' "$unit"
 grep -F '/home/agent/.local/bin/agent-canvas --public' "$unit"
 grep -F 'listen 443 ssl;' "$nginx_site"
 grep -F 'proxy_pass http://127.0.0.1:8000;' "$nginx_site"
+grep -F 'proxy_set_header Upgrade $http_upgrade;' "$nginx_site"
+grep -F 'proxy_set_header Connection "upgrade";' "$nginx_site"
+grep -F 'proxy_read_timeout 86400;' "$nginx_site"
+grep -F 'proxy_send_timeout 86400;' "$nginx_site"
 grep -Fx 'defaultUid = 1000' "$distro_config"
 grep -Fx 'defaultName = openhands-worker' "$distro_config"
 grep -F 'ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b' "$containerfile"
 grep -F 'OPENHANDS_IMAGE_BUILD=1' "$containerfile"
 grep -F 'openhands-agent-server==1.44.0' "$containerfile"
 grep -F 'openhands-automation==1.9.0' "$containerfile"
+grep -F 'systemd-sysv' "$containerfile"
+grep -F 'test -x /sbin/init' "$containerfile"
+grep -F 'test -x /usr/bin/systemctl' "$containerfile"
+grep -F 'test ! -e /etc/systemd/system/multi-user.target.wants/nginx.service' "$containerfile"
 grep -Fx 'EXPOSE 443' "$containerfile"
 
 docker run --rm -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c '
@@ -52,4 +64,19 @@ docker run --rm -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c '
   test "$(cat /tmp/canvas-key)" = file-secret
   test -z "$output"
   test ! -e /tmp/api-key-output
+'
+
+docker run --rm -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c '
+  credential_command() {
+    credential="$CREDENTIALS_DIRECTORY/local_backend_api_key"
+    test -r "$credential"
+    LOCAL_BACKEND_API_KEY=$(<"$credential")
+    test -n "$LOCAL_BACKEND_API_KEY"
+  }
+  credentials=$(mktemp -d)
+  if CREDENTIALS_DIRECTORY="$credentials" credential_command; then exit 1; fi
+  : > "$credentials/local_backend_api_key"
+  if CREDENTIALS_DIRECTORY="$credentials" credential_command; then exit 1; fi
+  printf key > "$credentials/local_backend_api_key"
+  CREDENTIALS_DIRECTORY="$credentials" credential_command
 '
