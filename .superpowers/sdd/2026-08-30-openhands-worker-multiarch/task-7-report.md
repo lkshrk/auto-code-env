@@ -29,7 +29,21 @@ Added README contract assertions to `image.Tests.sh`. The first run failed:
   logging did not yield a completed status in this runner; native amd64 remains
   CI-only on this arm64 host. Do not treat either as release proof.
 
+## Fix round 1
+
+- Corrected local checksum verification to run from artifact directory.
+- Clarified existing-distro no-op follows host mirrored-network reconciliation,
+  which may still update `.wslconfig` and call `wsl --shutdown`.
+- Documented exact TLS file ownership/modes and systemd credential source:
+  `/etc/credstore/local_backend_api_key`, `root:root`, `0600`, loaded through
+  `LoadCredential=local_backend_api_key`.
+- Corrected workaround tracking to OpenHands issue #16217 and removal only
+  after PR #16635 ships in compatible Agent Canvas.
+- Strengthened README assertions for those exact contracts and publication
+  gate wording.
+
 ## Remaining gates
 
-Native amd64 CI, completed native arm64 CI, both release-artifact tar
-inspections, and real Windows import remain required before publication.
+Native arm64 post-Omni smoke now exits 0. Native amd64 CI, release-artifact tar
+inspections in CI, real Windows import, and Windows-on-Arm runtime verification
+remain required before publication.

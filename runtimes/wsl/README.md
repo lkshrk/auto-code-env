@@ -60,7 +60,7 @@ Build a WSL artifact locally:
 
 ```sh
 runtimes/wsl/build-wsl.sh 1.2.3 amd64 dist
-sha256sum -c dist/openhands-worker-1.2.3-amd64.wsl.sha256
+(cd dist && sha256sum -c openhands-worker-1.2.3-amd64.wsl.sha256)
 ```
 
 Only `openhands-worker-v*` tags release artifacts. Native GitHub runners build
@@ -70,8 +70,8 @@ two `.wsl` files and a combined `checksums.txt`, and GHCR has immutable
 SBOM, and provenance.
 
 An arm64 Linux build proves native Linux build compatibility only. It is not a
-Windows-on-Arm WSL runtime proof. Do not publish a WSL release before native amd64 CI
-and a real Windows import have both passed.
+Windows-on-Arm WSL runtime proof. Publication gate: native amd64 CI and real Windows import
+must both pass before release. Windows-on-Arm remains a separate runtime gate.
 
 ## Windows import and host overlay
 
@@ -100,7 +100,9 @@ merges `networkingMode=mirrored` and `dnsTunneling=true` into `.wslconfig`,
 backing up existing config only when it changes. It imports artifact with
 `wsl --install --from-file`, then verifies root access and Ubuntu 26.04.
 
-An existing distro is a no-op: if `openhands-worker` is registered, installer
+host mirrored-networking reconciliation runs before distro lookup; it may update
+`.wslconfig` and run `wsl --shutdown`. Then, after host mirrored-networking reconciliation,
+an existing distro is a no-op: if `openhands-worker` is registered, installer
 does not download, import, reprovision, or modify it. It does not migrate an
 existing distribution automatically. Upgrade means export state if needed,
 choose explicit replacement/import plan, and test it first; rollback means
@@ -113,11 +115,12 @@ After import, host-specific overlay remains operator-owned and out of image:
   ranges. Existing target is `172.16.20.195` on VLAN10; do not create broad
   rule or expose port 8000.
 - DNS/domain: `worker.local-domain` must resolve to host address.
-- TLS: place existing-local-CA certificate and private key as root-owned files
-  at `/etc/nginx/tls/tls.crt` and `/etc/nginx/tls/tls.key`; never commit either.
-- Secret: create root-owned systemd credential `local_backend_api_key` for
-  `agent-canvas.service`; unit loads it from `$CREDENTIALS_DIRECTORY`, not
-  environment or unit plaintext.
+- TLS: install existing-local-CA certificate and private key as `/etc/nginx/tls/tls.crt`
+  and `/etc/nginx/tls/tls.key`; `tls.crt`: `root:root`, mode `0644`; `tls.key`: `root:root`, mode `0600`. Never commit either.
+- Secret: install backend key at `/etc/credstore/local_backend_api_key`,
+  `root:root`, mode `0600`. `agent-canvas.service` uses
+  `LoadCredential=local_backend_api_key`, so systemd exposes it only through
+  `$CREDENTIALS_DIRECTORY/local_backend_api_key`, not environment or unit plaintext.
 - rbw/Vaultwarden login, Claude Code login, Codex login, and scoped GitHub
   credentials happen after import as `agent`; use dedicated least-privilege
   credentials only.
@@ -189,9 +192,9 @@ Current direct npm pins:
 - `@openai/codex@0.151.0`
 
 `runtime/patch-agent-canvas-automation.mjs` is temporary workaround for
-OpenHands issue #16635. Remove it when #16635 ships in compatible Agent Canvas
-release, then validate Canvas automation without patch before removing it from
-build.
+OpenHands issue #16217. Remove it only when PR #16635 ships in compatible Agent
+Canvas release, then validate Canvas automation without patch before removing
+it from build.
 
 ## Verification and limits
 

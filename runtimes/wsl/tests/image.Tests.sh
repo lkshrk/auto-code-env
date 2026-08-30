@@ -46,6 +46,7 @@ readme = File.read(ARGV.fetch(2))
   'openhands-worker-<version>-amd64.wsl',
   'openhands-worker-<version>-arm64.wsl',
   'checksums.txt',
+  '(cd dist && sha256sum -c openhands-worker-1.2.3-amd64.wsl.sha256)',
   'ImagePath',
   'ImageUri',
   'SHA-256',
@@ -53,6 +54,7 @@ readme = File.read(ARGV.fetch(2))
   '-amd64.wsl',
   '-arm64.wsl',
   'existing distro is a no-op',
+  'after host mirrored-networking reconciliation',
   'does not migrate',
   'WSL state migration',
   'persistent mounts',
@@ -60,10 +62,15 @@ readme = File.read(ARGV.fetch(2))
   'LOCAL_BACKEND_API_KEY_FILE',
   '/etc/nginx/tls/tls.crt',
   '/etc/nginx/tls/tls.key',
+  '`tls.crt`: `root:root`, mode `0644`',
+  '`tls.key`: `root:root`, mode `0600`',
+  '/etc/credstore/local_backend_api_key',
+  'LoadCredential=local_backend_api_key',
   'Omni `0.10.4`',
   'Windows-on-Arm',
-  'native amd64 CI',
-  'real Windows import'
+  'PR #16635',
+  'OpenHands issue #16217',
+  'Publication gate: native amd64 CI and real Windows import'
 ].each do |phrase|
   assert(readme.include?(phrase), "README must document #{phrase.inspect}")
 end
