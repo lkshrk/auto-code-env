@@ -5,10 +5,53 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 bake_file="$repo_root/runtimes/wsl/docker-bake.hcl"
 build_script="$repo_root/runtimes/wsl/build-wsl.sh"
+validation_workflow="$repo_root/.github/workflows/validate-openhands-worker.yaml"
+release_workflow="$repo_root/.github/workflows/release-openhands-worker.yaml"
 
 for file in "$bake_file" "$build_script"; do
   test -f "$file"
 done
+
+for file in "$validation_workflow" "$release_workflow"; do
+  test -f "$file"
+done
+
+python3 - "$validation_workflow" "$release_workflow" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+validation, release = map(lambda path: Path(path).read_text(), sys.argv[1:])
+
+def require(text, pattern, message):
+    if not re.search(pattern, text, re.MULTILINE):
+        raise SystemExit(message)
+
+require(validation, r'pull_request:', 'validation must run on pull requests')
+require(validation, r'runtimes/wsl/\*\*', 'validation must filter worker paths')
+require(validation, r'ubuntu-24\.04-arm', 'validation must use native arm64 runner')
+require(validation, r'linux/amd64', 'validation must validate amd64')
+require(validation, r'linux/arm64', 'validation must validate arm64')
+require(validation, r'type=cacheonly', 'validation must smoke cache-only build')
+require(validation, r'build-wsl\.sh', 'validation must export WSL artifact')
+
+require(release, r'openhands-worker-v\*', 'release must only run for worker tags')
+require(release, r'packages:\s*write', 'release must publish OCI packages')
+require(release, r'contents:\s*write', 'release must create GitHub release only in release job')
+require(release, r'push-by-digest=true', 'release must push architecture images by digest')
+require(release, r'--sbom=true', 'release must publish SBOM')
+require(release, r'--provenance=mode=max', 'release must publish provenance')
+require(release, r'openhands-worker-\$\{VERSION\}-\$\{\{ matrix\.arch \}\}\.wsl', 'release must preserve architecture WSL filenames')
+require(release, r'checksums\.txt', 'release must publish combined checksums')
+require(release, r'imagetools create', 'release must create immutable multi-arch manifest')
+require(release, r'gh release create', 'release must publish WSL artifacts')
+if ':latest' in release:
+    raise SystemExit('release must not publish a mutable latest tag')
+for workflow in (validation, release):
+    for action in re.findall(r'^\s*uses:\s+[^@\s]+@([^\s#]+)', workflow, re.MULTILINE):
+        if not re.fullmatch(r'[0-9a-f]{40}', action):
+            raise SystemExit(f'action ref must be immutable: {action}')
+PY
 
 bake_json=$(VERSION=1.2.3 docker buildx bake -f "$bake_file" --print image wsl-amd64 wsl-arm64)
 printf '%s' "$bake_json" | jq -e '

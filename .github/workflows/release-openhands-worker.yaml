@@ -1,0 +1,167 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: release OpenHands worker
+
+on:
+  push:
+    tags:
+      - openhands-worker-v*
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-openhands-worker-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/lkshrk/openhands-worker
+
+jobs:
+  build:
+    name: build ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build architecture image and WSL artifact
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          [[ "$tag" == openhands-worker-v* ]]
+          VERSION=${tag#openhands-worker-v}
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          metadata="$RUNNER_TEMP/metadata.json"
+          docker buildx build \
+            --file runtimes/wsl/Containerfile \
+            --platform '${{ matrix.platform }}' \
+            --target oci \
+            --sbom=true \
+            --provenance=mode=max \
+            --metadata-file "$metadata" \
+            --output "type=image,name=$IMAGE,push=true,push-by-digest=true,name-canonical=true" \
+            .
+          digest=$(jq -r '."containerimage.digest"' "$metadata")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$digest" > "$RUNNER_TEMP/image-digest-${{ matrix.arch }}.txt"
+          output="$RUNNER_TEMP/release"
+          runtimes/wsl/build-wsl.sh "$VERSION" '${{ matrix.arch }}' "$output"
+          artifact="$output/openhands-worker-${VERSION}-${{ matrix.arch }}.wsl"
+          tar -tf "$artifact" | grep -Eq '^\.?/?etc/wsl\.conf$'
+          {
+            echo "version=$VERSION"
+            echo "artifact=$artifact"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload architecture release inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: worker-release-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            ${{ steps.build.outputs.artifact }}
+            ${{ steps.build.outputs.artifact }}.sha256
+            ${{ runner.temp }}/image-digest-${{ matrix.arch }}.txt
+
+  publish:
+    name: publish immutable release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download architecture release inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: worker-release-*
+          merge-multiple: true
+          path: release
+
+      - name: Verify artifacts and publish manifest
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          [[ "$tag" == openhands-worker-v* ]]
+          VERSION=${tag#openhands-worker-v}
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          for arch in amd64 arm64; do
+            test -f "release/openhands-worker-${VERSION}-${arch}.wsl"
+            test -f "release/openhands-worker-${VERSION}-${arch}.wsl.sha256"
+            test -f "release/image-digest-${arch}.txt"
+          done
+          cat release/openhands-worker-"${VERSION}"-amd64.wsl.sha256 \
+            release/openhands-worker-"${VERSION}"-arm64.wsl.sha256 > release/checksums.txt
+          (cd release && sha256sum -c checksums.txt)
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "::error::$IMAGE:$VERSION already exists"
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "$IMAGE:$VERSION" \
+            "$IMAGE@$(< release/image-digest-amd64.txt)" \
+            "$IMAGE@$(< release/image-digest-arm64.txt)"
+          {
+            echo "version=$VERSION"
+            echo "release_tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.publish.outputs.release_tag }}
+          VERSION: ${{ steps.publish.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::GitHub release $RELEASE_TAG already exists"
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            --title "OpenHands worker $VERSION" \
+            --generate-notes \
+            release/openhands-worker-"$VERSION"-amd64.wsl \
+            release/openhands-worker-"$VERSION"-arm64.wsl \
+            release/checksums.txt
