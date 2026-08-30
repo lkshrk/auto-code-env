@@ -54,7 +54,7 @@ run_clean() {
 
 run_agent_clean() {
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent \
-        PATH="${AGENT_BIN}:/usr/sbin:/usr/bin:/sbin:/bin" NPM_CONFIG_USERCONFIG=/dev/null \
+        PATH=/usr/local/bin:/usr/bin:/bin NPM_CONFIG_USERCONFIG=/dev/null \
         NPM_CONFIG_GLOBALCONFIG="$NPM_GLOBALCONFIG" "$@"
 }
 

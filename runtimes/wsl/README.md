@@ -159,7 +159,8 @@ Stage 5B installs the pinned agent command-line stack as `agent`, never as
 root. Its npm prefix is `/home/agent/.local`; its cache is private and
 agent-owned. Its user config is `/dev/null`; its distinct global config is the
 empty root-owned `/etc/openhands/npmrc`. npm runs with a clean environment, the
-pinned Node binary and bundled npm CLI, explicit prefix/cache paths, and audit,
+verified `/usr/local/bin/node` wrapper for lifecycle scripts, the pinned Node
+binary and bundled npm CLI, explicit prefix/cache paths, and audit,
 funding, and update notifications disabled. The provisioner fails on unsafe or
 foreign-owned npm paths, verifies each direct package's `package.json` name and
 exact version using the pinned Node binary, confines every expected executable

@@ -42,7 +42,7 @@ setup_fixture() {
     '    if test "${2:-}" = --version; then printf "%s\n" 11.19.0; exit 0; fi' \
     '    test "$(id -un)" = agent || exit 81' \
     '    test "$HOME" = /home/agent || exit 82' \
-    '    test "$PATH" = /home/agent/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin || exit 83' \
+    '    test "$PATH" = /usr/local/bin:/usr/bin:/bin || exit 83' \
     '    test "$NPM_CONFIG_USERCONFIG" = /dev/null && test "$NPM_CONFIG_GLOBALCONFIG" = /etc/openhands/npmrc && test "$NPM_CONFIG_USERCONFIG" != "$NPM_CONFIG_GLOBALCONFIG" || exit 87' \
     '    shift' \
     '    test "$1" = --prefix && prefix=$2 && shift 2' \
@@ -60,6 +60,7 @@ setup_fixture() {
     '      *) exit 88 ;;' \
     '    esac' \
     '    test "$mode" != claude-only || { test "$#" = 1 && test "$1" = @anthropic-ai/claude-code@2.1.251; } || exit 89' \
+    '    test "$mode" != claude-only || { test "$(node --version)" = v24.20.0; } || exit 90' \
     '    printf "%s:%s\n" "$mode" "$*" >> /tmp/npm-calls' \
     '    printf "%s\n" "$@" >> /tmp/npm-installs' \
     '    mkdir -p "$prefix/lib/node_modules/@openhands" "$prefix/lib/node_modules/@agentclientprotocol" "$prefix/lib/node_modules/@anthropic-ai" "$prefix/lib/node_modules/@openai" "$prefix/bin"' \
