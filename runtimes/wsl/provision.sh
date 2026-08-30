@@ -496,13 +496,13 @@ write_node_manifest() {
     /usr/bin/mv -T -- "$temp" "$output" || fail 'unable to publish Node.js manifest'
 }
 
-read_node_manifest_digest() {
+node_manifest_digest() {
     local manifest=$1
     local -a lines=()
 
-    mapfile -t lines < "$manifest" || fail 'invalid staged Node.js manifest'
+    mapfile -t lines < "$manifest" || return 1
     if [ "${#lines[@]}" -ne 1 ] || [[ ! ${lines[0]} =~ ^v2\ sha256\ ([0-9a-f]{64})$ ]]; then
-        fail 'invalid staged Node.js manifest'
+        return 1
     fi
     printf '%s\n' "${BASH_REMATCH[1]}"
 }
@@ -511,7 +511,8 @@ replace_node_manifest() {
     local destination="$NODE_HOME/$NODE_MANIFEST"
     local temp
 
-    temp=$(/usr/bin/mktemp "${destination}.XXXXXX") || fail 'unable to create Node.js manifest replacement'
+    temp=$(/usr/bin/mktemp "$node_stage_root/node-manifest-replacement.XXXXXX") ||
+        fail 'unable to create Node.js manifest replacement'
     register_cleanup "$temp"
     /usr/bin/install -T -o root -g root -m 0644 "$staged_node_manifest" "$temp"
     /usr/bin/mv -T -- "$temp" "$destination" || fail 'unable to replace Node.js manifest'
@@ -587,22 +588,20 @@ stage_toolchain() {
 }
 
 validate_installed_node_tree() {
-    local first_line installed_digest staged_digest legacy=false
+    local installed_digest marker_digest staged_digest replace=false
 
     assert_exact_root_directory "$NODE_HOME"
     assert_root_file "$NODE_HOME/$NODE_MANIFEST" 644
-    staged_digest=$(read_node_manifest_digest "$staged_node_manifest")
-    if ! /usr/bin/cmp -s "$NODE_HOME/$NODE_MANIFEST" "$staged_node_manifest"; then
-        IFS= read -r first_line < "$NODE_HOME/$NODE_MANIFEST" || fail 'foreign Node.js manifest'
-        case $first_line in
-            D$'\t'*|F$'\t'*|L$'\t'*) legacy=true ;;
-            *) fail 'foreign Node.js manifest' ;;
-        esac
+    staged_digest=$(node_manifest_digest "$staged_node_manifest") || fail 'invalid staged Node.js manifest'
+    if marker_digest=$(node_manifest_digest "$NODE_HOME/$NODE_MANIFEST"); then
+        [ "$marker_digest" = "$staged_digest" ] || fail 'foreign Node.js manifest'
+    else
+        replace=true
     fi
     assert_safe_node_tree "$NODE_HOME"
     installed_digest=$(canonical_node_digest "$NODE_HOME")
     [ "$installed_digest" = "$staged_digest" ] || fail 'invalid Node.js installation'
-    if $legacy; then
+    if $replace; then
         replace_node_manifest
     fi
 }

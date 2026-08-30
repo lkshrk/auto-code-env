@@ -197,9 +197,13 @@ setup_fixture() {
   printf '%s\n' \
     '#!/bin/sh' \
     'case "$*" in *node-v24.20.0-linux-x64*) printf "%s\n" find >> /tmp/node-digest-processes ;; esac' \
-    'if test -e /tmp/fixture-fail-find && test "${2:-}" = -type && test "${3:-}" = l; then' \
+    'if test -e /tmp/fixture-fail-safety-find && test "${1:-}" = -P && test "${3:-}" = -mindepth; then' \
     '  /usr/bin/find.fixture-real "$@"' \
     '  exit 75' \
+    'fi' \
+    'if test -e /tmp/fixture-fail-link-find && test "${2:-}" = -type && test "${3:-}" = l; then' \
+    '  /usr/bin/find.fixture-real "$@"' \
+    '  exit 76' \
     'fi' \
     'exec /usr/bin/find.fixture-real "$@"' > /usr/bin/find
   printf '%s\n' \
@@ -310,7 +314,9 @@ run_container '
   test "$(stat -c "%U:%G %a" /opt/openhands)" = "root:root 755"
   test "$(stat -c "%U:%G %a" "$node_home")" = "root:root 755"
   test "$(stat -c "%U:%G %a" "$node_home/.openhands-manifest")" = "root:root 644"
-  [[ $(cat "$node_home/.openhands-manifest") =~ ^v2\ sha256\ [0-9a-f]{64}$ ]]
+  marker_digest=$(/usr/bin/awk "NR == 1 && NF == 3 && \$1 == \"v2\" && \$2 == \"sha256\" && \$3 ~ /^[0-9a-f]{64}$/ { print \$3; next } { exit 1 } END { if (NR != 1) exit 1 }" "$node_home/.openhands-manifest")
+  printf "v2 sha256 %s\n" "$marker_digest" > /tmp/manifest.expected
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
   test "$(stat -c "%U:%G" /usr/local/bin/node)" = "root:root"
   test "$(readlink /usr/local/bin/node)" = "$node_home/bin/node"
   for path in /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/uv /usr/local/bin/uvx; do
@@ -438,23 +444,23 @@ run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
   node_home=/opt/openhands/node-v24.20.0-linux-x64
-  printf foreign > "$node_home/.openhands-manifest"
-  cp "$node_home/.openhands-manifest" /tmp/manifest.expected
-  rm /usr/local/bin/uvx
-  if bash /src/runtimes/wsl/provision.sh; then
-    exit 1
-  fi
+  printf "arbitrary non-v2 marker\n" > "$node_home/.openhands-manifest"
+  bash /src/runtimes/wsl/provision.sh
+  marker_digest=$(/usr/bin/awk "NR == 1 && NF == 3 && \$1 == \"v2\" && \$2 == \"sha256\" && \$3 ~ /^[0-9a-f]{64}$/ { print \$3; next } { exit 1 } END { if (NR != 1) exit 1 }" "$node_home/.openhands-manifest")
+  printf "v2 sha256 %s\n" "$marker_digest" > /tmp/manifest.expected
   cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
-  test ! -e /usr/local/bin/uvx
 '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
   node_home=/opt/openhands/node-v24.20.0-linux-x64
-  printf "D\t755\tbin\n" > "$node_home/.openhands-manifest"
+  printf "D\t755\tbin\nL\t777\t../lib/node_modules/npm/bin/npm-cli.js\tbin/npm\nF\t644\t%s\tlib/example\n" \
+    0000000000000000000000000000000000000000000000000000000000000000 > "$node_home/.openhands-manifest"
   bash /src/runtimes/wsl/provision.sh
-  [[ $(cat "$node_home/.openhands-manifest") =~ ^v2\ sha256\ [0-9a-f]{64}$ ]]
+  marker_digest=$(/usr/bin/awk "NR == 1 && NF == 3 && \$1 == \"v2\" && \$2 == \"sha256\" && \$3 ~ /^[0-9a-f]{64}$/ { print \$3; next } { exit 1 } END { if (NR != 1) exit 1 }" "$node_home/.openhands-manifest")
+  printf "v2 sha256 %s\n" "$marker_digest" > /tmp/manifest.expected
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
 '
 
 run_container '
@@ -462,7 +468,7 @@ run_container '
   bash /src/runtimes/wsl/provision.sh
   node_home=/opt/openhands/node-v24.20.0-linux-x64
   printf corrupt > "$node_home/lib/node_modules/npm/node_modules/example/index.js"
-  printf "D\t755\tbin\n" > "$node_home/.openhands-manifest"
+  printf "arbitrary non-v2 marker\n" > "$node_home/.openhands-manifest"
   cp "$node_home/.openhands-manifest" /tmp/manifest.expected
   rm /usr/local/bin/uvx
   if bash /src/runtimes/wsl/provision.sh; then
@@ -476,13 +482,58 @@ run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
   node_home=/opt/openhands/node-v24.20.0-linux-x64
-  printf "D\t755\tbin\n" > "$node_home/.openhands-manifest"
+  printf "arbitrary non-v2 marker\n" > "$node_home/.openhands-manifest"
   cp "$node_home/.openhands-manifest" /tmp/manifest.expected
   if FIXTURE_FAIL_RENAME_DEST="$node_home/.openhands-manifest" bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
   cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
   ! compgen -G "$node_home/.openhands-manifest.*" >/dev/null
+  ! compgen -G "/opt/openhands/.node-stage.*" >/dev/null
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
+  mkdir -m 0755 /opt/openhands/.node-stage.crash
+  printf stale > /opt/openhands/.node-stage.crash/node-manifest-replacement.stale
+  chmod 0644 /opt/openhands/.node-stage.crash/node-manifest-replacement.stale
+  bash /src/runtimes/wsl/provision.sh
+  test "$(cat /opt/openhands/.node-stage.crash/node-manifest-replacement.stale)" = stale
+  marker_digest=$(/usr/bin/awk "NR == 1 && NF == 3 && \$1 == \"v2\" && \$2 == \"sha256\" && \$3 ~ /^[0-9a-f]{64}$/ { print \$3; next } { exit 1 } END { if (NR != 1) exit 1 }" "$node_home/.openhands-manifest")
+  printf "v2 sha256 %s\n" "$marker_digest" > /tmp/manifest.expected
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
+  printf stale > "$node_home/.openhands-manifest.stale"
+  chmod 0644 "$node_home/.openhands-manifest.stale"
+  cp "$node_home/.openhands-manifest" /tmp/manifest.expected
+  rm /usr/local/bin/uvx
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
+  test "$(cat "$node_home/.openhands-manifest.stale")" = stale
+  test ! -e /usr/local/bin/uvx
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
+  printf "v2 sha256 %064d\n" 0 > "$node_home/.openhands-manifest"
+  cp "$node_home/.openhands-manifest" /tmp/manifest.expected
+  rm /usr/local/bin/uvx
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
+  test ! -e /usr/local/bin/uvx
 '
 
 run_container '
@@ -596,7 +647,7 @@ EOF
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   failures=0
-  for producer in tar-list find tar-digest sha256sum; do
+  for producer in tar-list safety-find link-find tar-digest sha256sum; do
     rm -rf /opt/openhands
     rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/uv /usr/local/bin/uvx
     rm -f /tmp/fixture-fail-*

@@ -148,10 +148,11 @@ whole-tree digest. A clean, pipefail-protected GNU tar stream includes sorted
 paths, directory and file modes, numeric ownership, symlink targets, and file
 content while normalizing timestamps and excluding only the root marker.
 Reruns recompute the installed digest against the separately staged release
-without executing the installed tree. Legacy multiline manifests are never
-trusted: they are replaced atomically only after that digest comparison
-succeeds. `/usr/local/bin/node` is a fixed symlink; the root-owned `npm` and
-`npx` wrappers invoke the versioned Node binary and absolute CLI files,
+without executing the installed tree. Any non-v2 marker is never trusted and
+is replaced atomically only after that digest comparison succeeds; mismatched
+trees retain their original marker. Replacement staging stays outside the
+hashed Node tree. `/usr/local/bin/node` is a fixed symlink; the root-owned `npm`
+and `npx` wrappers invoke the versioned Node binary and absolute CLI files,
 independent of `PATH`. Missing entry points are repaired with registered
 sibling temporary files and atomic renames; failures clean all registered
 temporary paths. Release archives containing the reserved marker name are
