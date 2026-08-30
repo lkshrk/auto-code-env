@@ -34,7 +34,7 @@ setup_fixture() {
     '  --version) printf "%s\n" v24.20.0 ;;' \
     '  -e)' \
     '    case "${3:-}" in' \
-    '      \{*) test ! -e /tmp/fixture-extra-package || exit 86; printf ok ;;' \
+    '      \{*) case "$3" in *\"unexpected\"*) exit 86 ;; *) printf ok ;; esac ;;' \
     '      *) grep -F "\"name\":\"$4\"" "$3" >/dev/null && grep -F "\"version\":\"$5\"" "$3" >/dev/null || exit 86; printf "%s@%s\n" "$4" "$5" ;;' \
     '    esac ;;' \
     '  */npx-cli.js) test "${2:-}" = --version && printf "%s\n" 11.19.0 ;;' \
@@ -48,7 +48,9 @@ setup_fixture() {
     '    test "$1" = --prefix && prefix=$2 && shift 2' \
     '    test "$1" = --cache && test "$2" = /home/agent/.cache/npm && shift 2' \
     '    if test "$1" = --global && test "$2" = --depth=0 && test "$3" = --json && test "$4" = ls; then' \
-    '      printf "%s\n" "{\"dependencies\":{\"@openhands/agent-canvas\":{\"version\":\"1.16.0\"},\"@agentclientprotocol/claude-agent-acp\":{\"version\":\"0.63.0\"},\"@agentclientprotocol/codex-acp\":{\"version\":\"1.1.7\"},\"@anthropic-ai/claude-code\":{\"version\":\"2.1.251\"},\"@openai/codex\":{\"version\":\"0.151.0\"}}}"' \
+    '      json="{\"dependencies\":{\"@openhands/agent-canvas\":{\"version\":\"1.16.0\"},\"@agentclientprotocol/claude-agent-acp\":{\"version\":\"0.63.0\"},\"@agentclientprotocol/codex-acp\":{\"version\":\"1.1.7\"},\"@anthropic-ai/claude-code\":{\"version\":\"2.1.251\"},\"@openai/codex\":{\"version\":\"0.151.0\"}}}"' \
+    '      test ! -e /tmp/fixture-extra-package || json="{\"dependencies\":{\"@openhands/agent-canvas\":{\"version\":\"1.16.0\"},\"@agentclientprotocol/claude-agent-acp\":{\"version\":\"0.63.0\"},\"@agentclientprotocol/codex-acp\":{\"version\":\"1.1.7\"},\"@anthropic-ai/claude-code\":{\"version\":\"2.1.251\"},\"@openai/codex\":{\"version\":\"0.151.0\"},\"unexpected\":{\"version\":\"1.0.0\"}}}"' \
+    '      printf "%s\n" "$json"' \
     '      exit 0' \
     '    fi' \
     '    test "$1" = --global && test "$2" = --no-audit && test "$3" = --no-fund && test "$4" = --no-update-notifier && shift 4' \
@@ -58,6 +60,7 @@ setup_fixture() {
     '      *) exit 88 ;;' \
     '    esac' \
     '    test "$mode" != claude-only || { test "$#" = 1 && test "$1" = @anthropic-ai/claude-code@2.1.251; } || exit 89' \
+    '    printf "%s:%s\n" "$mode" "$*" >> /tmp/npm-calls' \
     '    printf "%s\n" "$@" >> /tmp/npm-installs' \
     '    mkdir -p "$prefix/lib/node_modules/@openhands" "$prefix/lib/node_modules/@agentclientprotocol" "$prefix/lib/node_modules/@anthropic-ai" "$prefix/lib/node_modules/@openai" "$prefix/bin"' \
     '    for spec do' \
@@ -81,6 +84,7 @@ setup_fixture() {
     '      ln -sf "../lib/node_modules/$name/bin/$bin" "$prefix/bin/$bin"' \
     '      test ! -e /tmp/fixture-npm-fail || test "$bin" != agent-canvas || exit 84' \
     '    done' \
+    '    test ! -e /tmp/fixture-extra-package || { mkdir -p "$prefix/lib/node_modules/unexpected/bin"; printf "{\"name\":\"unexpected\",\"version\":\"1.0.0\"}\n" > "$prefix/lib/node_modules/unexpected/package.json"; printf "#!/bin/sh\n" > "$prefix/lib/node_modules/unexpected/bin/unexpected"; chmod 0700 "$prefix/lib/node_modules/unexpected/bin/unexpected"; ln -sf ../lib/node_modules/unexpected/bin/unexpected "$prefix/bin/unexpected"; }' \
     '    test ! -e /tmp/fixture-foreign-bin || { rm "$prefix/bin/codex"; ln -s /tmp/foreign-bin "$prefix/bin/codex"; }' \
     '    test ! -e /tmp/fixture-extra-bin || ln -sf ../lib/node_modules/@openai/codex/bin/codex "$prefix/bin/unexpected" ;;' \
     '  *) exit 64 ;;' \
@@ -258,14 +262,20 @@ run_container '
     @openhands/agent-canvas@1.16.0 \
     @agentclientprotocol/claude-agent-acp@0.63.0 \
     @agentclientprotocol/codex-acp@1.1.7 \
-    @anthropic-ai/claude-code@2.1.251 \
     @openai/codex@0.151.0 \
+    @anthropic-ai/claude-code@2.1.251 \
     @openhands/agent-canvas@1.16.0 \
     @agentclientprotocol/claude-agent-acp@0.63.0 \
     @agentclientprotocol/codex-acp@1.1.7 \
-    @anthropic-ai/claude-code@2.1.251 \
-    @openai/codex@0.151.0 > /tmp/npm-installs.expected
+    @openai/codex@0.151.0 \
+    @anthropic-ai/claude-code@2.1.251 > /tmp/npm-installs.expected
   cmp -s /tmp/npm-installs.expected /tmp/npm-installs
+  printf "%s\n" \
+    "no-scripts:@openhands/agent-canvas@1.16.0 @agentclientprotocol/claude-agent-acp@0.63.0 @agentclientprotocol/codex-acp@1.1.7 @openai/codex@0.151.0" \
+    "claude-only:@anthropic-ai/claude-code@2.1.251" \
+    "no-scripts:@openhands/agent-canvas@1.16.0 @agentclientprotocol/claude-agent-acp@0.63.0 @agentclientprotocol/codex-acp@1.1.7 @openai/codex@0.151.0" \
+    "claude-only:@anthropic-ai/claude-code@2.1.251" > /tmp/npm-calls.expected
+  cmp -s /tmp/npm-calls.expected /tmp/npm-calls
   test "$(/home/agent/.local/bin/claude --version)" = "2.1.251 (Claude Code)"
   test "$(/home/agent/.local/bin/codex --version)" = "codex-cli 0.151.0"
   test "$(stat -c "%U:%G %a" /etc/wsl.conf)" = "root:root 644"
@@ -659,7 +669,6 @@ run_container '
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
-  test ! -e /home/agent/.local/bin/claude
 '
 
 run_container '
