@@ -43,6 +43,7 @@ staged_uv_directory=
 omni_stage_root=
 staged_omni=
 cleanup_paths=()
+omni_config_cleanup_paths=()
 
 fail() {
     printf '%s\n' "$1" >&2
@@ -85,14 +86,27 @@ register_cleanup() {
     cleanup_paths+=("$1")
 }
 
+register_omni_config_cleanup() {
+    omni_config_cleanup_paths+=("$1:$2")
+}
+
 cleanup() {
-    local path
+    local path entry directory owner status=$?
+
+    trap - EXIT
+    for entry in "${omni_config_cleanup_paths[@]}"; do
+        IFS=: read -r directory owner <<< "$entry"
+        if path_exists "$directory"; then
+            remove_omni_config_directory "$directory" "$owner"
+        fi
+    done
 
     for path in "${cleanup_paths[@]}"; do
         if path_exists "$path"; then
-            /usr/bin/rm -rf -- "$path"
+            /usr/bin/rm -rf -- "$path" || exit 1
         fi
     done
+    exit "$status"
 }
 
 assert_agent_directory() {
@@ -885,6 +899,7 @@ prepare_omni_state() {
     ensure_private_directory "$OMNI_AGENT_CACHE"
     ensure_private_directory /home/agent/.local/state
     ensure_private_directory "$OMNI_AGENT_STATE"
+    remove_stale_omni_config_directories
 }
 
 assert_root_private_directory() {
@@ -898,6 +913,7 @@ assert_root_private_directory() {
 assert_omni_canonical_config() {
     local path
 
+    assert_exact_root_directory "$OMNI_CONFIG_DIRECTORY"
     assert_root_file "$OMNI_CONFIG" 644
     /usr/bin/cmp -s "$OMNI_CONFIG" "$omni_config_source" || fail 'invalid Omni configuration'
     for path in "$OMNI_CONFIG_DIRECTORY/.omni-config.lock" "$OMNI_CONFIG.bak"; do
@@ -907,18 +923,27 @@ assert_omni_canonical_config() {
     done
 }
 
+assert_omni_config_directory_name() {
+    local directory=$1
+    local parent=$2
+    local name=${directory##*/}
+
+    [ "$(/usr/bin/dirname "$directory")" = "$parent" ] || fail "unsafe Omni config directory: $directory"
+    [[ $name =~ ^\.config\.[[:alnum:]]{6}$ ]] || fail "unsafe Omni config directory: $directory"
+}
+
 remove_omni_config_directory() {
     local directory=$1
     local owner=$2
 
-    case "$directory" in
-        "$OMNI_ROOT_STATE"/.config.*|"$OMNI_AGENT_CACHE"/.config.*) ;;
-        *) fail "unsafe Omni config directory: $directory" ;;
+    case "$owner" in
+        root) assert_omni_config_directory_name "$directory" "$OMNI_ROOT_STATE" ;;
+        agent) assert_omni_config_directory_name "$directory" "$OMNI_AGENT_CACHE" ;;
+        *) fail "invalid Omni config owner: $owner" ;;
     esac
     case "$owner" in
         root) assert_root_private_directory "$directory" ;;
         agent) assert_agent_directory "$directory" ;;
-        *) fail "invalid Omni config owner: $owner" ;;
     esac
     /usr/bin/rm -rf -- "$directory" || fail "unable to clean Omni config directory: $directory"
     if path_exists "$directory"; then
@@ -926,11 +951,27 @@ remove_omni_config_directory() {
     fi
 }
 
+remove_stale_omni_config_directories() {
+    local directory
+
+    for directory in "$OMNI_ROOT_STATE"/.config.*; do
+        if path_exists "$directory"; then
+            remove_omni_config_directory "$directory" root
+        fi
+    done
+    for directory in "$OMNI_AGENT_CACHE"/.config.*; do
+        if path_exists "$directory"; then
+            remove_omni_config_directory "$directory" agent
+        fi
+    done
+}
+
 sync_omni_system_group() {
     local directory config status=0
 
     directory=$(/usr/bin/mktemp -d "$OMNI_ROOT_STATE/.config.XXXXXX") || fail 'unable to stage root Omni configuration'
     assert_root_private_directory "$directory"
+    register_omni_config_cleanup "$directory" root
     config="$directory/settings.json"
     if ! /usr/bin/install -T -o root -g root -m 0600 "$OMNI_CONFIG" "$config"; then
         remove_omni_config_directory "$directory" root
@@ -955,6 +996,7 @@ sync_omni_agent_group() {
     directory=$(run_agent_clean /usr/bin/mktemp -d "$OMNI_AGENT_CACHE/.config.XXXXXX") ||
         fail 'unable to stage agent Omni configuration'
     assert_agent_directory "$directory"
+    register_omni_config_cleanup "$directory" agent
     config="$directory/settings.json"
     if ! run_agent_clean /usr/bin/install -T -m 0600 "$OMNI_CONFIG" "$config"; then
         remove_omni_config_directory "$directory" agent

@@ -64,3 +64,19 @@ creates only the agent-owned, mode-0700 `bin`, `lib`, and `lib/node_modules`
 directories before agent Omni sync; package scope directories remain created by
 npm. A pre-existing `.local` symlink is rejected before Omni runs. Bash syntax,
 ShellCheck, runtime validation, and diff checks pass.
+
+## Follow-up — config lock recovery
+
+Each canonical-config assertion now verifies the containing Omni directory is
+exactly root-owned mode 0755. Every staged `.config.XXXXXX` directory registers
+with EXIT cleanup immediately. Startup validates and removes only matching,
+private stale staging directories under the two dedicated state/cache roots;
+symlinks, wrong ownership/mode, and malformed names fail closed. The fixture
+records private config path metadata for each group, checks all copies differ,
+and injects failure after Omni writes its lock/backup artifacts.
+
+Controller verification after `bef885f` and `c08cb32`: native `linux/arm64`
+smoke target with cache-only inputs exited `0`. Real Omni installed the root
+git/nginx/python/exact-rbw group, then Canvas/ACP/Codex with lifecycle scripts
+disabled, then Claude Code `2.1.251` under the strict allowlist. Agent Server
+and Automation warm-up, exact tool versions, UID, and nginx smoke checks pass.

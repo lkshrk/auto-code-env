@@ -135,7 +135,8 @@ setup_fixture() {
     'test "$1" = --config && test -f "$2" && test "$2" != /etc/openhands/omni/settings.json && test "$3" = --cache-dir && test "$5" = --state-dir && test "$7" = --yes && test "$8" = tools && test "$9" = sync && test "${10}" = --group || exit 91' \
     'group=${11}' \
     'touch "$(dirname "$2")/.omni-config.lock"; cp "$2" "$2.bak"' \
-    'printf "%s|%s|%s|%s|%s\\n" "$group" "$(id -un)" "${NPM_CONFIG_IGNORE_SCRIPTS-}" "${NPM_CONFIG_STRICT_ALLOW_SCRIPTS-}" "${NPM_CONFIG_ALLOW_SCRIPTS-}" >> /tmp/omni-calls' \
+    'printf "%s|%s|%s|%s|%s|%s|%s\\n" "$group" "$(id -un)" "${NPM_CONFIG_IGNORE_SCRIPTS-}" "${NPM_CONFIG_STRICT_ALLOW_SCRIPTS-}" "${NPM_CONFIG_ALLOW_SCRIPTS-}" "$2" "$(stat -c "%U:%G %a" "$(dirname "$2")")/$(stat -c "%U:%G %a" "$2")" >> /tmp/omni-calls' \
+    'test ! -e /tmp/fixture-omni-fail-after-artifacts || test "$group" != openhands-agent-no-scripts || exit 97' \
     'case "$group" in' \
     '  openhands-system)' \
     '    test "$(id -u)" = 0 && test "$4" = /var/cache/openhands/omni && test "$6" = /var/lib/openhands/omni || exit 92' \
@@ -143,6 +144,7 @@ setup_fixture() {
     '  openhands-agent-no-scripts)' \
     '    test "$(id -un)" = agent && test "$4" = /home/agent/.cache/omni && test "$6" = /home/agent/.local/state/omni && test "$NPM_CONFIG_IGNORE_SCRIPTS" = true && test -z "${NPM_CONFIG_STRICT_ALLOW_SCRIPTS-}${NPM_CONFIG_ALLOW_SCRIPTS-}" || exit 93' \
     '    for path in /home/agent/.local/bin /home/agent/.local/lib /home/agent/.local/lib/node_modules; do test ! -L "$path" && test "$(stat -c "%U:%G %a" "$path")" = "agent:agent 700" || exit 96; done' \
+    '    if test ! -e /home/agent/.local/bin/agent-canvas; then for path in /home/agent/.local/lib/node_modules/@openhands /home/agent/.local/lib/node_modules/@agentclientprotocol /home/agent/.local/lib/node_modules/@anthropic-ai /home/agent/.local/lib/node_modules/@openai; do test ! -e "$path" || exit 98; done; fi' \
     '    /usr/local/bin/node /opt/openhands/node-v24.20.0-linux-*/lib/node_modules/npm/bin/npm-cli.js --prefix /home/agent/.local --cache /home/agent/.cache/npm --global --no-audit --no-fund --no-update-notifier --ignore-scripts install @openhands/agent-canvas@1.16.0 @agentclientprotocol/claude-agent-acp@0.63.0 @agentclientprotocol/codex-acp@1.1.7 @openai/codex@0.151.0 ;;' \
     '  openhands-agent-claude)' \
     '    test "$(id -un)" = agent && test "$4" = /home/agent/.cache/omni && test "$6" = /home/agent/.local/state/omni && test "$NPM_CONFIG_STRICT_ALLOW_SCRIPTS" = true && test "$NPM_CONFIG_ALLOW_SCRIPTS" = @anthropic-ai/claude-code && test -z "${NPM_CONFIG_IGNORE_SCRIPTS-}" || exit 94' \
@@ -309,6 +311,21 @@ ensure_fixture_image
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-omni-fail-after-artifacts
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%U:%G %a" /etc/openhands/omni)" = "root:root 755"
+  test "$(stat -c "%U:%G %a" /etc/openhands/omni/settings.json)" = "root:root 644"
+  cmp -s /etc/openhands/omni/settings.json /src/runtimes/wsl/omni/settings.json
+  test ! -e /etc/openhands/omni/.omni-config.lock
+  test ! -e /etc/openhands/omni/settings.json.bak
+  ! compgen -G "/var/lib/openhands/omni/.config.*" >/dev/null
+  ! compgen -G "/home/agent/.cache/omni/.config.*" >/dev/null
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
   mkdir /tmp/inherited-path
   printf "%s\n" "#!/bin/sh" "touch /tmp/inherited-path-used" "exec /usr/bin/id \"\$@\"" > /tmp/inherited-path/id
   chmod 0755 /tmp/inherited-path/id
@@ -363,8 +380,11 @@ run_container '
     "openhands-agent-claude|agent||true|@anthropic-ai/claude-code" \
     "openhands-system|root|||" \
     "openhands-agent-no-scripts|agent|true||" \
-    "openhands-agent-claude|agent||true|@anthropic-ai/claude-code" > /tmp/omni-calls.expected
-  cmp -s /tmp/omni-calls.expected /tmp/omni-calls
+    "openhands-agent-claude|agent||true|@anthropic-ai/claude-code" > /tmp/omni-calls.prefix.expected
+  cut -d "|" -f 1-5 /tmp/omni-calls > /tmp/omni-calls.prefix
+  cmp -s /tmp/omni-calls.prefix.expected /tmp/omni-calls.prefix
+  test "$(cut -d "|" -f 6 /tmp/omni-calls | sort -u | wc -l)" = 6
+  test "$(awk -F "|" '\''BEGIN { ok = 1 } $2 == "root" { ok = ok && $6 ~ /^\/var\/lib\/openhands\/omni\/\.config\.[[:alnum:]]{6}\/settings\.json$/ && $7 == "root:root 700/root:root 600"; next } $2 == "agent" { ok = ok && $6 ~ /^\/home\/agent\/\.cache\/omni\/\.config\.[[:alnum:]]{6}\/settings\.json$/ && $7 == "agent:agent 700/agent:agent 600"; next } { ok = 0 } END { exit !(NR == 6 && ok) }'\'' /tmp/omni-calls; echo $?)" = 0
   printf "%s\n" \
     @openhands/agent-canvas@1.16.0 \
     @agentclientprotocol/claude-agent-acp@0.63.0 \
