@@ -93,6 +93,7 @@ final_filter = manifest.match(/jq -e --slurpfile expected "\$expected" '(.*?)' "
 abort('source index validation must be jq-based') unless source_filter
 abort('final manifest validation must be jq-based') unless final_filter
 index_type = 'application/vnd.oci.image.index.v1+json'
+manifest_list_type = 'application/vnd.docker.distribution.manifest.list.v2+json'
 manifest_type = 'application/vnd.oci.image.manifest.v1+json'
 docker_manifest_type = 'application/vnd.docker.distribution.manifest.v2+json'
 amd64 = "sha256:#{'a' * 64}"
@@ -135,6 +136,12 @@ assert(!run_source.call('amd64', runtime_index)[2].success?, 'nested index runti
 attestation_index = source.call('amd64', amd64, amd64_attestation)
 attestation_index['manifests'][1]['mediaType'] = index_type
 assert(!run_source.call('amd64', attestation_index)[2].success?, 'nested index attestation child must fail')
+runtime_manifest_list = source.call('amd64', amd64, amd64_attestation)
+runtime_manifest_list['manifests'][0]['mediaType'] = manifest_list_type
+assert(!run_source.call('amd64', runtime_manifest_list)[2].success?, 'nested manifest-list runtime child must fail')
+attestation_manifest_list = source.call('amd64', amd64, amd64_attestation)
+attestation_manifest_list['manifests'][1]['mediaType'] = manifest_list_type
+assert(!run_source.call('amd64', attestation_manifest_list)[2].success?, 'nested manifest-list attestation child must fail')
 expected = JSON.parse(amd64_descriptors) + JSON.parse(arm64_descriptors)
 run_final = lambda do |document, descriptors|
   Dir.mktmpdir do |directory|
