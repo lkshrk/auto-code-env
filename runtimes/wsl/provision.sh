@@ -14,14 +14,19 @@ readonly NPX_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npx-cli.js"
 readonly NODE_MANIFEST=.openhands-manifest
 readonly AGENT_PREFIX=/home/agent/.local
 readonly NPM_CACHE=/home/agent/.cache/npm
-readonly NPM_USERCONFIG="${AGENT_PREFIX}/npmrc"
-readonly NPM_GLOBALCONFIG="${AGENT_PREFIX}/etc/npmrc"
 readonly AGENT_BIN="${AGENT_PREFIX}/bin"
+readonly CLAUDE_CODE_PACKAGE='@anthropic-ai/claude-code@2.1.251'
 readonly -a AGENT_PACKAGES=(
     '@openhands/agent-canvas@1.16.0'
     '@agentclientprotocol/claude-agent-acp@0.63.0'
     '@agentclientprotocol/codex-acp@1.1.7'
     '@anthropic-ai/claude-code@2.1.251'
+    '@openai/codex@0.151.0'
+)
+readonly -a AGENT_NO_SCRIPT_PACKAGES=(
+    '@openhands/agent-canvas@1.16.0'
+    '@agentclientprotocol/claude-agent-acp@0.63.0'
+    '@agentclientprotocol/codex-acp@1.1.7'
     '@openai/codex@0.151.0'
 )
 readonly UV_VERSION=0.12.7
@@ -47,7 +52,8 @@ run_clean() {
 
 run_agent_clean() {
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent \
-        PATH="${AGENT_BIN}:/usr/sbin:/usr/bin:/sbin:/bin" "$@"
+        PATH="${AGENT_BIN}:/usr/sbin:/usr/bin:/sbin:/bin" NPM_CONFIG_USERCONFIG=/dev/null \
+        NPM_CONFIG_GLOBALCONFIG=/dev/null "$@"
 }
 
 path_exists() {
@@ -123,23 +129,6 @@ ensure_private_directory() {
     assert_agent_directory "$path"
 }
 
-ensure_empty_agent_file() {
-    local path=$1
-
-    if path_exists "$path"; then
-        if [ -L "$path" ] || [ ! -f "$path" ] || [ "$(/usr/bin/stat -c '%U:%G %a' "$path")" != 'agent:agent 600' ] ||
-            [ -s "$path" ]; then
-            fail "invalid npm configuration: $path"
-        fi
-        return
-    fi
-    /usr/sbin/runuser -u agent -- /usr/bin/touch -- "$path"
-    /usr/bin/chmod 0600 -- "$path"
-    if [ "$(/usr/bin/stat -c '%U:%G %a' "$path")" != 'agent:agent 600' ]; then
-        fail "invalid npm configuration: $path"
-    fi
-}
-
 assert_agent_tree() {
     local root=$1
     local path mode target resolved
@@ -185,6 +174,19 @@ assert_agent_package() {
     [ "$output" = "${package}@${version}" ] || fail "invalid agent package: $package"
 }
 
+assert_exact_agent_packages() {
+    local installed
+    local output
+
+    installed=$(run_agent_clean "$NODE_BINARY" "$NPM_CLI" --prefix "$AGENT_PREFIX" --cache "$NPM_CACHE" \
+        --global --depth=0 --json ls) || fail 'unable to list agent npm packages'
+    # shellcheck disable=SC2016
+    output=$(run_agent_clean "$NODE_BINARY" -e \
+        'const expected = Object.fromEntries(process.argv.slice(2).map(spec => { const at = spec.lastIndexOf("@"); return [spec.slice(0, at), spec.slice(at + 1)]; })); const packages = JSON.parse(process.argv[1]).dependencies || {}; if (Object.keys(packages).length !== Object.keys(expected).length || Object.entries(expected).some(([name, version]) => packages[name]?.version !== version)) process.exit(1); process.stdout.write("ok");' \
+        "$installed" "${AGENT_PACKAGES[@]}") || fail 'invalid agent npm package set'
+    [ "$output" = ok ] || fail 'invalid agent npm package set'
+}
+
 assert_agent_bin() {
     local name=$1
     local package=$2
@@ -210,38 +212,52 @@ assert_agent_bin() {
     fi
 }
 
+assert_exact_agent_bins() {
+    local path name
+
+    assert_agent_bin agent-canvas @openhands/agent-canvas
+    assert_agent_bin claude-agent-acp @agentclientprotocol/claude-agent-acp
+    assert_agent_bin codex-acp @agentclientprotocol/codex-acp
+    assert_agent_bin claude @anthropic-ai/claude-code
+    assert_agent_bin codex @openai/codex
+    while IFS= read -r -d '' path; do
+        name=${path##*/}
+        case $name in
+            agent-canvas|claude-agent-acp|codex-acp|claude|codex) ;;
+            *) fail "unexpected agent executable: $name" ;;
+        esac
+    done < <(/usr/bin/find -P "$AGENT_BIN" -mindepth 1 -maxdepth 1 -print0)
+}
+
 preflight_agent_npm_paths() {
     ensure_private_directory "$AGENT_PREFIX"
     ensure_private_directory /home/agent/.cache
     ensure_private_directory "$NPM_CACHE"
-    ensure_private_directory "${AGENT_PREFIX}/etc"
-    ensure_empty_agent_file "$NPM_USERCONFIG"
-    ensure_empty_agent_file "$NPM_GLOBALCONFIG"
     assert_agent_tree "$AGENT_PREFIX"
     assert_agent_tree "$NPM_CACHE"
 }
 
 install_agent_packages() {
     run_agent_clean "$NODE_BINARY" "$NPM_CLI" --prefix "$AGENT_PREFIX" --cache "$NPM_CACHE" \
-        --userconfig "$NPM_USERCONFIG" --globalconfig "$NPM_GLOBALCONFIG" --global --no-audit --no-fund \
-        --no-update-notifier install "${AGENT_PACKAGES[@]}" || fail 'agent npm installation failed'
+        --global --no-audit --no-fund --no-update-notifier --ignore-scripts install \
+        "${AGENT_NO_SCRIPT_PACKAGES[@]}" || fail 'agent npm installation failed'
+    run_agent_clean "$NODE_BINARY" "$NPM_CLI" --prefix "$AGENT_PREFIX" --cache "$NPM_CACHE" \
+        --global --no-audit --no-fund --no-update-notifier --strict-allow-scripts \
+        --allow-scripts=@anthropic-ai/claude-code install "$CLAUDE_CODE_PACKAGE" || fail 'Claude Code installation failed'
 }
 
 verify_agent_packages() {
     assert_agent_tree "$AGENT_PREFIX"
     assert_agent_tree "$NPM_CACHE"
+    assert_exact_agent_packages
     assert_agent_package @openhands/agent-canvas 1.16.0
     assert_agent_package @agentclientprotocol/claude-agent-acp 0.63.0
     assert_agent_package @agentclientprotocol/codex-acp 1.1.7
     assert_agent_package @anthropic-ai/claude-code 2.1.251
     assert_agent_package @openai/codex 0.151.0
-    assert_agent_bin agent-canvas @openhands/agent-canvas
-    assert_agent_bin claude-agent-acp @agentclientprotocol/claude-agent-acp
-    assert_agent_bin codex-acp @agentclientprotocol/codex-acp
-    assert_agent_bin claude @anthropic-ai/claude-code
-    assert_agent_bin codex @openai/codex
-    run_agent_clean "${AGENT_BIN}/claude" --version >/dev/null || fail 'invalid Claude Code installation'
-    run_agent_clean "${AGENT_BIN}/codex" --version >/dev/null || fail 'invalid Codex installation'
+    assert_exact_agent_bins
+    [ "$(run_agent_clean "${AGENT_BIN}/claude" --version)" = '2.1.251 (Claude Code)' ] || fail 'invalid Claude Code installation'
+    [ "$(run_agent_clean "${AGENT_BIN}/codex" --version)" = 'codex-cli 0.151.0' ] || fail 'invalid Codex installation'
 }
 
 install_wsl_config() {

@@ -142,15 +142,22 @@ directories, and foreign files fail closed without replacement. The only added
 apt packages are `ca-certificates`, `curl`, and `xz-utils`.
 
 Stage 5B installs the pinned agent command-line stack as `agent`, never as
-root. Its npm prefix is `/home/agent/.local`; npm cache and configuration are
-private agent-owned paths, and npm runs with a clean environment, the pinned
-Node binary and bundled npm CLI, explicit prefix/cache/config paths, and audit,
-funding, and update notifications disabled. The provisioner fails on unsafe or
+root. Its npm prefix is `/home/agent/.local`; its cache is private and
+agent-owned, while both npm configuration paths are `/dev/null`. npm runs with
+a clean environment, the pinned Node binary and bundled npm CLI, explicit
+prefix/cache paths, and audit, funding, and update notifications disabled. The
+provisioner fails on unsafe or
 foreign-owned npm paths, verifies each direct package's `package.json` name and
 exact version using the pinned Node binary, confines every expected executable
 symlink to its owning package, and only then runs `claude --version` and
 `codex --version`. Canvas and ACP executables are validated without starting
 services. `.claude` and `.codex` are never replaced or populated with secrets.
+
+Canvas, both ACP bridges, and Codex install with `--ignore-scripts`. Claude
+Code installs separately with npm 11's `--strict-allow-scripts` and only
+`@anthropic-ai/claude-code` allowed, so transitive lifecycle scripts cannot
+float into the install. Exact global `npm ls --depth=0 --json` state and the
+complete global-bin set are verified on every run.
 
 The direct global package set is exactly:
 
@@ -163,6 +170,9 @@ The direct global package set is exactly:
 These five direct packages are the pinning and validation ceiling. Their npm
 transitive dependencies remain package-manager-managed; do not add deep pins
 or manually alter the agent prefix without an explicit compatibility migration.
+`@agentclientprotocol/codex-acp@1.1.7` is intentionally retained even though
+the registry has moved on: the current OpenHands SDK compatibility set pins
+that exact bridge version.
 This stage still installs no services, nginx configuration, firewall rules, or
 secrets.
 
