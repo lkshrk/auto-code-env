@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    paths-ignore:
+      - .github/workflows/validate-openhands-chart.yaml
+      - .github/workflows/release-openhands-chart.yaml
+      - .gitmodules
+      - deploy/**
+      - renovate.json5
 
 permissions:
   contents: read
