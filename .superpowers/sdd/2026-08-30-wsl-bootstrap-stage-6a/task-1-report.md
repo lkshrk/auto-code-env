@@ -30,3 +30,15 @@
   it progressed through existing negative cases without a Stage 6A error.
 - No real Ubuntu/WSL install or rerun was run here; that remains the target-stage
   validation.
+
+## Fix round 1
+
+- Commit: `88f012d34140f91bf52a41ed92c21da75a0802a1`
+- `dpkg --verify rbw` now runs with the clean allowlisted environment and must
+  succeed with no output before `/usr/bin/rbw` can execute.
+- Atomic pinentry publication now detects a successful-returning `mv -n` race:
+  a raced destination must be safe and byte-identical to staging; otherwise it
+  fails and cleanup removes the staged file.
+- Focused fixtures passed for dpkg discrepancy, nonzero verification, raced
+  destination, normal protocol/rerun; Bash syntax, ShellCheck, and whitespace
+  checks passed.
