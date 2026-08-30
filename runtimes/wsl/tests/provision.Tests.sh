@@ -137,6 +137,7 @@ setup_fixture() {
     'touch "$(dirname "$2")/.omni-config.lock"; cp "$2" "$2.bak"' \
     'printf "%s|%s|%s|%s|%s|%s|%s\\n" "$group" "$(id -un)" "${NPM_CONFIG_IGNORE_SCRIPTS-}" "${NPM_CONFIG_STRICT_ALLOW_SCRIPTS-}" "${NPM_CONFIG_ALLOW_SCRIPTS-}" "$2" "$(stat -c "%U:%G %a" "$(dirname "$2")")/$(stat -c "%U:%G %a" "$2")" >> /tmp/omni-calls' \
     'test ! -e /tmp/fixture-omni-fail-after-artifacts || test "$group" != openhands-agent-no-scripts || exit 97' \
+    'if test -e /tmp/fixture-omni-term-after-artifacts && test "$group" = openhands-system; then pid=$PPID; while test "$pid" -gt 1; do args=$(ps -o args= -p "$pid"); case "$args" in *provision.sh*) kill -TERM "$pid"; sleep 1; exit 99 ;; esac; pid=$(ps -o ppid= -p "$pid" | tr -d " "); done; exit 99; fi' \
     'case "$group" in' \
     '  openhands-system)' \
     '    test "$(id -u)" = 0 && test "$4" = /var/cache/openhands/omni && test "$6" = /var/lib/openhands/omni || exit 92' \
@@ -1277,6 +1278,55 @@ run_container '
   fi
   test "$(cat /usr/local/libexec/openhands-rbw-pinentry)" = foreign
   ! compgen -G "/usr/local/libexec/.openhands-rbw-pinentry.*" >/dev/null
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent
+  mkdir -p /var/lib/openhands/omni /home/agent/.cache/omni
+  chown agent:agent /home/agent/.cache /home/agent/.cache/omni
+  chmod 0700 /home/agent/.cache /home/agent/.cache/omni
+  mkdir -m 0700 /var/lib/openhands/omni/.config.Abc123 /home/agent/.cache/omni/.config.Def456
+  touch /var/lib/openhands/omni/.config.Abc123/settings.json /home/agent/.cache/omni/.config.Def456/settings.json
+  chown -R agent:agent /home/agent/.cache/omni/.config.Def456
+  bash /src/runtimes/wsl/provision.sh
+  test ! -e /var/lib/openhands/omni/.config.Abc123
+  test ! -e /home/agent/.cache/omni/.config.Def456
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent
+  mkdir -p /var/lib/openhands/omni
+  mkdir -m 0700 /var/lib/openhands/omni/.config.invalid
+  printf keep > /var/lib/openhands/omni/.config.invalid/keep
+  if bash /src/runtimes/wsl/provision.sh; then exit 1; fi
+  test "$(cat /var/lib/openhands/omni/.config.invalid/keep)" = keep
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent
+  mkdir -p /home/agent/.cache/omni /tmp/foreign-omni-config
+  printf keep > /tmp/foreign-omni-config/keep
+  chown -R agent:agent /home/agent/.cache/omni
+  chmod 0700 /home/agent/.cache /home/agent/.cache/omni
+  ln -s /tmp/foreign-omni-config /home/agent/.cache/omni/.config.Abc123
+  if bash /src/runtimes/wsl/provision.sh; then exit 1; fi
+  test "$(cat /tmp/foreign-omni-config/keep)" = keep
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-omni-term-after-artifacts
+  if bash /src/runtimes/wsl/provision.sh; then exit 1; fi
+  test "$(stat -c "%U:%G %a" /etc/openhands/omni)" = "root:root 755"
+  test "$(stat -c "%U:%G %a" /etc/openhands/omni/settings.json)" = "root:root 644"
+  cmp -s /etc/openhands/omni/settings.json /src/runtimes/wsl/omni/settings.json
+  test ! -e /etc/openhands/omni/.omni-config.lock
+  test ! -e /etc/openhands/omni/settings.json.bak
+  ! compgen -G "/var/lib/openhands/omni/.config.*" >/dev/null
+  ! compgen -G "/home/agent/.cache/omni/.config.*" >/dev/null
 '
 
 if [ "${RUN_WSL_REAL_TOOLCHAIN_TESTS:-0}" = 1 ]; then

@@ -75,6 +75,15 @@ symlinks, wrong ownership/mode, and malformed names fail closed. The fixture
 records private config path metadata for each group, checks all copies differ,
 and injects failure after Omni writes its lock/backup artifacts.
 
+## Follow-up — trap and stale recovery coverage
+
+Fixture coverage now interrupts provisioning after the root Omni process writes
+lock/backup artifacts, exercising EXIT cleanup rather than normal status
+cleanup. It also pre-creates valid root/agent staging directories for recovery,
+and proves malformed or symlink staging paths fail closed without touching their
+foreign content. Native smoke is not retried locally: post-round-two evidence
+reached real agent npm installation before Docker exhausted storage.
+
 Controller verification after `bef885f` and `c08cb32`: native `linux/arm64`
 smoke target with cache-only inputs exited `0`. Real Omni installed the root
 git/nginx/python/exact-rbw group, then Canvas/ACP/Codex with lifecycle scripts
