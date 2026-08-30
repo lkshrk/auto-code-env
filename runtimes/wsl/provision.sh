@@ -39,6 +39,8 @@ readonly RBW_PACKAGE_VERSION=1.13.2-7
 readonly RBW_BINARY=/usr/bin/rbw
 readonly RBW_PINENTRY_DIRECTORY=/usr/local/libexec
 readonly RBW_PINENTRY="${RBW_PINENTRY_DIRECTORY}/openhands-rbw-pinentry"
+readonly PYTHON_PACKAGE=python3-minimal
+readonly PYTHON_BINARY=/usr/bin/python3
 
 node_stage_root=
 staged_node_home=
@@ -356,6 +358,34 @@ assert_rbw_package() {
     [ -z "$verification" ] || fail 'invalid rbw package files'
 }
 
+assert_python_package() {
+    local status owner verification target resolved
+
+    status=$(run_clean /usr/bin/dpkg-query -W -f="\${db:Status-Abbrev}\\n" "$PYTHON_PACKAGE") ||
+        fail 'unable to query python3-minimal package'
+    [ "$status" = ii ] || fail 'invalid python3-minimal package'
+    owner=$(run_clean /usr/bin/dpkg-query -S "$PYTHON_BINARY") || fail 'unable to query python3 binary owner'
+    [ "$owner" = "$PYTHON_PACKAGE: $PYTHON_BINARY" ] || fail 'invalid python3 binary owner'
+    verification=$(run_clean /usr/bin/dpkg --verify "$PYTHON_PACKAGE") || fail 'unable to verify python3-minimal package'
+    [ -z "$verification" ] || fail 'invalid python3-minimal package files'
+    if [ -L "$PYTHON_BINARY" ]; then
+        target=$(/usr/bin/readlink "$PYTHON_BINARY") || fail 'unable to read python3 entry point'
+        case $target in
+            python3.[0-9]*) ;;
+            *) fail 'invalid python3 entry point' ;;
+        esac
+        [[ $target != *$'\t'* && $target != *$'\n'* ]] || fail 'invalid python3 entry point'
+        resolved=$(/usr/bin/readlink -f "$PYTHON_BINARY") || fail 'unable to resolve python3 entry point'
+        case $resolved in
+            /usr/bin/python3.[0-9]*) ;;
+            *) fail 'invalid python3 entry point' ;;
+        esac
+    else
+        resolved=$PYTHON_BINARY
+    fi
+    assert_root_file "$resolved" 755
+}
+
 write_rbw_pinentry() {
     local temp
 
@@ -436,6 +466,7 @@ verify_rbw() {
     assert_rbw_package
     assert_root_file "$RBW_BINARY" 755
     [ "$(run_clean "$RBW_BINARY" --version)" = 'rbw 1.13.2' ] || fail 'invalid rbw installation'
+    assert_python_package
     write_rbw_pinentry
 }
 
@@ -896,7 +927,7 @@ fi
 preflight_tool_paths
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
-    /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils "rbw=${RBW_PACKAGE_VERSION}"
+    /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils "$PYTHON_PACKAGE" "rbw=${RBW_PACKAGE_VERSION}"
 verify_rbw
 stage_toolchain
 validate_existing_tool_paths

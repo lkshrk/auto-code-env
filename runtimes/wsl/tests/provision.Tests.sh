@@ -6,12 +6,13 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 fixture_image=auto-code-env-wsl-stage5a-fixture:ubuntu-26.04
 
 ensure_fixture_image() {
-  if docker image inspect "$fixture_image" >/dev/null 2>&1; then
+  if docker image inspect "$fixture_image" >/dev/null 2>&1 &&
+    docker run --rm "$fixture_image" test -x /usr/bin/python3; then
     return
   fi
   printf '%s\n' \
     'FROM ubuntu:26.04' \
-    'RUN apt-get update && apt-get install -y --no-install-recommends xz-utils && rm -rf /var/lib/apt/lists/*' |
+    'RUN apt-get update && apt-get install -y --no-install-recommends python3-minimal xz-utils && rm -rf /var/lib/apt/lists/*' |
     docker build --quiet --tag "$fixture_image" -
 }
 
@@ -141,7 +142,7 @@ setup_fixture() {
     'test "$PATH" = /usr/sbin:/usr/bin:/sbin:/bin || exit 73' \
     'printf "%s\n" "$*" >> /tmp/apt-calls' \
     'case "$*" in' \
-    '  update|"install -y --no-install-recommends ca-certificates curl xz-utils rbw=1.13.2-7")' \
+    '  update|"install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal rbw=1.13.2-7")' \
     '    if test ! -e /usr/bin/rbw; then' \
     '      printf "%s\\n" "#!/bin/sh" "case \"\${1:-}\" in" "  --version) printf \"%s\\n\" \"rbw 1.13.2\" ;;" "  *) exit 0 ;;" "esac" > /usr/bin/rbw' \
     '      chmod 0755 /usr/bin/rbw' \
@@ -153,17 +154,14 @@ setup_fixture() {
     '#!/bin/sh' \
     'case "${1:-}" in' \
     '  -W)' \
-    '    test "${3:-}" = rbw || exit 1' \
-    '    test ! -e /tmp/fixture-counterfeit-rbw || { printf "ii  9.9.9-1\\n"; exit 0; }' \
-    '    printf "ii  1.13.2-7\\n" ;;' \
-    '  -S) test "${2:-}" = /usr/bin/rbw || exit 1; printf "rbw: /usr/bin/rbw\\n" ;;' \
+    '    case "${3:-}" in rbw) test ! -e /tmp/fixture-counterfeit-rbw || { printf "ii  9.9.9-1\\n"; exit 0; }; printf "ii  1.13.2-7\\n" ;; python3-minimal) printf "ii\\n" ;; *) exit 1 ;; esac ;;' \
+    '  -S) case "${2:-}" in /usr/bin/rbw) printf "rbw: /usr/bin/rbw\\n" ;; /usr/bin/python3) printf "python3-minimal: /usr/bin/python3\\n" ;; *) exit 1 ;; esac ;;' \
     '  *) exit 1 ;;' \
     'esac' > /usr/bin/dpkg-query
   printf '%s\n' \
     '#!/bin/sh' \
-    'test "${1:-}" = --verify && test "${2:-}" = rbw || exit 1' \
-    'test ! -e /tmp/fixture-dpkg-verify-nonzero || exit 1' \
-    'test ! -e /tmp/fixture-dpkg-verify-fail || printf "??5?????? /usr/bin/rbw\\n"' \
+    'test "${1:-}" = --verify || exit 1' \
+    'case "${2:-}" in rbw) test ! -e /tmp/fixture-dpkg-verify-nonzero || exit 1; test ! -e /tmp/fixture-dpkg-verify-fail || printf "??5?????? /usr/bin/rbw\\n" ;; python3-minimal) test ! -e /tmp/fixture-python-dpkg-verify-nonzero || exit 1; test ! -e /tmp/fixture-python-dpkg-verify-fail || printf "??5?????? /usr/bin/python3\\n" ;; *) exit 1 ;; esac' \
     > /usr/bin/dpkg
   printf '%s\n' '#!/bin/sh' 'printf "%s\n" "${FIXTURE_UNAME:-x86_64}"' > /usr/bin/uname
   printf '%s\n' \
@@ -285,7 +283,7 @@ run_container '
     "$benchmark_elapsed_ms" "$(wc -l < /tmp/node-digest-processes)" \
     "$(grep -c ^tar$ /tmp/node-digest-processes)" "$(grep -c ^sha256sum$ /tmp/node-digest-processes)" \
     "$(grep -c ^find$ /tmp/node-digest-processes)" "$(grep -c ^stat$ /tmp/node-digest-processes)"
-  printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils rbw=1.13.2-7" update "install -y --no-install-recommends ca-certificates curl xz-utils rbw=1.13.2-7" > /tmp/apt-calls.expected
+  printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal rbw=1.13.2-7" update "install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal rbw=1.13.2-7" > /tmp/apt-calls.expected
   cmp -s /tmp/apt-calls.expected /tmp/apt-calls
 
   test "$(getent passwd agent | cut -d: -f6,7)" = "/home/agent:/bin/bash"
@@ -999,6 +997,9 @@ run_container '
   bash /src/runtimes/wsl/provision.sh
   test "$(stat -c "%U:%G %a" /usr/bin/rbw)" = "root:root 755"
   test "$(/usr/bin/rbw --version)" = "rbw 1.13.2"
+  test -L /usr/bin/python3
+  case "$(readlink /usr/bin/python3)" in python3.[0-9]*) ;; *) exit 1 ;; esac
+  test "$(stat -Lc "%U:%G %a" /usr/bin/python3)" = "root:root 755"
   test "$(stat -c "%U:%G %a" /usr/local/libexec)" = "root:root 755"
   pinentry=/usr/local/libexec/openhands-rbw-pinentry
   test "$(stat -c "%U:%G %a" "$pinentry")" = "root:root 755"
@@ -1062,6 +1063,25 @@ run_container '
     exit 1
   fi
   test ! -e /tmp/rbw-executed
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-python-dpkg-verify-fail
+  printf "#!/bin/sh\ntouch /tmp/python-executed\n" > /usr/bin/python3
+  chmod 0755 /usr/bin/python3
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test ! -e /tmp/python-executed
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-python-dpkg-verify-nonzero
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
 '
 
 run_container '
