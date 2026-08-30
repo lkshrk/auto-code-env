@@ -136,9 +136,24 @@ setup_fixture() {
     'test "$PATH" = /usr/sbin:/usr/bin:/sbin:/bin || exit 73' \
     'printf "%s\n" "$*" >> /tmp/apt-calls' \
     'case "$*" in' \
-    '  update|"install -y --no-install-recommends ca-certificates curl xz-utils") exit 0 ;;' \
+    '  update|"install -y --no-install-recommends ca-certificates curl xz-utils rbw=1.13.2-7")' \
+    '    if test ! -e /usr/bin/rbw; then' \
+    '      printf "%s\\n" "#!/bin/sh" "case \"\${1:-}\" in" "  --version) printf \"%s\\n\" \"rbw 1.13.2\" ;;" "  *) exit 0 ;;" "esac" > /usr/bin/rbw' \
+    '      chmod 0755 /usr/bin/rbw' \
+    '    fi' \
+    '    exit 0 ;;' \
     '  *) exit 71 ;;' \
     'esac' > /usr/bin/apt-get
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'case "${1:-}" in' \
+    '  -W)' \
+    '    test "${3:-}" = rbw || exit 1' \
+    '    test ! -e /tmp/fixture-counterfeit-rbw || { printf "ii  9.9.9-1\\n"; exit 0; }' \
+    '    printf "ii  1.13.2-7\\n" ;;' \
+    '  -S) test "${2:-}" = /usr/bin/rbw || exit 1; printf "rbw: /usr/bin/rbw\\n" ;;' \
+    '  *) exit 1 ;;' \
+    'esac' > /usr/bin/dpkg-query
   printf '%s\n' '#!/bin/sh' 'printf "%s\n" "${FIXTURE_UNAME:-x86_64}"' > /usr/bin/uname
   printf '%s\n' \
     '#!/bin/sh' \
@@ -219,7 +234,7 @@ setup_fixture() {
     '#!/bin/sh' \
     'case "$*" in *node-v24.20.0-linux-x64*) printf "%s\n" stat >> /tmp/node-digest-processes ;; esac' \
     'exec /usr/bin/stat.fixture-real "$@"' > /usr/bin/stat
-  chmod 0755 /usr/bin/apt-get /usr/bin/curl /usr/bin/find /usr/bin/mv /usr/bin/sha256sum /usr/bin/stat /usr/bin/tar /usr/bin/uname
+  chmod 0755 /usr/bin/apt-get /usr/bin/curl /usr/bin/dpkg-query /usr/bin/find /usr/bin/mv /usr/bin/sha256sum /usr/bin/stat /usr/bin/tar /usr/bin/uname
 }
 
 run_container() {
@@ -259,7 +274,7 @@ run_container '
     "$benchmark_elapsed_ms" "$(wc -l < /tmp/node-digest-processes)" \
     "$(grep -c ^tar$ /tmp/node-digest-processes)" "$(grep -c ^sha256sum$ /tmp/node-digest-processes)" \
     "$(grep -c ^find$ /tmp/node-digest-processes)" "$(grep -c ^stat$ /tmp/node-digest-processes)"
-  printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils" update "install -y --no-install-recommends ca-certificates curl xz-utils" > /tmp/apt-calls.expected
+  printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils rbw=1.13.2-7" update "install -y --no-install-recommends ca-certificates curl xz-utils rbw=1.13.2-7" > /tmp/apt-calls.expected
   cmp -s /tmp/apt-calls.expected /tmp/apt-calls
 
   test "$(getent passwd agent | cut -d: -f6,7)" = "/home/agent:/bin/bash"
@@ -966,6 +981,76 @@ run_container '
     exit 1
   fi
   test "$(cat /etc/openhands/npmrc)" = foreign
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  test "$(stat -c "%U:%G %a" /usr/bin/rbw)" = "root:root 755"
+  test "$(/usr/bin/rbw --version)" = "rbw 1.13.2"
+  test "$(stat -c "%U:%G %a" /usr/local/libexec)" = "root:root 755"
+  pinentry=/usr/local/libexec/openhands-rbw-pinentry
+  test "$(stat -c "%U:%G %a" "$pinentry")" = "root:root 755"
+  credentials=$(mktemp -d)
+  trap "rm -rf -- \"$credentials\"" EXIT
+  printf "\000%%\r\nA\377" > "$credentials/rbw_master"
+  printf "%s\n" "OK rbw credential pinentry ready" "OK" "OK" "OK" "OK" "D %00%25%0D%0A%41%FF" "OK" > /tmp/pinentry.expected
+  printf "%s\n" "SETTITLE rbw" "SETPROMPT Master Password" "SETDESC unlock" "SETERROR retry" "GETPIN" |
+    env -i PATH=/usr/bin:/bin CREDENTIALS_DIRECTORY="$credentials" "$pinentry" --timeout 0 > /tmp/pinentry.actual 2>/tmp/pinentry.stderr
+  cmp -s /tmp/pinentry.expected /tmp/pinentry.actual
+  test ! -s /tmp/pinentry.stderr
+  printf "%s\n" "OK rbw credential pinentry ready" "OK" "OK" "ERR 83886179 unexpected pinentry prompt" > /tmp/pinentry-wrong.expected
+  printf "%s\n" "SETTITLE rbw" "SETPROMPT One-time Password" "GETPIN" |
+    env -i PATH=/usr/bin:/bin CREDENTIALS_DIRECTORY="$credentials" "$pinentry" > /tmp/pinentry-wrong.actual 2>/tmp/pinentry.stderr
+  cmp -s /tmp/pinentry-wrong.expected /tmp/pinentry-wrong.actual
+  test ! -s /tmp/pinentry.stderr
+  printf "%s\n" "OK rbw credential pinentry ready" "ERR 83886179 unsupported pinentry command" > /tmp/pinentry-unknown.expected
+  printf "%s\n" "OPTION grab" |
+    env -i PATH=/usr/bin:/bin CREDENTIALS_DIRECTORY="$credentials" "$pinentry" > /tmp/pinentry-unknown.actual 2>/tmp/pinentry.stderr
+  cmp -s /tmp/pinentry-unknown.expected /tmp/pinentry-unknown.actual
+  test ! -s /tmp/pinentry.stderr
+  rm "$credentials/rbw_master"
+  printf "%s\n" "OK rbw credential pinentry ready" "OK" "OK" "ERR 83886179 credential unavailable" > /tmp/pinentry-missing.expected
+  printf "%s\n" "SETPROMPT Master Password" "GETPIN" |
+    env -i PATH=/usr/bin:/bin CREDENTIALS_DIRECTORY="$credentials" "$pinentry" > /tmp/pinentry-missing.actual 2>/tmp/pinentry.stderr
+  cmp -s /tmp/pinentry-missing.expected /tmp/pinentry-missing.actual
+  test ! -s /tmp/pinentry.stderr
+  : > "$credentials/rbw_master"
+  printf "%s\n" "OK rbw credential pinentry ready" "OK" "OK" "ERR 83886179 empty credential" > /tmp/pinentry-empty.expected
+  printf "%s\n" "SETPROMPT Master Password" "GETPIN" |
+    env -i PATH=/usr/bin:/bin CREDENTIALS_DIRECTORY="$credentials" "$pinentry" > /tmp/pinentry-empty.actual 2>/tmp/pinentry.stderr
+  cmp -s /tmp/pinentry-empty.expected /tmp/pinentry-empty.actual
+  test ! -s /tmp/pinentry.stderr
+  printf secret > "$credentials/rbw_master"
+  printf "%s\n" "OK rbw credential pinentry ready" "OK" > /tmp/pinentry-bye.expected
+  printf "%s\n" "BYE" |
+    env -i PATH=/usr/bin:/bin CREDENTIALS_DIRECTORY="$credentials" "$pinentry" > /tmp/pinentry-bye.actual 2>/tmp/pinentry.stderr
+  cmp -s /tmp/pinentry-bye.expected /tmp/pinentry-bye.actual
+  test ! -s /tmp/pinentry.stderr
+  bash /src/runtimes/wsl/provision.sh
+  test "$(stat -c "%U:%G %a" "$pinentry")" = "root:root 755"
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  mkdir -p /usr/local/libexec
+  printf foreign > /usr/local/libexec/openhands-rbw-pinentry
+  chmod 0755 /usr/local/libexec/openhands-rbw-pinentry
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(cat /usr/local/libexec/openhands-rbw-pinentry)" = foreign
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-counterfeit-rbw
+  printf "#!/bin/sh\ntouch /tmp/rbw-executed\n" > /usr/bin/rbw
+  chmod 0755 /usr/bin/rbw
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test ! -e /tmp/rbw-executed
 '
 
 if [ "${RUN_WSL_REAL_TOOLCHAIN_TESTS:-0}" = 1 ]; then

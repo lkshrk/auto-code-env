@@ -35,6 +35,10 @@ readonly UV_VERSION=0.12.7
 readonly UV_DIRECTORY=uv-x86_64-unknown-linux-gnu
 readonly UV_ARCHIVE="${UV_DIRECTORY}.tar.gz"
 readonly UV_TARGET=x86_64-unknown-linux-gnu
+readonly RBW_PACKAGE_VERSION=1.13.2-7
+readonly RBW_BINARY=/usr/bin/rbw
+readonly RBW_PINENTRY_DIRECTORY=/usr/local/libexec
+readonly RBW_PINENTRY="${RBW_PINENTRY_DIRECTORY}/openhands-rbw-pinentry"
 
 node_stage_root=
 staged_node_home=
@@ -338,6 +342,94 @@ assert_root_nonwritable_file() {
     if (( (8#$mode & 0022) != 0 )); then
         fail "writable root file: $path"
     fi
+}
+
+assert_rbw_package() {
+    local status owner
+
+    status=$(run_clean /usr/bin/dpkg-query -W -f="\${db:Status-Abbrev} \${Version}\\n" rbw) ||
+        fail 'unable to query rbw package'
+    [ "$status" = "ii  $RBW_PACKAGE_VERSION" ] || fail 'invalid rbw package'
+    owner=$(run_clean /usr/bin/dpkg-query -S "$RBW_BINARY") || fail 'unable to query rbw binary owner'
+    [ "$owner" = "rbw: $RBW_BINARY" ] || fail 'invalid rbw binary owner'
+}
+
+write_rbw_pinentry() {
+    local temp
+
+    for path in /usr /usr/local; do
+        assert_trusted_root_directory "$path"
+    done
+    if path_exists "$RBW_PINENTRY_DIRECTORY"; then
+        assert_exact_root_directory "$RBW_PINENTRY_DIRECTORY"
+    else
+        /usr/bin/mkdir -m 0755 -- "$RBW_PINENTRY_DIRECTORY"
+        assert_exact_root_directory "$RBW_PINENTRY_DIRECTORY"
+    fi
+
+    temp=$(/usr/bin/mktemp "${RBW_PINENTRY_DIRECTORY}/.openhands-rbw-pinentry.XXXXXX") ||
+        fail 'unable to stage rbw pinentry'
+    register_cleanup "$temp"
+    /usr/bin/cat > "$temp" <<'PYTHON'
+#!/usr/bin/python3
+import os
+import sys
+from pathlib import Path
+
+out = sys.stdout.buffer
+prompt = b""
+
+
+def write(data: bytes) -> None:
+    out.write(data)
+    out.flush()
+
+
+write(b"OK rbw credential pinentry ready\n")
+for raw in sys.stdin.buffer:
+    command, _, argument = raw.rstrip(b"\r\n").partition(b" ")
+    if command == b"SETPROMPT":
+        prompt = argument
+        write(b"OK\n")
+    elif command in {b"SETTITLE", b"SETDESC", b"SETERROR"}:
+        write(b"OK\n")
+    elif command == b"GETPIN":
+        if prompt != b"Master Password":
+            write(b"ERR 83886179 unexpected pinentry prompt\n")
+            break
+        try:
+            secret = Path(os.environ["CREDENTIALS_DIRECTORY"], "rbw_master").read_bytes()
+        except (KeyError, OSError):
+            write(b"ERR 83886179 credential unavailable\n")
+            break
+        if not secret:
+            write(b"ERR 83886179 empty credential\n")
+            break
+        write(b"D " + b"".join(f"%{byte:02X}".encode() for byte in secret) + b"\nOK\n")
+        break
+    elif command == b"BYE":
+        write(b"OK\n")
+        break
+    else:
+        write(b"ERR 83886179 unsupported pinentry command\n")
+        break
+PYTHON
+    /usr/bin/chown root:root "$temp"
+    /usr/bin/chmod 0755 "$temp"
+    if path_exists "$RBW_PINENTRY"; then
+        assert_root_file "$RBW_PINENTRY" 755
+        /usr/bin/cmp -s "$RBW_PINENTRY" "$temp" || fail 'foreign rbw pinentry'
+    else
+        /usr/bin/mv -T -n -- "$temp" "$RBW_PINENTRY"
+    fi
+    assert_root_file "$RBW_PINENTRY" 755
+}
+
+verify_rbw() {
+    assert_rbw_package
+    assert_root_file "$RBW_BINARY" 755
+    [ "$(run_clean "$RBW_BINARY" --version)" = 'rbw 1.13.2' ] || fail 'invalid rbw installation'
+    write_rbw_pinentry
 }
 
 print_wrapper() {
@@ -797,7 +889,8 @@ fi
 preflight_tool_paths
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
-    /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils
+    /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils "rbw=${RBW_PACKAGE_VERSION}"
+verify_rbw
 stage_toolchain
 validate_existing_tool_paths
 commit_toolchain
