@@ -8,10 +8,13 @@ unit="$repo_root/runtimes/wsl/runtime/agent-canvas.service"
 nginx_site="$repo_root/runtimes/wsl/runtime/nginx-site.conf"
 distro_config="$repo_root/runtimes/wsl/wsl-distribution.conf"
 containerfile="$repo_root/runtimes/wsl/Containerfile"
+canvas_patch="$repo_root/runtimes/wsl/runtime/patch-agent-canvas-automation.mjs"
 
-for file in "$entrypoint" "$unit" "$nginx_site" "$distro_config" "$containerfile"; do
+for file in "$entrypoint" "$unit" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch"; do
   test -f "$file"
 done
+grep -F 'OpenHands/OpenHands#16217' "$canvas_patch"
+grep -F 'Remove this patch when' "$canvas_patch"
 
 grep -Fx 'User=agent' "$unit"
 grep -Fx 'LoadCredential=local_backend_api_key' "$unit"
@@ -32,6 +35,8 @@ grep -F 'ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348e
 grep -F 'OPENHANDS_IMAGE_BUILD=1' "$containerfile"
 grep -F 'openhands-agent-server==1.44.0' "$containerfile"
 grep -F 'openhands-automation==1.9.0' "$containerfile"
+grep -F 'patch-agent-canvas-automation.mjs' "$containerfile"
+grep -F 'uv run --no-project --with openhands-automation==1.9.0 python -m uvicorn openhands.automation.app:app' "$containerfile"
 grep -F 'systemd-sysv' "$containerfile"
 grep -F 'test -x /sbin/init' "$containerfile"
 grep -F 'test -x /usr/bin/systemctl' "$containerfile"
@@ -65,6 +70,44 @@ docker run --rm -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c '
   test -z "$output"
   test ! -e /tmp/api-key-output
 '
+
+fixture=$(mktemp "${TMPDIR:-/tmp}/canvas.XXXXXX.mjs")
+trap 'rm -f -- "$fixture"' EXIT
+printf '%s\n' \
+  'function buildAutomationCommand() {' \
+  '  const uvxArgs = [];' \
+  '  let source = "";' \
+  '  if (gitRef) {' \
+  '    uvxArgs.push("--from", gitUrl, "uvicorn", "openhands.automation.app:app");' \
+  '  } else if (version) {' \
+  '    // Use specific PyPI version' \
+  '    uvxArgs.push(' \
+  '      "--from",' \
+  '      `${DEFAULT_AUTOMATION_PACKAGE}==${version}`,' \
+  '      "uvicorn",' \
+  '      "openhands.automation.app:app",' \
+  '    );' \
+  '    source = `PyPI (${version})`;' \
+  '  } else {' \
+  '    // Default to released PyPI version' \
+  '    uvxArgs.push(' \
+  '      "--from",' \
+  '      `${DEFAULT_AUTOMATION_PACKAGE}==${DEFAULT_AUTOMATION_VERSION}`,' \
+  '      "uvicorn",' \
+  '      "openhands.automation.app:app",' \
+  '    );' \
+  '    source = `PyPI (${DEFAULT_AUTOMATION_VERSION}, default)`;' \
+  '  }' \
+  '  return { command: "uvx", args: uvxArgs, source };' \
+  '}' > "$fixture"
+node "$canvas_patch" "$fixture"
+node --check "$fixture"
+grep -F '"--no-project"' "$fixture"
+grep -F '"python",' "$fixture"
+grep -F '"-m",' "$fixture"
+if sed -n '/else if (version)/,/} else {/p' "$fixture" | grep -F 'uvxArgs.push('; then exit 1; fi
+if sed -n '/} else {/,/return {/p' "$fixture" | grep -F 'uvxArgs.push('; then exit 1; fi
+if node "$canvas_patch" "$fixture"; then exit 1; fi
 
 docker run --rm -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c '
   credential_command() {
