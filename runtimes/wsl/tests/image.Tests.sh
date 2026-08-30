@@ -7,16 +7,17 @@ bake_file="$repo_root/runtimes/wsl/docker-bake.hcl"
 build_script="$repo_root/runtimes/wsl/build-wsl.sh"
 validation_workflow="$repo_root/.github/workflows/validate-openhands-worker.yaml"
 release_workflow="$repo_root/.github/workflows/release-openhands-worker.yaml"
+readme="$repo_root/runtimes/wsl/README.md"
 
 for file in "$bake_file" "$build_script"; do
   test -f "$file"
 done
 
-for file in "$validation_workflow" "$release_workflow"; do
+for file in "$validation_workflow" "$release_workflow" "$readme"; do
   test -f "$file"
 done
 
-ruby -ryaml -rjson -ropen3 -rtmpdir - "$validation_workflow" "$release_workflow" <<'RUBY'
+ruby -ryaml -rjson -ropen3 -rtmpdir - "$validation_workflow" "$release_workflow" "$readme" <<'RUBY'
 def assert(condition, message)
   abort(message) unless condition
 end
@@ -37,7 +38,35 @@ def run(job, name)
   step(job, name).fetch('run')
 end
 
-validation, release = ARGV.map { |path| workflow(path) }
+validation, release = ARGV.first(2).map { |path| workflow(path) }
+readme = File.read(ARGV.fetch(2))
+
+[
+  'multi-architecture OCI image',
+  'openhands-worker-<version>-amd64.wsl',
+  'openhands-worker-<version>-arm64.wsl',
+  'checksums.txt',
+  'ImagePath',
+  'ImageUri',
+  'SHA-256',
+  'exactly one artifact source',
+  '-amd64.wsl',
+  '-arm64.wsl',
+  'existing distro is a no-op',
+  'does not migrate',
+  'WSL state migration',
+  'persistent mounts',
+  'LOCAL_BACKEND_API_KEY',
+  'LOCAL_BACKEND_API_KEY_FILE',
+  '/etc/nginx/tls/tls.crt',
+  '/etc/nginx/tls/tls.key',
+  'Omni `0.10.4`',
+  'Windows-on-Arm',
+  'native amd64 CI',
+  'real Windows import'
+].each do |phrase|
+  assert(readme.include?(phrase), "README must document #{phrase.inspect}")
+end
 native_matrix = [
   { 'arch' => 'amd64', 'platform' => 'linux/amd64', 'runner' => 'ubuntu-24.04' },
   { 'arch' => 'arm64', 'platform' => 'linux/arm64', 'runner' => 'ubuntu-24.04-arm' }
