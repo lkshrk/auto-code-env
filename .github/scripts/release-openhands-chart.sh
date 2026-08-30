@@ -9,23 +9,22 @@ is_not_found() {
   [[ $1 =~ ^Error:.*(:\ not\ found|manifest\ unknown).*$ ]] || [[ $1 =~ ^release\ not\ found.*$ ]]
 }
 
-pull_and_compare() {
+pull_and_compare() (
   local directory output package rc
   directory=$(mktemp -d)
+  trap 'rm -rf -- "$directory"' EXIT
   if output=$(helm pull "$OCI_REPOSITORY" --version "$VERSION" --destination "$directory" 2>&1); then
     package=$(find "$directory" -maxdepth 1 -type f -name '*.tgz' -print -quit)
     test -n "$package" || die "OCI pull returned no chart package"
     cmp -s "$PACKAGE" "$package" || die "OCI chart $OCI_REPOSITORY:$VERSION differs from local package"
-    rm -rf "$directory"
     return 0
   else
     rc=$?
   fi
-  rm -rf "$directory"
   if is_not_found "$output"; then return 10; fi
   printf '%s\n' "$output" >&2
   return "$rc"
-}
+)
 
 ensure_tag() {
   local remote
@@ -39,8 +38,8 @@ ensure_tag() {
 
 release_state() {
   local output rc
-  if output=$(gh release view "$RELEASE_TAG" --json isDraft,targetCommitish 2>&1); then
-    jq -e --arg sha "$GITHUB_SHA" '.targetCommitish == $sha and (.isDraft | type == "boolean")' <<<"$output" >/dev/null || die "existing release $RELEASE_TAG does not match $GITHUB_SHA"
+  if output=$(gh release view "$RELEASE_TAG" --json isDraft,tagName 2>&1); then
+    jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and (.isDraft | type == "boolean")' <<<"$output" >/dev/null || die "existing release $RELEASE_TAG is invalid"
     jq -r 'if .isDraft then "draft" else "published" end' <<<"$output"
     return
   else

@@ -34,6 +34,9 @@ jobs:
       - name: Test release recovery contract
         run: bash .github/scripts/release-openhands-chart.Tests.sh
 
+      - name: ShellCheck chart scripts
+        run: shellcheck .github/scripts/release-openhands-chart.sh .github/scripts/release-openhands-chart.Tests.sh
+
       - name: Validate package
         shell: bash
         run: |
@@ -45,6 +48,7 @@ jobs:
           [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           version=${tag#v}
           commit=$(git -C "$upstream" rev-parse HEAD)
+          epoch=$(git -C "$upstream" show -s --format=%ct HEAD)
           app_version=$(awk '$1 == "appVersion:" {gsub(/"/, "", $2); print $2}' "$chart/Chart.yaml")
           test "$tag" = "v$app_version"
           test -z "$(git -C "$upstream" status --porcelain)"
@@ -74,8 +78,18 @@ jobs:
 
           helm lint "$build/openhands-agent-canvas"
           helm template openhands "$build/openhands-agent-canvas" --namespace ai >/dev/null
+          find "$build/openhands-agent-canvas" -exec touch -h -d "@$epoch" {} +
           helm package "$build/openhands-agent-canvas" --destination "$build"
           package="$build/openhands-agent-canvas-$version.tgz"
           test -f "$package"
           test "$(helm show chart "$package" | awk '$1 == "version:" {print $2}')" = "$version"
           test "$(helm show chart "$package" | awk '$1 == "appVersion:" {print $2}')" = "$app_version"
+
+          repro=$(mktemp -d)
+          trap 'rm -rf "$build" "$repro"' EXIT
+          find "$build/openhands-agent-canvas" -exec touch -h -d '@1' {} +
+          find "$build/openhands-agent-canvas" -exec touch -h -d "@$epoch" {} +
+          helm package "$build/openhands-agent-canvas" --destination "$repro"
+          repro_package="$repro/openhands-agent-canvas-$version.tgz"
+          cmp -s "$package" "$repro_package"
+          test "$(sha256sum "$package" | awk '{print $1}')" = "$(sha256sum "$repro_package" | awk '{print $1}')"
