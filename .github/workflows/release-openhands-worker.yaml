@@ -204,9 +204,14 @@ jobs:
               def index:
                 .mediaType == "application/vnd.oci.image.index.v1+json" or
                 .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json";
+              def image_manifest:
+                .mediaType == "application/vnd.oci.image.manifest.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.v2+json";
               def runtime:
+                image_manifest and
                 .platform.os == "linux" and .platform.architecture == $arch;
               def attestation($runtime_digest):
+                image_manifest and
                 .platform.os == "unknown" and
                 .platform.architecture == "unknown" and
                 (.annotations // {})["vnd.docker.reference.type"] == "attestation-manifest" and
