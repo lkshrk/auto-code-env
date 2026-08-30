@@ -194,42 +194,78 @@ jobs:
           manifest="$RUNNER_TEMP/manifest.json"
           inspect_error="$RUNNER_TEMP/manifest-inspect-error.log"
           reference="$IMAGE:$VERSION"
-          amd64_digest=$(< release/image-digest-amd64.txt)
-          arm64_digest=$(< release/image-digest-arm64.txt)
-          verify_manifest() {
-            jq -e --arg amd64 "$amd64_digest" --arg arm64 "$arm64_digest" '
-              def real_platform:
-                .platform.os == "linux" and
-                (.platform.architecture == "amd64" or .platform.architecture == "arm64");
-              def attestation:
+          amd64_index_digest=$(< release/image-digest-amd64.txt)
+          arm64_index_digest=$(< release/image-digest-arm64.txt)
+          source_descriptors() {
+            arch=$1
+            source=$2
+            output=$3
+            jq -e --arg arch "$arch" '
+              def index:
+                .mediaType == "application/vnd.oci.image.index.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json";
+              def runtime:
+                .platform.os == "linux" and .platform.architecture == $arch;
+              def attestation($runtime_digest):
                 .platform.os == "unknown" and
                 .platform.architecture == "unknown" and
                 (.annotations // {})["vnd.docker.reference.type"] == "attestation-manifest" and
-                ((.annotations // {})["vnd.docker.reference.digest"] == $amd64 or
-                 (.annotations // {})["vnd.docker.reference.digest"] == $arm64);
-              [(.manifests // [])[]] as $all |
-              [$all[] | select(real_platform)] as $platforms |
-              [$all[] | select(attestation)] as $attestations |
-              ($all | length) == (($platforms | length) + ($attestations | length)) and
-              ($platforms | length) == 2 and
-              ($attestations | length) <= 2 and
-              ($attestations | map((.annotations // {})["vnd.docker.reference.digest"]) | unique | length) == ($attestations | length) and
-              any($platforms[]; .platform.architecture == "amd64" and .digest == $amd64) and
-              any($platforms[]; .platform.architecture == "arm64" and .digest == $arm64)
+                (.annotations // {})["vnd.docker.reference.digest"] == $runtime_digest;
+              def descriptor:
+                { digest, mediaType, platform, annotations: (.annotations // {}) };
+              if index and ((.manifests | type) == "array") then
+                [.manifests[]] as $all |
+                [$all[] | select(runtime)] as $runtime |
+                if ($runtime | length) != 1 then false else
+                  $runtime[0].digest as $runtime_digest |
+                  [$all[] | select(attestation($runtime_digest))] as $attestations |
+                  if ($attestations | length) < 1 or
+                     ($all | length) != (1 + ($attestations | length))
+                  then false
+                  else ([$runtime[0]] + $attestations | map(descriptor) | sort_by(.digest))
+                  end
+                end
+              else false end
+            ' "$source" > "$output"
+          }
+          source_amd64="$RUNNER_TEMP/source-amd64-index.json"
+          source_arm64="$RUNNER_TEMP/source-arm64-index.json"
+          docker buildx imagetools inspect --raw "$IMAGE@$amd64_index_digest" > "$source_amd64"
+          docker buildx imagetools inspect --raw "$IMAGE@$arm64_index_digest" > "$source_arm64"
+          source_descriptors amd64 "$source_amd64" "$RUNNER_TEMP/source-amd64-descriptors.json"
+          source_descriptors arm64 "$source_arm64" "$RUNNER_TEMP/source-arm64-descriptors.json"
+          expected="$RUNNER_TEMP/expected-descriptors.json"
+          jq -s 'add | sort_by(.digest)' \
+            "$RUNNER_TEMP/source-amd64-descriptors.json" \
+            "$RUNNER_TEMP/source-arm64-descriptors.json" > "$expected"
+          verify_manifest() {
+            jq -e --slurpfile expected "$expected" '
+              def index:
+                .mediaType == "application/vnd.oci.image.index.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json";
+              def descriptor:
+                { digest, mediaType, platform, annotations: (.annotations // {}) };
+              if index and ((.manifests | type) == "array") then
+                ([.manifests[] | descriptor] | sort_by(.digest)) == ($expected[0] | sort_by(.digest))
+              else false end
             ' "$manifest" >/dev/null
+          }
+          is_exact_absence() {
+            test "$(wc -l < "$1")" -eq 1 &&
+              test "$(cat "$1")" = "ERROR: $2: not found"
           }
           if docker buildx imagetools inspect --raw "$reference" > "$manifest" 2> "$inspect_error"; then
             verify_manifest
             exit 0
           fi
-          if ! grep -Fq "$reference" "$inspect_error" || ! grep -Eqi 'manifest unknown|not found' "$inspect_error"; then
+          if ! is_exact_absence "$inspect_error" "$reference"; then
             cat "$inspect_error" >&2
             exit 1
           fi
           docker buildx imagetools create \
             --tag "$IMAGE:$VERSION" \
-            "$IMAGE@$amd64_digest" \
-            "$IMAGE@$arm64_digest"
+            "$IMAGE@$amd64_index_digest" \
+            "$IMAGE@$arm64_index_digest"
           docker buildx imagetools inspect --raw "$reference" > "$manifest"
           verify_manifest
 

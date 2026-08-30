@@ -16,7 +16,7 @@ for file in "$validation_workflow" "$release_workflow"; do
   test -f "$file"
 done
 
-ruby -ryaml -rjson -ropen3 - "$validation_workflow" "$release_workflow" <<'RUBY'
+ruby -ryaml -rjson -ropen3 -rtmpdir - "$validation_workflow" "$release_workflow" <<'RUBY'
 def assert(condition, message)
   abort(message) unless condition
 end
@@ -81,35 +81,69 @@ assert(prepare.include?('gh release upload "$tag" --clobber'), 'draft asset uplo
 assert(prepare.include?(".tag_name") && !prepare.include?('target_commitish'), 'remote tag is authority for release reuse')
 assert(prepare.include?('.state == "uploaded"') && prepare.include?('.digest == $digest'), 'published assets must be complete and match local digests')
 manifest = run(publish, 'Verify or create immutable manifest')
-assert(manifest.include?('imagetools inspect --raw') && manifest.include?('manifest unknown') && manifest.include?('reference="$IMAGE:$VERSION"') && manifest.include?('grep -Fq "$reference"'), 'manifest lookup must distinguish exact absence from errors')
+assert(manifest.include?('source_descriptors') && manifest.include?('imagetools inspect --raw') && manifest.include?('is_exact_absence'), 'manifest must flatten validated source indexes')
 assert(manifest.include?('--tag "$IMAGE:$VERSION"') && !manifest.include?(':latest'), 'manifest must use only immutable version tag')
 assert(manifest.include?('image-digest-amd64.txt') && manifest.include?('image-digest-arm64.txt'), 'manifest must contain exact child digests')
 assert((prepare + manifest).include?('sha256sum -c checksums.txt'), 'release must verify combined checksums')
 finalize = run(publish, 'Publish verified draft release')
 assert(finalize.include?('gh release edit "$tag" --draft=false'), 'only verified draft may be published')
 
-manifest_filter = manifest.match(/jq -e --arg amd64 "\$amd64_digest" --arg arm64 "\$arm64_digest" '(.*?)' "\$manifest"/m)&.[](1)
-abort('manifest validation must be jq-based') unless manifest_filter
+source_filter = manifest.match(/jq -e --arg arch "\$arch" '(.*?)' "\$source"/m)&.[](1)
+final_filter = manifest.match(/jq -e --slurpfile expected "\$expected" '(.*?)' "\$manifest"/m)&.[](1)
+abort('source index validation must be jq-based') unless source_filter
+abort('final manifest validation must be jq-based') unless final_filter
+index_type = 'application/vnd.oci.image.index.v1+json'
+manifest_type = 'application/vnd.oci.image.manifest.v1+json'
 amd64 = "sha256:#{'a' * 64}"
 arm64 = "sha256:#{'b' * 64}"
-descriptor = lambda { |digest, architecture| { 'digest' => digest, 'platform' => { 'os' => 'linux', 'architecture' => architecture } } }
-attestation = {
-  'digest' => "sha256:#{'c' * 64}",
-  'platform' => { 'os' => 'unknown', 'architecture' => 'unknown' },
-  'annotations' => {
-    'vnd.docker.reference.type' => 'attestation-manifest',
-    'vnd.docker.reference.digest' => amd64
-  }
-}
-run_manifest = lambda do |descriptors|
-  Open3.capture3('jq', '-e', '--arg', 'amd64', amd64, '--arg', 'arm64', arm64, manifest_filter, stdin_data: JSON.generate('manifests' => descriptors))
+amd64_attestation = "sha256:#{'c' * 64}"
+arm64_attestation = "sha256:#{'d' * 64}"
+source_index_amd64 = "sha256:#{'e' * 64}"
+source_index_arm64 = "sha256:#{'f' * 64}"
+runtime = lambda do |digest, architecture|
+  { 'mediaType' => manifest_type, 'digest' => digest, 'platform' => { 'os' => 'linux', 'architecture' => architecture } }
 end
-assert(run_manifest.call([descriptor.call(amd64, 'amd64'), descriptor.call(arm64, 'arm64')])[2].success?, 'exact manifest must pass')
-assert(!run_manifest.call([descriptor.call(amd64, 'amd64'), descriptor.call(arm64, 'arm64'), descriptor.call("sha256:#{'d' * 64}", 's390x')])[2].success?, 'extra platform must fail')
-assert(!run_manifest.call([descriptor.call(amd64, 'amd64'), descriptor.call("sha256:#{'d' * 64}", 'arm64')])[2].success?, 'wrong digest must fail')
-assert(!run_manifest.call([descriptor.call(amd64, 'amd64'), descriptor.call(amd64, 'amd64'), descriptor.call(arm64, 'arm64')])[2].success?, 'duplicate platform must fail')
-assert(run_manifest.call([descriptor.call(amd64, 'amd64'), descriptor.call(arm64, 'arm64'), attestation])[2].success?, 'valid attestation must pass')
-assert(!run_manifest.call([descriptor.call(amd64, 'amd64'), descriptor.call(arm64, 'arm64'), attestation, attestation])[2].success?, 'duplicate attestation must fail')
+attestation = lambda do |digest, runtime_digest|
+  {
+    'mediaType' => manifest_type,
+    'digest' => digest,
+    'platform' => { 'os' => 'unknown', 'architecture' => 'unknown' },
+    'annotations' => {
+      'vnd.docker.reference.type' => 'attestation-manifest',
+      'vnd.docker.reference.digest' => runtime_digest
+    }
+  }
+end
+source = lambda do |architecture, runtime_digest, attestation_digest|
+  { 'mediaType' => index_type, 'manifests' => [runtime.call(runtime_digest, architecture), attestation.call(attestation_digest, runtime_digest)] }
+end
+run_source = lambda do |architecture, document|
+  Open3.capture3('jq', '-e', '--arg', 'arch', architecture, source_filter, stdin_data: JSON.generate(document))
+end
+amd64_source = source.call('amd64', amd64, amd64_attestation)
+arm64_source = source.call('arm64', arm64, arm64_attestation)
+amd64_descriptors, _, amd64_status = run_source.call('amd64', amd64_source)
+arm64_descriptors, _, arm64_status = run_source.call('arm64', arm64_source)
+assert(amd64_status.success? && arm64_status.success?, 'nested per-architecture indexes must pass')
+expected = JSON.parse(amd64_descriptors) + JSON.parse(arm64_descriptors)
+run_final = lambda do |document, descriptors|
+  Dir.mktmpdir do |directory|
+    expected_path = File.join(directory, 'expected.json')
+    File.write(expected_path, JSON.generate(descriptors))
+    Open3.capture3('jq', '-e', '--slurpfile', 'expected', expected_path, final_filter, stdin_data: JSON.generate(document))
+  end
+end
+final_index = { 'mediaType' => index_type, 'manifests' => expected }
+assert(run_final.call(final_index, expected)[2].success?, 'flattened final descriptor union must pass')
+old_top_level_comparison = expected.map(&:dup)
+old_top_level_comparison[0] = runtime.call(source_index_amd64, 'amd64')
+assert(!run_final.call({ 'mediaType' => index_type, 'manifests' => old_top_level_comparison }, expected)[2].success?, 'source index digest is not final runtime digest')
+assert(!run_source.call('amd64', { 'mediaType' => index_type, 'manifests' => [runtime.call(amd64, 'amd64')] })[2].success?, 'missing source attestation must fail')
+wrong_attestation = source.call('amd64', amd64, amd64_attestation)
+wrong_attestation['manifests'][1]['annotations']['vnd.docker.reference.digest'] = arm64
+assert(!run_source.call('amd64', wrong_attestation)[2].success?, 'wrong source attestation reference must fail')
+extra_platform = final_index.merge('manifests' => expected + [runtime.call("sha256:#{'9' * 64}", 's390x')])
+assert(!run_final.call(extra_platform, expected)[2].success?, 'extra final platform must fail')
 
 asset_filter = prepare.match(/jq -e --arg asset "\$asset" --arg digest "\$digest"\s*\\?\s*'(.*?)'\s*\\?\s*"\$release_json"/m)&.[](1)
 abort('published asset validation must be jq-based') unless asset_filter
@@ -121,12 +155,20 @@ assert(run_asset.call([valid_asset], valid_asset['digest'])[2].success?, 'matchi
 assert(!run_asset.call([], valid_asset['digest'])[2].success?, 'missing asset must fail')
 assert(!run_asset.call([valid_asset], "sha256:#{'f' * 64}")[2].success?, 'wrong asset digest must fail')
 
-absent = lambda { |diagnostic, reference| diagnostic.include?(reference) && diagnostic.match?(/manifest unknown|not found/i) }
 reference = 'ghcr.io/lkshrk/openhands-worker:1.2.3'
-assert(absent.call("#{reference}: manifest unknown", reference), 'exact registry absence must pass')
-assert(!absent.call("#{reference}: denied", reference), 'registry permission failure must not be absence')
-assert(!absent.call('ghcr.io/other/worker: manifest unknown', reference), 'different registry reference must not be absence')
-assert(!absent.call('not found', reference), 'bare not-found error must not be absence')
+absence_helper = manifest.match(/(is_exact_absence\(\) \{.*?^\s*\})/m)&.[](1)
+abort('registry absence must use a dedicated exact predicate') unless absence_helper
+run_absence = lambda do |diagnostic|
+  Dir.mktmpdir do |directory|
+    error_path = File.join(directory, 'inspect-error.log')
+    File.write(error_path, diagnostic)
+    Open3.capture3('bash', '-c', "#{absence_helper}\nis_exact_absence \"$1\" \"$2\"", 'bash', error_path, reference)[2]
+  end
+end
+assert(run_absence.call("ERROR: #{reference}: not found\n").success?, 'exact registry absence must pass')
+assert(!run_absence.call("ERROR: ghcr.io/lkshrk/openhands-worker:1.2: not found\n").success?, 'prefix tag must not be absence')
+assert(!run_absence.call("ERROR: #{reference}: not found\nextra\n").success?, 'multiline error must not be absence')
+assert(!run_absence.call("ERROR: #{reference}: denied\n").success?, 'registry permission failure must not be absence')
 (validation.fetch('jobs').values + release.fetch('jobs').values).each do |job|
   job.fetch('steps').map { |item| item['uses'] }.compact.each do |uses|
     assert(uses.match?(%r{@[0-9a-f]{40}$}), "action ref must be immutable: #{uses}")
