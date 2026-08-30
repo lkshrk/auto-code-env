@@ -365,7 +365,7 @@ assert_python_package() {
 
     status=$(run_clean /usr/bin/dpkg-query -W -f="\${db:Status-Abbrev}\\n" "$PYTHON_PACKAGE") ||
         fail 'unable to query python3-minimal package'
-    [ "$status" = ii ] || fail 'invalid python3-minimal package'
+    [ "$status" = 'ii ' ] || fail 'invalid python3-minimal package'
     owner=$(run_clean /usr/bin/dpkg-query -S "$PYTHON_BINARY") || fail 'unable to query python3 binary owner'
     [ "$owner" = "$PYTHON_PACKAGE: $PYTHON_BINARY" ] || fail 'invalid python3 binary owner'
     assert_package_files "$PYTHON_PACKAGE"

@@ -161,7 +161,7 @@ setup_fixture() {
     '#!/bin/sh' \
     'case "${1:-}" in' \
     '  -W)' \
-    '    case "${3:-}" in rbw) test ! -e /tmp/fixture-counterfeit-rbw || { printf "ii  9.9.9-1\\n"; exit 0; }; printf "ii  1.13.2-7\\n" ;; python3-minimal) printf "ii\\n" ;; *) exit 1 ;; esac ;;' \
+    '    case "${3:-}" in rbw) test ! -e /tmp/fixture-counterfeit-rbw || { printf "ii  9.9.9-1\\n"; exit 0; }; printf "ii  1.13.2-7\\n" ;; python3-minimal) printf "ii \\n" ;; *) exit 1 ;; esac ;;' \
     '  -S) case "${2:-}" in /usr/bin/rbw) printf "rbw: /usr/bin/rbw\\n" ;; /usr/bin/python3) printf "python3-minimal: /usr/bin/python3\\n" ;; *) exit 1 ;; esac ;;' \
     '  *) exit 1 ;;' \
     'esac' > /usr/bin/dpkg-query
