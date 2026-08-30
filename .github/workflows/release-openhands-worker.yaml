@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-openhands-worker
+  group: release-openhands-worker-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -96,6 +96,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -154,7 +156,7 @@ jobs:
               --generate-notes
             gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json"
           fi
-          test "$(jq -r '.target_commitish' "$release_json")" = "$GITHUB_SHA"
+          test "$(jq -r '.tag_name' "$release_json")" = "$tag"
           release_draft=$(jq -r '.draft' "$release_json")
           case "$release_draft" in
             true)
@@ -168,7 +170,10 @@ jobs:
                 "openhands-worker-$VERSION-amd64.wsl" \
                 "openhands-worker-$VERSION-arm64.wsl" \
                 checksums.txt; do
-                jq -e --arg asset "$asset" '.assets[] | select(.name == $asset)' "$release_json" >/dev/null
+                digest="sha256:$(sha256sum "release/$asset" | awk '{print $1}')"
+                jq -e --arg asset "$asset" --arg digest "$digest" \
+                  '.assets[] | select(.name == $asset and .state == "uploaded" and .digest == $digest)' \
+                  "$release_json" >/dev/null
               done
               ;;
             *)
@@ -188,24 +193,36 @@ jobs:
           set -euo pipefail
           manifest="$RUNNER_TEMP/manifest.json"
           inspect_error="$RUNNER_TEMP/manifest-inspect-error.log"
+          reference="$IMAGE:$VERSION"
           amd64_digest=$(< release/image-digest-amd64.txt)
           arm64_digest=$(< release/image-digest-arm64.txt)
           verify_manifest() {
             jq -e --arg amd64 "$amd64_digest" --arg arm64 "$arm64_digest" '
-              [(.manifests // [])[] | select(
+              def real_platform:
                 .platform.os == "linux" and
-                (.platform.architecture == "amd64" or .platform.architecture == "arm64")
-              )] as $platforms |
-              $platforms | length == 2 and
+                (.platform.architecture == "amd64" or .platform.architecture == "arm64");
+              def attestation:
+                .platform.os == "unknown" and
+                .platform.architecture == "unknown" and
+                (.annotations // {})["vnd.docker.reference.type"] == "attestation-manifest" and
+                ((.annotations // {})["vnd.docker.reference.digest"] == $amd64 or
+                 (.annotations // {})["vnd.docker.reference.digest"] == $arm64);
+              [(.manifests // [])[]] as $all |
+              [$all[] | select(real_platform)] as $platforms |
+              [$all[] | select(attestation)] as $attestations |
+              ($all | length) == (($platforms | length) + ($attestations | length)) and
+              ($platforms | length) == 2 and
+              ($attestations | length) <= 2 and
+              ($attestations | map((.annotations // {})["vnd.docker.reference.digest"]) | unique | length) == ($attestations | length) and
               any($platforms[]; .platform.architecture == "amd64" and .digest == $amd64) and
               any($platforms[]; .platform.architecture == "arm64" and .digest == $arm64)
             ' "$manifest" >/dev/null
           }
-          if docker buildx imagetools inspect --raw "$IMAGE:$VERSION" > "$manifest" 2> "$inspect_error"; then
+          if docker buildx imagetools inspect --raw "$reference" > "$manifest" 2> "$inspect_error"; then
             verify_manifest
             exit 0
           fi
-          if ! grep -Eqi 'manifest unknown|not found|HTTP 404|404' "$inspect_error"; then
+          if ! grep -Fq "$reference" "$inspect_error" || ! grep -Eqi 'manifest unknown|not found' "$inspect_error"; then
             cat "$inspect_error" >&2
             exit 1
           fi
@@ -213,12 +230,10 @@ jobs:
             --tag "$IMAGE:$VERSION" \
             "$IMAGE@$amd64_digest" \
             "$IMAGE@$arm64_digest"
-          docker buildx imagetools inspect --raw "$IMAGE:$VERSION" > "$manifest"
+          docker buildx imagetools inspect --raw "$reference" > "$manifest"
           verify_manifest
 
       - name: Publish verified draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
