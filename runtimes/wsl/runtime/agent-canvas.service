@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenHands Agent Canvas
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent
+Environment=HOME=/home/agent
+Environment=PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin
+LoadCredential=local_backend_api_key
+ExecStart=/bin/sh -c 'LOCAL_BACKEND_API_KEY=$$(/usr/bin/cat "$$CREDENTIALS_DIRECTORY/local_backend_api_key"); export LOCAL_BACKEND_API_KEY; exec /home/agent/.local/bin/agent-canvas --public'
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

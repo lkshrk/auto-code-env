@@ -1,0 +1,27 @@
+FROM ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b AS provisioned
+
+COPY --chown=root:root runtimes/wsl/provision.sh runtimes/wsl/wsl.conf /opt/openhands-build/
+RUN OPENHANDS_IMAGE_BUILD=1 /bin/bash /opt/openhands-build/provision.sh && \
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends nginx && \
+    /usr/bin/rm -f /etc/nginx/sites-enabled/default && \
+    /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin UV_CACHE_DIR=/home/agent/.cache/uv \
+      /usr/local/bin/uvx --from openhands-agent-server==1.44.0 --with openhands-sdk==1.44.0 --with openhands-tools==1.44.0 --with openhands-workspace==1.44.0 --with 'agent-client-protocol<0.11' --with 'posthog>=6,<7' agent-server --import-modules canvas_ui_tool --help >/dev/null && \
+    /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin UV_CACHE_DIR=/home/agent/.cache/uv \
+      /usr/local/bin/uvx --from openhands-automation==1.9.0 uvicorn openhands.automation.app:app --help >/dev/null && \
+    test "$(/usr/bin/id -u agent)" = 1000 && test "$(/usr/bin/id -g agent)" = 1000 && \
+    /usr/bin/rm -rf /var/lib/apt/lists/*
+
+FROM provisioned AS oci
+
+COPY --chown=root:root runtimes/wsl/runtime/container-entrypoint.sh /usr/local/sbin/container-entrypoint
+COPY --chown=root:root runtimes/wsl/runtime/nginx-site.conf /etc/nginx/conf.d/openhands.conf
+RUN /usr/bin/chmod 0755 /usr/local/sbin/container-entrypoint && /usr/bin/install -d -o root -g root -m 0755 /etc/nginx/tls
+EXPOSE 443
+ENTRYPOINT ["/usr/local/sbin/container-entrypoint"]
+
+FROM provisioned AS wsl
+
+COPY --chown=root:root runtimes/wsl/wsl.conf /etc/wsl.conf
+COPY --chown=root:root runtimes/wsl/wsl-distribution.conf /etc/wsl-distribution.conf
+COPY --chown=root:root runtimes/wsl/runtime/agent-canvas.service /etc/systemd/system/agent-canvas.service
+COPY --chown=root:root runtimes/wsl/runtime/nginx-site.conf /etc/nginx/conf.d/openhands.conf
