@@ -47,6 +47,12 @@ grep -F 'test -x /sbin/init' "$containerfile"
 grep -F 'test -x /usr/bin/systemctl' "$containerfile"
 grep -F 'test ! -e /etc/systemd/system/multi-user.target.wants/nginx.service' "$containerfile"
 grep -Fx 'EXPOSE 443' "$containerfile"
+grep -F 'FROM oci AS smoke' "$containerfile"
+grep -F 'test "$(/usr/bin/id -u agent)" = 1000' "$containerfile"
+grep -F 'test "$(/usr/bin/id -g agent)" = 1000' "$containerfile"
+grep -F 'openssl req -x509' "$containerfile"
+grep -F '/usr/sbin/nginx -t' "$containerfile"
+grep -F '! -e /etc/nginx/tls/tls.key' "$containerfile"
 
 docker run --rm -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c '
   entrypoint=/src/runtimes/wsl/runtime/container-entrypoint.sh

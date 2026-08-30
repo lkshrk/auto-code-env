@@ -27,6 +27,23 @@ RUN /usr/bin/chmod 0755 /usr/local/sbin/container-entrypoint && /usr/bin/install
 EXPOSE 443
 ENTRYPOINT ["/usr/local/sbin/container-entrypoint"]
 
+FROM oci AS smoke
+
+RUN test "$(/usr/bin/id -u agent)" = 1000 && test "$(/usr/bin/id -g agent)" = 1000 && \
+    test "$(/usr/bin/id -nG agent)" = agent && ! /usr/bin/id -nG agent | /usr/bin/grep -qw sudo && [ ! -x /usr/bin/sudo ] && \
+    test "$(/usr/local/bin/node --version)" = v24.20.0 && test "$(/usr/local/bin/npm --version)" = 11.19.0 && \
+    case "$(/usr/local/bin/uv --version)" in 'uv 0.12.7 ('*) ;; *) exit 1;; esac && \
+    case "$(/usr/local/bin/uvx --version)" in 'uvx 0.12.7 ('*) ;; *) exit 1;; esac && \
+    installed=$(/usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin NPM_CONFIG_USERCONFIG=/dev/null NPM_CONFIG_GLOBALCONFIG=/etc/openhands/npmrc /usr/local/bin/npm --prefix /home/agent/.local --cache /home/agent/.cache/npm --global --depth=0 --json ls) && \
+    /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin /usr/local/bin/node -e 'const expected = {"@openhands/agent-canvas":"1.16.0","@agentclientprotocol/claude-agent-acp":"0.63.0","@agentclientprotocol/codex-acp":"1.1.7","@anthropic-ai/claude-code":"2.1.251","@openai/codex":"0.151.0"}; const actual = JSON.parse(process.argv[1]).dependencies || {}; process.exit(Object.keys(actual).length === Object.keys(expected).length && Object.entries(expected).every(([name, version]) => actual[name]?.version === version) ? 0 : 1);' "$installed" && \
+    test "$(/usr/sbin/runuser -u agent -- /home/agent/.local/bin/claude --version)" = '2.1.251 (Claude Code)' && test "$(/usr/sbin/runuser -u agent -- /home/agent/.local/bin/codex --version)" = 'codex-cli 0.151.0' && \
+    for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do test "$(/usr/bin/stat -c '%U:%G %a' "$path")" = 'agent:agent 700'; done && \
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update && \
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends openssl && \
+    /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -keyout /etc/nginx/tls/tls.key -out /etc/nginx/tls/tls.crt -subj /CN=localhost -days 1 && \
+    /usr/sbin/nginx -t && /usr/bin/rm -f /etc/nginx/tls/tls.crt /etc/nginx/tls/tls.key && \
+    test ! -e /etc/nginx/tls/tls.key && /usr/bin/rm -rf /var/lib/apt/lists/*
+
 FROM provisioned AS wsl
 
 COPY --chown=root:root runtimes/wsl/wsl.conf /etc/wsl.conf
