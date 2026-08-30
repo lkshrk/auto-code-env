@@ -174,9 +174,18 @@ boot.
 
 ## Omni boundary
 
-The artifact interface does not depend on which converger populates the shared
-filesystem. The current verified provisioner remains the build implementation
-until an Omni release with correct exact-pin installed-state handling exists.
-That later change replaces provisioner internals, not the OCI/WSL artifact
-contract, runtime launchers, or Windows import flow. Personal dotfiles are never
-an image input.
+Omni `0.10.4` is the pinned Ubuntu convergence engine. Its release implements
+exact installed-state handling for apt `name=version`, scoped/unscoped npm
+`name@version`, and Python `name==version` specifications and publishes verified
+amd64/arm64 artifacts.
+
+Omni owns declared apt packages and global npm tools. Bootstrap still installs
+the minimum tools required to download and execute Omni, plus Node and uv
+because Omni's npm/Python providers require those runtimes to exist first.
+Existing post-install package, binary, ownership, version, and runtime checks
+remain authoritative; Omni configuration files are not treated as proof that a
+tool works.
+
+Root and agent convergence run separately. Agent npm tools whose lifecycle
+scripts are forbidden run with scripts disabled; Claude Code runs alone with
+strict lifecycle allow-listing. Personal dotfiles are never an image input.

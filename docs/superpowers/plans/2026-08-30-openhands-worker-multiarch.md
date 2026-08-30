@@ -123,7 +123,28 @@ esac
 - [ ] Run image tests and git diff --check.
 - [ ] Commit: ci(worker): validate and publish multi-arch artifacts
 
-### Task 6: Document and verify delivery
+### Task 6: Converge Ubuntu packages and agent tools with Omni 0.10.4
+
+**Files:**
+- Create: runtimes/wsl/omni/settings.json
+- Modify: runtimes/wsl/provision.sh
+- Modify: runtimes/wsl/tests/provision.Tests.sh
+- Modify: runtimes/wsl/Containerfile
+- Modify: runtimes/wsl/tests/runtime.Tests.sh
+
+**Produces:** verified Omni bootstrap plus explicit root and agent convergence groups.
+
+- [ ] Add RED fixture coverage for pinned Omni amd64/arm64 archive/checksum selection, exact version, immutable root installation, config installation, root system group, no-script npm group, and Claude-only lifecycle group.
+- [ ] Pin Omni v0.10.4 and verify its release checksum before installing /usr/local/bin/omni.
+- [ ] Install only ca-certificates, curl, and xz-utils as pre-Omni bootstrap requirements; Omni root sync owns ca-certificates, curl, xz-utils, git, nginx, python3, and rbw=1.13.2-7.
+- [ ] Keep Node and uv binary bootstrap outside Omni; Omni does not provide those runtimes before its npm/python providers can run.
+- [ ] Run agent npm groups separately: ignore all lifecycle scripts for Canvas/ACP/Codex, then strict-allow only @anthropic-ai/claude-code for Claude Code.
+- [ ] Preserve all existing package, binary, ownership, exact-version, and runtime post-verification.
+- [ ] Remove duplicate nginx apt installation from Containerfile and verify Omni config is root-owned, non-writable, and contains no script provider or secret.
+- [ ] Run full provision/runtime suites, Bash/Node syntax, ShellCheck, BuildKit checks, and native arm64 smoke target.
+- [ ] Commit: feat(worker): converge tools with Omni
+
+### Task 7: Document and verify delivery
 
 **Files:**
 - Modify: runtimes/wsl/README.md
@@ -134,4 +155,3 @@ esac
 - [ ] State arm64 build proof is not native Windows-on-ARM runtime proof; do not publish WSL release before real import verification.
 - [ ] Run all shell tests, PowerShell tests, ShellCheck, docker amd64 build/smoke, both WSL tar inspections, and git diff --check.
 - [ ] Commit: docs(worker): explain multi-arch delivery
-
