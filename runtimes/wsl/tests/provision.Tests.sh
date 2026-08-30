@@ -19,6 +19,8 @@ ensure_fixture_image() {
 setup_fixture() {
   local node_archive=node-v24.20.0-linux-x64.tar.xz
   local node_directory=node-v24.20.0-linux-x64
+  local arm_node_archive=node-v24.20.0-linux-arm64.tar.xz
+  local arm_node_directory=node-v24.20.0-linux-arm64
   local reserved_node_archive=reserved-node-v24.20.0-linux-x64.tar.xz
   local uv_archive=uv-x86_64-unknown-linux-gnu.tar.gz
   local uv_directory=uv-x86_64-unknown-linux-gnu
@@ -99,6 +101,8 @@ setup_fixture() {
   ln -s ../lib/node_modules/npm/bin/npm-cli.js "/tmp/fixture-src/$node_directory/bin/npm"
   ln -s ../lib/node_modules/npm/bin/npx-cli.js "/tmp/fixture-src/$node_directory/bin/npx"
   tar -cJf "/fixtures/$node_archive" -C /tmp/fixture-src "$node_directory"
+  cp -a "/tmp/fixture-src/$node_directory" "/tmp/fixture-src/$arm_node_directory"
+  tar -cJf "/fixtures/$arm_node_archive" -C /tmp/fixture-src "$arm_node_directory"
   printf '%s\n' counterfeit > "/tmp/fixture-src/$node_directory/.openhands-manifest"
   tar -cJf "/fixtures/$reserved_node_archive" -C /tmp/fixture-src "$node_directory"
   rm "/tmp/fixture-src/$node_directory/.openhands-manifest"
@@ -120,6 +124,9 @@ setup_fixture() {
     > "/tmp/fixture-src/$uv_directory/uvx"
   chmod 0755 "/tmp/fixture-src/$uv_directory/uv" "/tmp/fixture-src/$uv_directory/uvx"
   tar -czf "/fixtures/$uv_archive" -C /tmp/fixture-src "$uv_directory"
+  cp -a "/tmp/fixture-src/$uv_directory" "/tmp/fixture-src/uv-aarch64-unknown-linux-gnu"
+  sed -i 's/x86_64-unknown-linux-gnu/aarch64-unknown-linux-gnu/g' /tmp/fixture-src/uv-aarch64-unknown-linux-gnu/uv /tmp/fixture-src/uv-aarch64-unknown-linux-gnu/uvx
+  tar -czf /fixtures/uv-aarch64-unknown-linux-gnu.tar.gz -C /tmp/fixture-src uv-aarch64-unknown-linux-gnu
 
   cp /usr/bin/mv /usr/bin/mv.fixture-real
   printf '%s\n' \
@@ -186,20 +193,26 @@ setup_fixture() {
     'test "${15}" = --output' \
     'output=${16}' \
     'url=${17}' \
-    'node_source=/fixtures/node-v24.20.0-linux-x64.tar.xz' \
+    'case "${FIXTURE_UNAME:-x86_64}" in' \
+    '  x86_64|amd64) node_arch=x64; uv_target=x86_64-unknown-linux-gnu ;;' \
+    '  aarch64|arm64) node_arch=arm64; uv_target=aarch64-unknown-linux-gnu ;;' \
+    '  *) exit 72 ;;' \
+    'esac' \
+    'node_archive="node-v24.20.0-linux-$node_arch.tar.xz"' \
+    'node_source="/fixtures/$node_archive"' \
     'if test -e /tmp/fixture-reserved-manifest; then node_source=/fixtures/reserved-node-v24.20.0-linux-x64.tar.xz; fi' \
     'case "$url" in' \
     '  https://nodejs.org/dist/v24.20.0/SHASUMS256.txt)' \
     '    hash=$(/usr/bin/sha256sum "$node_source"); hash=${hash%% *}' \
-    '    printf "%s  %s\n" "$hash" node-v24.20.0-linux-x64.tar.xz > "$output" ;;' \
-    '  https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.xz)' \
+    '    printf "%s  %s\n" "$hash" "$node_archive" > "$output" ;;' \
+    "  https://nodejs.org/dist/v24.20.0/\$node_archive)" \
     '    /usr/bin/cp -- "$node_source" "$output"' \
     '    if test -e /tmp/fixture-corrupt-node-download; then printf corrupt >> "$output"; fi ;;' \
-    '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-x86_64-unknown-linux-gnu.tar.gz.sha256)' \
-    '    hash=$(/usr/bin/sha256sum /fixtures/uv-x86_64-unknown-linux-gnu.tar.gz); hash=${hash%% *}' \
-    '    printf "%s  %s\n" "$hash" uv-x86_64-unknown-linux-gnu.tar.gz > "$output" ;;' \
-    '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-x86_64-unknown-linux-gnu.tar.gz)' \
-    '    /usr/bin/cp -- /fixtures/uv-x86_64-unknown-linux-gnu.tar.gz "$output" ;;' \
+    "  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-\$uv_target.tar.gz.sha256)" \
+    '    hash=$(/usr/bin/sha256sum "/fixtures/uv-$uv_target.tar.gz"); hash=${hash%% *}' \
+    '    printf "%s  %s\n" "$hash" "uv-$uv_target.tar.gz" > "$output" ;;' \
+    "  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-\$uv_target.tar.gz)" \
+    '    /usr/bin/cp -- "/fixtures/uv-$uv_target.tar.gz" "$output" ;;' \
     '  *) exit 72 ;;' \
     'esac' > /usr/bin/curl
   for command in find sha256sum stat tar; do
@@ -591,11 +604,32 @@ run_container '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
-  if FIXTURE_UNAME=aarch64 bash /src/runtimes/wsl/provision.sh; then
+  FIXTURE_UNAME=aarch64 bash /src/runtimes/wsl/provision.sh
+  test -d /opt/openhands/node-v24.20.0-linux-arm64
+  test "$(readlink /usr/local/bin/node)" = /opt/openhands/node-v24.20.0-linux-arm64/bin/node
+  test "$(/usr/local/bin/uv --version)" = "uv 0.12.7 (a0b1c2d3 2026-08-29 aarch64-unknown-linux-gnu)"
+  cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  if FIXTURE_UNAME=armv7l bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
-  cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
   test ! -e /opt/openhands
+'
+
+run_container '
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test ! -e /opt/openhands
+'
+
+run_container '
+  OPENHANDS_IMAGE_BUILD=1 bash /src/runtimes/wsl/provision.sh
+  test -d /opt/openhands/node-v24.20.0-linux-x64
+  test ! -e /etc/wsl.conf
 '
 
 run_container '

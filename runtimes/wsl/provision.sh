@@ -4,14 +4,8 @@ set -euo pipefail
 umask 022
 
 readonly NODE_VERSION=24.20.0
-readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-x64"
-readonly NODE_ARCHIVE="${NODE_DIRECTORY}.tar.xz"
 readonly OPENHANDS_ROOT=/opt/openhands
 readonly OPENHANDS_ETC=/etc/openhands
-readonly NODE_HOME="${OPENHANDS_ROOT}/${NODE_DIRECTORY}"
-readonly NODE_BINARY="${NODE_HOME}/bin/node"
-readonly NPM_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npm-cli.js"
-readonly NPX_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npx-cli.js"
 readonly NODE_MANIFEST=.openhands-manifest
 readonly AGENT_PREFIX=/home/agent/.local
 readonly NPM_CACHE=/home/agent/.cache/npm
@@ -32,9 +26,6 @@ readonly -a AGENT_NO_SCRIPT_PACKAGES=(
     '@openai/codex@0.151.0'
 )
 readonly UV_VERSION=0.12.7
-readonly UV_DIRECTORY=uv-x86_64-unknown-linux-gnu
-readonly UV_ARCHIVE="${UV_DIRECTORY}.tar.gz"
-readonly UV_TARGET=x86_64-unknown-linux-gnu
 readonly RBW_PACKAGE_VERSION=1.13.2-7
 readonly RBW_BINARY=/usr/bin/rbw
 readonly RBW_PINENTRY_DIRECTORY=/usr/local/libexec
@@ -902,9 +893,25 @@ if [ "$(/usr/bin/id -u)" -ne 0 ]; then
     fail 'provisioning must run as root'
 fi
 
-if [ "${WSL_DISTRO_NAME:-}" != 'openhands-worker' ]; then
+if [ "${OPENHANDS_IMAGE_BUILD:-}" != 1 ] && [ "${WSL_DISTRO_NAME:-}" != 'openhands-worker' ]; then
     fail 'provisioning must run in openhands-worker'
 fi
+
+machine_arch=$(/usr/bin/uname -m)
+case "$machine_arch" in
+    x86_64|amd64) node_arch=x64; uv_target=x86_64-unknown-linux-gnu ;;
+    aarch64|arm64) node_arch=arm64; uv_target=aarch64-unknown-linux-gnu ;;
+    *) fail "unsupported architecture: $machine_arch" ;;
+esac
+readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-${node_arch}"
+readonly NODE_ARCHIVE="${NODE_DIRECTORY}.tar.xz"
+readonly NODE_HOME="${OPENHANDS_ROOT}/${NODE_DIRECTORY}"
+readonly NODE_BINARY="${NODE_HOME}/bin/node"
+readonly NPM_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npm-cli.js"
+readonly NPX_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npx-cli.js"
+readonly UV_TARGET="$uv_target"
+readonly UV_DIRECTORY="uv-${UV_TARGET}"
+readonly UV_ARCHIVE="${UV_DIRECTORY}.tar.gz"
 
 resolve_assets
 if ! /usr/bin/id agent >/dev/null 2>&1; then
@@ -919,10 +926,8 @@ for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/
     ensure_private_directory "$path"
 done
 
-install_wsl_config
-
-if [ "$(/usr/bin/uname -m)" != 'x86_64' ]; then
-    fail 'unsupported architecture: only x86_64 is supported'
+if [ "${OPENHANDS_IMAGE_BUILD:-}" != 1 ]; then
+    install_wsl_config
 fi
 preflight_tool_paths
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
