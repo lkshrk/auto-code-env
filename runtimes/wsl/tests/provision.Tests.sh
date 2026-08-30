@@ -43,7 +43,7 @@ setup_fixture() {
     '    test "$(id -un)" = agent || exit 81' \
     '    test "$HOME" = /home/agent || exit 82' \
     '    test "$PATH" = /home/agent/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin || exit 83' \
-    '    test "$NPM_CONFIG_USERCONFIG" = /dev/null && test "$NPM_CONFIG_GLOBALCONFIG" = /dev/null || exit 87' \
+    '    test "$NPM_CONFIG_USERCONFIG" = /dev/null && test "$NPM_CONFIG_GLOBALCONFIG" = /etc/openhands/npmrc && test "$NPM_CONFIG_USERCONFIG" != "$NPM_CONFIG_GLOBALCONFIG" || exit 87' \
     '    shift' \
     '    test "$1" = --prefix && prefix=$2 && shift 2' \
     '    test "$1" = --cache && test "$2" = /home/agent/.cache/npm && shift 2' \
@@ -258,6 +258,9 @@ run_container '
   for path in /home/agent/.local /home/agent/.cache /home/agent/.cache/npm; do
     test "$(stat -c "%U:%G %a" "$path")" = "agent:agent 700"
   done
+  test "$(stat -c "%U:%G %a" /etc/openhands)" = "root:root 755"
+  test "$(stat -c "%U:%G %a" /etc/openhands/npmrc)" = "root:root 644"
+  test ! -s /etc/openhands/npmrc
   printf "%s\n" \
     @openhands/agent-canvas@1.16.0 \
     @agentclientprotocol/claude-agent-acp@0.63.0 \
@@ -746,6 +749,25 @@ run_container '
     exit 1
   fi
   test "$(stat -c "%U:%G %a" /home/agent/.cache/npm)" = "root:root 700"
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  ln -s /tmp /etc/openhands
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test -L /etc/openhands
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  mkdir /etc/openhands
+  printf foreign > /etc/openhands/npmrc
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(cat /etc/openhands/npmrc)" = foreign
 '
 
 if [ "${RUN_WSL_REAL_TOOLCHAIN_TESTS:-0}" = 1 ]; then

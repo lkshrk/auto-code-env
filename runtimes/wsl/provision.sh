@@ -7,6 +7,7 @@ readonly NODE_VERSION=24.20.0
 readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-x64"
 readonly NODE_ARCHIVE="${NODE_DIRECTORY}.tar.xz"
 readonly OPENHANDS_ROOT=/opt/openhands
+readonly OPENHANDS_ETC=/etc/openhands
 readonly NODE_HOME="${OPENHANDS_ROOT}/${NODE_DIRECTORY}"
 readonly NODE_BINARY="${NODE_HOME}/bin/node"
 readonly NPM_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npm-cli.js"
@@ -14,6 +15,7 @@ readonly NPX_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npx-cli.js"
 readonly NODE_MANIFEST=.openhands-manifest
 readonly AGENT_PREFIX=/home/agent/.local
 readonly NPM_CACHE=/home/agent/.cache/npm
+readonly NPM_GLOBALCONFIG="${OPENHANDS_ETC}/npmrc"
 readonly AGENT_BIN="${AGENT_PREFIX}/bin"
 readonly CLAUDE_CODE_PACKAGE='@anthropic-ai/claude-code@2.1.251'
 readonly -a AGENT_PACKAGES=(
@@ -53,7 +55,7 @@ run_clean() {
 run_agent_clean() {
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent \
         PATH="${AGENT_BIN}:/usr/sbin:/usr/bin:/sbin:/bin" NPM_CONFIG_USERCONFIG=/dev/null \
-        NPM_CONFIG_GLOBALCONFIG=/dev/null "$@"
+        NPM_CONFIG_GLOBALCONFIG="$NPM_GLOBALCONFIG" "$@"
 }
 
 path_exists() {
@@ -229,7 +231,25 @@ assert_exact_agent_bins() {
     done < <(/usr/bin/find -P "$AGENT_BIN" -mindepth 1 -maxdepth 1 -print0)
 }
 
+ensure_npm_global_config() {
+    assert_trusted_root_directory /etc
+    if path_exists "$OPENHANDS_ETC"; then
+        assert_exact_root_directory "$OPENHANDS_ETC"
+    else
+        /usr/bin/mkdir -m 0755 -- "$OPENHANDS_ETC"
+        assert_exact_root_directory "$OPENHANDS_ETC"
+    fi
+    if path_exists "$NPM_GLOBALCONFIG"; then
+        assert_root_file "$NPM_GLOBALCONFIG" 644
+        [ ! -s "$NPM_GLOBALCONFIG" ] || fail "invalid npm configuration: $NPM_GLOBALCONFIG"
+    else
+        /usr/bin/install -T -o root -g root -m 0644 /dev/null "$NPM_GLOBALCONFIG"
+        assert_root_file "$NPM_GLOBALCONFIG" 644
+    fi
+}
+
 preflight_agent_npm_paths() {
+    ensure_npm_global_config
     ensure_private_directory "$AGENT_PREFIX"
     ensure_private_directory /home/agent/.cache
     ensure_private_directory "$NPM_CACHE"
