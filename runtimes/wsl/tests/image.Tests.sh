@@ -10,9 +10,9 @@ for file in "$bake_file" "$build_script"; do
   test -f "$file"
 done
 
-bake_json=$(docker buildx bake -f "$bake_file" --print image wsl-amd64 wsl-arm64)
+bake_json=$(VERSION=1.2.3 docker buildx bake -f "$bake_file" --print image wsl-amd64 wsl-arm64)
 printf '%s' "$bake_json" | jq -e '
-  .target.image.tags == ["ghcr.io/lkshrk/openhands-worker:"] and
+  .target.image.tags == ["ghcr.io/lkshrk/openhands-worker:1.2.3"] and
   .target.image.target == "oci" and
   .target.image.platforms == ["linux/amd64", "linux/arm64"] and
   .target["wsl-amd64"].target == "wsl" and
@@ -42,6 +42,19 @@ if test -n "${CHECKSUM_COLLISION:-}"; then
 fi
 EOF
 chmod 0755 "$fake_bin/docker"
+cat > "$fake_bin/ln" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+/bin/ln "$@"
+if test -n "${CHECKSUM_INTERRUPT:-}"; then
+  calls_file=${LN_CALLS:?}
+  calls=$(cat "$calls_file" 2>/dev/null || printf 0)
+  calls=$((calls + 1))
+  printf '%s\n' "$calls" > "$calls_file"
+  if test "$calls" = 2; then kill -TERM "$PPID"; fi
+fi
+EOF
+chmod 0755 "$fake_bin/ln"
 
 if "$build_script" '' amd64 "$test_root/output"; then exit 1; fi
 if "$build_script" 1.2.3 armv7 "$test_root/output"; then exit 1; fi
@@ -57,12 +70,20 @@ test -f "$test_root/output/openhands-worker-1.2.3-amd64.wsl"
 DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.3 arm64 "$test_root/output"
 (cd "$test_root/output" && sha256sum -c openhands-worker-1.2.3-arm64.wsl.sha256)
 
-before=$(sha256sum "$artifact")
+before_artifact=$(sha256sum "$artifact")
+before_checksum=$(sha256sum "$checksum")
 if DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.3 amd64 "$test_root/output"; then exit 1; fi
-test "$before" = "$(sha256sum "$artifact")"
+test "$before_artifact" = "$(sha256sum "$artifact")"
+test "$before_checksum" = "$(sha256sum "$checksum")"
 
 collision_artifact="$test_root/output/openhands-worker-1.2.4-amd64.wsl"
 collision_checksum="$collision_artifact.sha256"
 if CHECKSUM_COLLISION=1 DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.4 amd64 "$test_root/output"; then exit 1; fi
 test ! -e "$collision_artifact"
 test "$(cat "$collision_checksum")" = collision
+
+interrupted_artifact="$test_root/output/openhands-worker-1.2.5-amd64.wsl"
+interrupted_checksum="$interrupted_artifact.sha256"
+if CHECKSUM_INTERRUPT=1 LN_CALLS="$test_root/ln-calls" DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.5 amd64 "$test_root/output"; then exit 1; fi
+test ! -e "$interrupted_artifact"
+test ! -e "$interrupted_checksum"

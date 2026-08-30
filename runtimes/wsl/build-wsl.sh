@@ -34,13 +34,22 @@ fi
 temporary_artifact=$(mktemp "$output_dir/.${artifact_name}.XXXXXX")
 temporary_checksum=$(mktemp "$output_dir/.${artifact_name}.sha256.XXXXXX")
 artifact_linked=false
+checksum_linked=false
+published=false
 cleanup() {
-  if "$artifact_linked" && test "$temporary_artifact" -ef "$artifact"; then
-    rm -f -- "$artifact"
+  if ! "$published"; then
+    if "$checksum_linked" && test "$temporary_checksum" -ef "$checksum"; then
+      rm -f -- "$checksum"
+    fi
+    if "$artifact_linked" && test "$temporary_artifact" -ef "$artifact"; then
+      rm -f -- "$artifact"
+    fi
   fi
   rm -f -- "$temporary_artifact" "$temporary_checksum"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
 rm -f -- "$temporary_artifact" "$temporary_checksum"
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
@@ -51,7 +60,8 @@ test -f "$temporary_artifact"
 
 checksum_value=$(sha256sum -- "$temporary_artifact" | awk '{print $1}')
 printf '%s  %s\n' "$checksum_value" "$artifact_name" > "$temporary_checksum"
-ln -- "$temporary_artifact" "$artifact"
 artifact_linked=true
+ln -- "$temporary_artifact" "$artifact"
+checksum_linked=true
 ln -- "$temporary_checksum" "$checksum"
-artifact_linked=false
+published=true
