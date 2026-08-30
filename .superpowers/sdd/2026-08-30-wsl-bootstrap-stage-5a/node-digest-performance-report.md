@@ -119,3 +119,35 @@ content before verifying the tree.
 
 The target WSL ext4 rerun and 4,800-file release-tree benchmark remain later
 work. No target timing claim is made from the small fixture.
+
+## Canonical marker byte fix
+
+### RED
+
+The fixture copied a valid v2 marker, removed only its final newline, reran the
+provisioner, and compared against the original bytes. The suite exited 1 at
+that `cmp`: `mapfile -t` had accepted the canonical-looking line and skipped
+migration.
+
+### Fix
+
+After extracting the candidate digest, `node_manifest_digest` now reconstructs
+`v2 sha256 <digest>\n` with `printf` and compares the complete marker file
+byte-for-byte before returning the digest. A correct digest without the final
+newline is therefore non-v2; digest-equal trees migrate it through the existing
+atomic replacement path. Existing mismatch behavior is unchanged.
+
+### GREEN
+
+- `bash runtimes/wsl/tests/provision.Tests.sh` — exit 0 in 35 seconds.
+- `bash -n runtimes/wsl/provision.sh runtimes/wsl/tests/provision.Tests.sh`
+  — exit 0.
+- `shellcheck runtimes/wsl/provision.sh runtimes/wsl/tests/provision.Tests.sh`
+  — exit 0.
+- `git diff --check` — exit 0.
+- Informational fixture rerun: 433ms and 38 tracked logical invocations
+  (`tar=4`, `sha256sum=4`, `find=8`, `stat=22`); no threshold asserted.
+
+### SHA
+
+`8ec40ba741b6c6c3bbbd24fdecf9f47468c3adbf`
