@@ -9,9 +9,10 @@ nginx_site="$repo_root/runtimes/wsl/runtime/nginx-site.conf"
 distro_config="$repo_root/runtimes/wsl/wsl-distribution.conf"
 containerfile="$repo_root/runtimes/wsl/Containerfile"
 canvas_patch="$repo_root/runtimes/wsl/runtime/patch-agent-canvas-automation.mjs"
+ingress_smoke="$repo_root/runtimes/wsl/tests/agent-canvas-ingress-smoke.mjs"
 omni_settings="$repo_root/runtimes/wsl/omni/settings.json"
 
-for file in "$entrypoint" "$unit" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$omni_settings"; do
+for file in "$entrypoint" "$unit" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$ingress_smoke" "$omni_settings"; do
   test -f "$file"
 done
 test "$(jq -r '.version' "$omni_settings")" = 24
@@ -53,6 +54,10 @@ if grep -F 'apt-get install -y --no-install-recommends nginx' "$containerfile"; 
 grep -F 'openhands-agent-server==1.44.0' "$containerfile"
 grep -F 'openhands-automation==1.9.0' "$containerfile"
 grep -F 'patch-agent-canvas-automation.mjs' "$containerfile"
+grep -F 'agent-canvas-ingress-smoke.mjs' "$containerfile"
+grep -F 'scripts/ingress.mjs' "$containerfile"
+grep -F 'node --check /home/agent/.local/lib/node_modules/@openhands/agent-canvas/scripts/ingress.mjs' "$containerfile"
+grep -F 'agent-canvas-ingress-smoke.mjs /home/agent/.local/lib/node_modules/@openhands/agent-canvas/scripts/ingress.mjs' "$containerfile"
 grep -F 'uv run --no-project --with openhands-automation==1.9.0 python -m uvicorn openhands.automation.app:app' "$containerfile"
 grep -F 'systemd-sysv' "$containerfile"
 grep -F 'test -x /sbin/init' "$containerfile"
@@ -146,6 +151,19 @@ if grep -F 'command: "uvx"' "$fixture"; then exit 1; fi
 if sed -n '/else if (version)/,/} else {/p' "$fixture" | grep -F 'uvxArgs.push('; then exit 1; fi
 if sed -n '/} else {/,/return {/p' "$fixture" | grep -F 'uvxArgs.push('; then exit 1; fi
 if node "$canvas_patch" "$fixture"; then exit 1; fi
+
+ingress_dir=$(mktemp -d "${TMPDIR:-/tmp}/ingress.XXXXXX")
+ingress_fixture="$ingress_dir/ingress.mjs"
+trap 'rm -f -- "$fixture"; rm -rf -- "$ingress_dir"' EXIT
+printf '%s\n' \
+  'const server = createServer();' \
+  '  server.listen(config.port, () => {' \
+  '  console.log("ready");' \
+  '});' > "$ingress_fixture"
+node "$canvas_patch" "$ingress_fixture"
+node --check "$ingress_fixture"
+grep -F 'server.listen(config.port, "127.0.0.1", () => {' "$ingress_fixture"
+if node "$canvas_patch" "$ingress_fixture"; then exit 1; fi
 
 docker run --rm ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b bash -euo pipefail -c '
   test "$(getent passwd ubuntu)" = "ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash"

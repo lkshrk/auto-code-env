@@ -7,6 +7,8 @@ on:
     paths:
       - .github/workflows/release-openhands-chart.yaml
       - .github/workflows/validate-openhands-chart.yaml
+      - .github/scripts/release-openhands-chart.sh
+      - .github/scripts/release-openhands-chart.Tests.sh
       - .gitmodules
       - renovate.json5
       - deploy/openhands/upstream
@@ -28,6 +30,9 @@ jobs:
         uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
         with:
           version: v4.2.4
+
+      - name: Test release recovery contract
+        run: bash .github/scripts/release-openhands-chart.Tests.sh
 
       - name: Validate package
         shell: bash

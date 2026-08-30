@@ -115,56 +115,12 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
-      - name: Verify release is new
-        env:
-          RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
-          VERSION: ${{ steps.package.outputs.version }}
-        run: |
-          set -euo pipefail
-          set +e
-          oci_error=$(helm show chart "$OCI_REPOSITORY" --version "$VERSION" 2>&1)
-          oci_rc=$?
-          set -e
-          if [ "$oci_rc" -eq 0 ]; then
-            echo "::error::OCI chart $OCI_REPOSITORY:$VERSION already exists"
-            exit 1
-          fi
-          if [[ "$oci_error" != *": not found" && "$oci_error" != *"manifest unknown"* ]]; then
-            echo "::error::Unable to verify OCI chart absence: $oci_error"
-            exit "$oci_rc"
-          fi
-          set +e
-          git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null
-          tag_rc=$?
-          set -e
-          case "$tag_rc" in
-            0)
-              echo "::error::Git tag $RELEASE_TAG already exists"
-              exit 1
-              ;;
-            2) ;;
-            *)
-              echo "::error::Unable to verify Git tag absence"
-              exit "$tag_rc"
-              ;;
-          esac
-
-      - name: Publish chart and release
+      - name: Publish or recover chart and release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE: ${{ steps.package.outputs.package }}
           RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
+          VERSION: ${{ steps.package.outputs.version }}
           TITLE: ${{ steps.notes.outputs.title }}
           NOTES_FILE: ${{ steps.notes.outputs.file }}
-        run: |
-          set -euo pipefail
-          gh release create "$RELEASE_TAG" \
-            --target "$GITHUB_SHA" \
-            --title "$TITLE" \
-            --notes-file "$NOTES_FILE"
-          rollback_release() {
-            gh release delete "$RELEASE_TAG" --yes --cleanup-tag || true
-          }
-          trap rollback_release ERR
-          helm push "$PACKAGE" oci://ghcr.io/lkshrk/charts
-          trap - ERR
+        run: ./.github/scripts/release-openhands-chart.sh

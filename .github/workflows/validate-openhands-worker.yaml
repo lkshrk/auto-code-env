@@ -13,6 +13,26 @@ permissions:
   contents: read
 
 jobs:
+  checks-amd64:
+    name: deterministic checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Run deterministic validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash runtimes/wsl/tests/provision.Tests.sh
+          bash runtimes/wsl/tests/runtime.Tests.sh
+          bash runtimes/wsl/tests/image.Tests.sh
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File runtimes/wsl/tests/install.Tests.ps1
+          find runtimes/wsl -type f -name '*.sh' -print0 | xargs -0 shellcheck
+
   validate:
     name: ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}

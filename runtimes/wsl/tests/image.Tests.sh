@@ -90,6 +90,14 @@ assert(validate.dig('strategy', 'matrix', 'include') == native_matrix, 'validati
 assert(validate.fetch('steps').none? { |item| item['uses'].to_s.include?('qemu') }, 'validation must not enable emulation')
 assert(run(validate, 'Smoke native image build').include?('type=cacheonly'), 'validation must smoke cache-only build')
 assert(run(validate, 'Export and inspect native WSL image').include?('build-wsl.sh'), 'validation must export WSL image')
+checks = validation.fetch('jobs').fetch('checks-amd64')
+assert(checks['runs-on'] == 'ubuntu-24.04', 'deterministic checks must run on amd64')
+checks_run = run(checks, 'Run deterministic validation')
+%w[provision.Tests.sh runtime.Tests.sh image.Tests.sh install.Tests.ps1].each do |test|
+  assert(checks_run.include?(test), "deterministic checks must run #{test}")
+end
+assert(checks_run.match?(%r{mcr\.microsoft\.com/powershell@sha256:[0-9a-f]{64}}), 'PowerShell test image must be digest-pinned')
+assert(checks_run.include?('shellcheck'), 'deterministic checks must run ShellCheck')
 
 assert(trigger(release).dig('push', 'tags') == ['openhands-worker-v*'], 'release must only run for worker tags')
 assert(release['permissions'] == { 'contents' => 'read' }, 'release default permissions must be read-only')

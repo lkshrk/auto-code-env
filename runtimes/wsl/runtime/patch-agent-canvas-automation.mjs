@@ -1,10 +1,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 const path = process.argv[2];
-if (!path) throw new Error("usage: patch-agent-canvas-automation.mjs <dev-with-automation.mjs>");
+if (!path) throw new Error("usage: patch-agent-canvas-automation.mjs <dev-with-automation.mjs|ingress.mjs>");
 
 // Temporary workaround for OpenHands/OpenHands#16217. Remove this patch when #16635 ships in Agent Canvas.
-const replacements = [
+const automationReplacements = [
   [
     `  const uvxArgs = [];
   let source = "";
@@ -110,6 +110,10 @@ const replacements = [
 ];
 
 let source = readFileSync(path, "utf8");
+// Keep Canvas ingress private; nginx is the only LAN-facing listener.
+const replacements = path.endsWith("/ingress.mjs") || path.endsWith("\\ingress.mjs")
+  ? [[`  server.listen(config.port, () => {`, `  server.listen(config.port, "127.0.0.1", () => {`]]
+  : automationReplacements;
 for (const [index, [before, after]] of replacements.entries()) {
   const count = source.split(before).length - 1;
   if (count !== 1) throw new Error(`expected one unpatched Agent Canvas snippet ${index}, found ${count}`);
