@@ -337,28 +337,38 @@ assert_root_nonwritable_file() {
     fi
 }
 
+assert_package_files() {
+    local package=$1
+    local verification line
+
+    verification=$(run_clean /usr/bin/dpkg --verify "$package") || fail "unable to verify $package package"
+    [ -z "$verification" ] && return
+    # Ubuntu's package excludes omit docs/man; permit only those explicit missing records, never altered files.
+    while IFS= read -r line; do
+        [[ $line =~ ^missing[[:blank:]]+/usr/share/(man|doc)/[^[:cntrl:]]+$ ]] || fail "invalid $package package files"
+    done <<< "$verification"
+}
+
 assert_rbw_package() {
-    local status owner verification
+    local status owner
 
     status=$(run_clean /usr/bin/dpkg-query -W -f="\${db:Status-Abbrev} \${Version}\\n" rbw) ||
         fail 'unable to query rbw package'
     [ "$status" = "ii  $RBW_PACKAGE_VERSION" ] || fail 'invalid rbw package'
     owner=$(run_clean /usr/bin/dpkg-query -S "$RBW_BINARY") || fail 'unable to query rbw binary owner'
     [ "$owner" = "rbw: $RBW_BINARY" ] || fail 'invalid rbw binary owner'
-    verification=$(run_clean /usr/bin/dpkg --verify rbw) || fail 'unable to verify rbw package'
-    [ -z "$verification" ] || fail 'invalid rbw package files'
+    assert_package_files rbw
 }
 
 assert_python_package() {
-    local status owner verification target resolved
+    local status owner target resolved
 
     status=$(run_clean /usr/bin/dpkg-query -W -f="\${db:Status-Abbrev}\\n" "$PYTHON_PACKAGE") ||
         fail 'unable to query python3-minimal package'
     [ "$status" = ii ] || fail 'invalid python3-minimal package'
     owner=$(run_clean /usr/bin/dpkg-query -S "$PYTHON_BINARY") || fail 'unable to query python3 binary owner'
     [ "$owner" = "$PYTHON_PACKAGE: $PYTHON_BINARY" ] || fail 'invalid python3 binary owner'
-    verification=$(run_clean /usr/bin/dpkg --verify "$PYTHON_PACKAGE") || fail 'unable to verify python3-minimal package'
-    [ -z "$verification" ] || fail 'invalid python3-minimal package files'
+    assert_package_files "$PYTHON_PACKAGE"
     if [ -L "$PYTHON_BINARY" ]; then
         target=$(/usr/bin/readlink "$PYTHON_BINARY") || fail 'unable to read python3 entry point'
         case $target in

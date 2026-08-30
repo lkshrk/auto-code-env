@@ -168,9 +168,9 @@ setup_fixture() {
   printf '%s\n' \
     '#!/bin/sh' \
     'test "${1:-}" = --verify || exit 1' \
-    'case "${2:-}" in rbw) test ! -e /tmp/fixture-dpkg-verify-nonzero || exit 1; test ! -e /tmp/fixture-dpkg-verify-fail || printf "??5?????? /usr/bin/rbw\\n" ;; python3-minimal) test ! -e /tmp/fixture-python-dpkg-verify-nonzero || exit 1; test ! -e /tmp/fixture-python-dpkg-verify-fail || printf "??5?????? /usr/bin/python3\\n" ;; *) exit 1 ;; esac' \
+    'case "${2:-}" in rbw) test ! -e /tmp/fixture-dpkg-verify-nonzero || exit 1; if test -e /tmp/fixture-rbw-dpkg-verify-output; then cat /tmp/fixture-rbw-dpkg-verify-output; elif test -e /tmp/fixture-dpkg-verify-fail; then printf "??5?????? /usr/bin/rbw\\n"; fi ;; python3-minimal) test ! -e /tmp/fixture-python-dpkg-verify-nonzero || exit 1; if test -e /tmp/fixture-python-dpkg-verify-output; then cat /tmp/fixture-python-dpkg-verify-output; elif test -e /tmp/fixture-python-dpkg-verify-fail; then printf "??5?????? /usr/bin/python3\\n"; fi ;; *) exit 1 ;; esac' \
     > /usr/bin/dpkg
-  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "${FIXTURE_UNAME:-x86_64}"' > /usr/bin/uname
+  printf '%s\n' '#!/bin/sh' 'machine_arch=${FIXTURE_UNAME:-x86_64}' 'printf "%s\n" "$machine_arch" > /tmp/fixture-machine-arch' 'printf "%s\n" "$machine_arch"' > /usr/bin/uname
   printf '%s\n' \
     '#!/bin/sh' \
     'test "$PATH" = /usr/sbin:/usr/bin:/sbin:/bin || exit 73' \
@@ -193,7 +193,7 @@ setup_fixture() {
     'test "${15}" = --output' \
     'output=${16}' \
     'url=${17}' \
-    'case "${FIXTURE_UNAME:-x86_64}" in' \
+    'case "$(cat /tmp/fixture-machine-arch)" in' \
     '  x86_64|amd64) node_arch=x64; uv_target=x86_64-unknown-linux-gnu ;;' \
     '  aarch64|arm64) node_arch=arm64; uv_target=aarch64-unknown-linux-gnu ;;' \
     '  *) exit 72 ;;' \
@@ -205,13 +205,16 @@ setup_fixture() {
     '  https://nodejs.org/dist/v24.20.0/SHASUMS256.txt)' \
     '    hash=$(/usr/bin/sha256sum "$node_source"); hash=${hash%% *}' \
     '    printf "%s  %s\n" "$hash" "$node_archive" > "$output" ;;' \
-    "  https://nodejs.org/dist/v24.20.0/\$node_archive)" \
+    '  https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-*.tar.xz)' \
+    '    test "$url" = "https://nodejs.org/dist/v24.20.0/$node_archive" || exit 72' \
     '    /usr/bin/cp -- "$node_source" "$output"' \
     '    if test -e /tmp/fixture-corrupt-node-download; then printf corrupt >> "$output"; fi ;;' \
-    "  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-\$uv_target.tar.gz.sha256)" \
+    '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-*.tar.gz.sha256)' \
+    '    test "$url" = "https://github.com/astral-sh/uv/releases/download/0.12.7/uv-$uv_target.tar.gz.sha256" || exit 72' \
     '    hash=$(/usr/bin/sha256sum "/fixtures/uv-$uv_target.tar.gz"); hash=${hash%% *}' \
     '    printf "%s  %s\n" "$hash" "uv-$uv_target.tar.gz" > "$output" ;;' \
-    "  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-\$uv_target.tar.gz)" \
+    '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-*.tar.gz)' \
+    '    test "$url" = "https://github.com/astral-sh/uv/releases/download/0.12.7/uv-$uv_target.tar.gz" || exit 72' \
     '    /usr/bin/cp -- "/fixtures/uv-$uv_target.tar.gz" "$output" ;;' \
     '  *) exit 72 ;;' \
     'esac' > /usr/bin/curl
@@ -1116,6 +1119,32 @@ run_container '
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
+'
+
+run_container '
+  verifier_source="source <(sed '\''/^trap cleanup EXIT$/,\$d'\'' /src/runtimes/wsl/provision.sh)"
+  for package in rbw python; do
+    case "$package" in
+      rbw) output=/tmp/fixture-rbw-dpkg-verify-output; verifier=assert_rbw_package ;;
+      python) output=/tmp/fixture-python-dpkg-verify-output; verifier=assert_python_package ;;
+    esac
+    printf "missing /usr/share/man/man1/%s.1.gz\\nmissing    /usr/share/doc/%s/copyright\\n" "$package" "$package" > "$output"
+    bash -euo pipefail -c "$verifier_source; $verifier"
+    for line in \
+      "missing /usr/bin/$package" \
+      "??5?????? /usr/share/man/man1/$package.1.gz" \
+      "missing /etc/$package.conf" \
+      "unexpected /usr/share/doc/$package/copyright"; do
+      printf "%s\\n" "$line" > "$output"
+      if bash -euo pipefail -c "$verifier_source; $verifier"; then
+        exit 1
+      fi
+    done
+    printf "missing /usr/share/doc/%s/copyright\\nunexpected line\\n" "$package" > "$output"
+    if bash -euo pipefail -c "$verifier_source; $verifier"; then
+      exit 1
+    fi
+  done
 '
 
 run_container '
