@@ -31,6 +31,7 @@ readonly RBW_BINARY=/usr/bin/rbw
 readonly RBW_PINENTRY_DIRECTORY=/usr/local/libexec
 readonly RBW_PINENTRY="${RBW_PINENTRY_DIRECTORY}/openhands-rbw-pinentry"
 readonly PYTHON_PACKAGE=python3-minimal
+readonly PYTHON_STDLIB_PACKAGE=python3
 readonly PYTHON_BINARY=/usr/bin/python3
 
 node_stage_root=
@@ -361,11 +362,14 @@ assert_rbw_package() {
 }
 
 assert_python_package() {
-    local status owner target resolved
+    local status stdlib_status owner target resolved
 
     status=$(run_clean /usr/bin/dpkg-query -W -f="\${db:Status-Abbrev}\\n" "$PYTHON_PACKAGE") ||
         fail 'unable to query python3-minimal package'
     [ "$status" = 'ii ' ] || fail 'invalid python3-minimal package'
+    stdlib_status=$(run_clean /usr/bin/dpkg-query -W -f="\${db:Status-Abbrev}\\n" "$PYTHON_STDLIB_PACKAGE") ||
+        fail 'unable to query python3 package'
+    [ "$stdlib_status" = 'ii ' ] || fail 'invalid python3 package'
     owner=$(run_clean /usr/bin/dpkg-query -S "$PYTHON_BINARY") || fail 'unable to query python3 binary owner'
     [ "$owner" = "$PYTHON_PACKAGE: $PYTHON_BINARY" ] || fail 'invalid python3 binary owner'
     assert_package_files "$PYTHON_PACKAGE"
@@ -385,6 +389,7 @@ assert_python_package() {
         resolved=$PYTHON_BINARY
     fi
     assert_root_file "$resolved" 755
+    run_clean "$PYTHON_BINARY" -c 'import queue' || fail 'python3 standard library is incomplete'
 }
 
 write_rbw_pinentry() {
@@ -942,7 +947,7 @@ fi
 preflight_tool_paths
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
-    /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils "$PYTHON_PACKAGE" "rbw=${RBW_PACKAGE_VERSION}"
+    /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils "$PYTHON_PACKAGE" "$PYTHON_STDLIB_PACKAGE" "rbw=${RBW_PACKAGE_VERSION}"
 verify_rbw
 stage_toolchain
 validate_existing_tool_paths

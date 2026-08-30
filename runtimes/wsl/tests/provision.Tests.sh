@@ -149,7 +149,7 @@ setup_fixture() {
     'test "$PATH" = /usr/sbin:/usr/bin:/sbin:/bin || exit 73' \
     'printf "%s\n" "$*" >> /tmp/apt-calls' \
     'case "$*" in' \
-    '  update|"install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal rbw=1.13.2-7")' \
+    '  update|"install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal python3 rbw=1.13.2-7")' \
     '    if test ! -e /usr/bin/rbw; then' \
     '      printf "%s\\n" "#!/bin/sh" "case \"\${1:-}\" in" "  --version) printf \"%s\\n\" \"rbw 1.13.2\" ;;" "  *) exit 0 ;;" "esac" > /usr/bin/rbw' \
     '      chmod 0755 /usr/bin/rbw' \
@@ -161,7 +161,7 @@ setup_fixture() {
     '#!/bin/sh' \
     'case "${1:-}" in' \
     '  -W)' \
-    '    case "${3:-}" in rbw) test ! -e /tmp/fixture-counterfeit-rbw || { printf "ii  9.9.9-1\\n"; exit 0; }; printf "ii  1.13.2-7\\n" ;; python3-minimal) printf "ii \\n" ;; *) exit 1 ;; esac ;;' \
+    '    case "${3:-}" in rbw) test ! -e /tmp/fixture-counterfeit-rbw || { printf "ii  9.9.9-1\\n"; exit 0; }; printf "ii  1.13.2-7\\n" ;; python3-minimal|python3) printf "ii \\n" ;; *) exit 1 ;; esac ;;' \
     '  -S) case "${2:-}" in /usr/bin/rbw) printf "rbw: /usr/bin/rbw\\n" ;; /usr/bin/python3) printf "python3-minimal: /usr/bin/python3\\n" ;; *) exit 1 ;; esac ;;' \
     '  *) exit 1 ;;' \
     'esac' > /usr/bin/dpkg-query
@@ -299,7 +299,7 @@ run_container '
     "$benchmark_elapsed_ms" "$(wc -l < /tmp/node-digest-processes)" \
     "$(grep -c ^tar$ /tmp/node-digest-processes)" "$(grep -c ^sha256sum$ /tmp/node-digest-processes)" \
     "$(grep -c ^find$ /tmp/node-digest-processes)" "$(grep -c ^stat$ /tmp/node-digest-processes)"
-  printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal rbw=1.13.2-7" update "install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal rbw=1.13.2-7" > /tmp/apt-calls.expected
+  printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal python3 rbw=1.13.2-7" update "install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal python3 rbw=1.13.2-7" > /tmp/apt-calls.expected
   cmp -s /tmp/apt-calls.expected /tmp/apt-calls
 
   test "$(getent passwd agent | cut -d: -f6,7)" = "/home/agent:/bin/bash"
