@@ -13,10 +13,11 @@ deletes 46 lines total; no per-file `stat`, `sort`, or `sha256sum` loop remains.
 The remaining tree security scan is one `find`, plus the existing bounded
 symlink-target checks.
 
-Legacy multiline markers are not trusted. An installed tree is canonically
+Non-v2 markers are not trusted or classified. An installed tree is canonically
 hashed and compared with the verified staged digest first; only equality
-permits an atomic root-owned `0644` marker replacement. Foreign or mismatched
-markers remain unchanged, including when replacement is interrupted.
+permits an atomic root-owned `0644` marker replacement. Exact-v2 markers must
+carry the staged digest. Mismatched trees and interrupted replacements retain
+their original marker.
 
 ## RED
 
@@ -32,7 +33,7 @@ implementation still emitted its multiline per-entry manifest.
 - `shellcheck runtimes/wsl/provision.sh runtimes/wsl/tests/provision.Tests.sh`
   — exit 0.
 - `git diff --check` — exit 0.
-- Injected tar-list, safety-find, digest-tar, and digest-SHA failures all stop
+- Injected tar-list, link-find, digest-tar, and digest-SHA failures all stop
   before commit and leave no staging directories.
 - Fixtures cover content, safe mode, ownership, symlink target, added,
   missing, nested-marker, timestamp, foreign-marker, legacy migration, and
@@ -67,3 +68,54 @@ digest; adding the root marker did not.
 - The official Node archive was not rerun on target WSL ext4 in this task.
   Target rerun timing and integrity validation remain the authoritative later
   benchmark.
+
+## Review fix round
+
+### Rulings
+
+Xattrs, ACLs, and hardlink topology remain outside the integrity contract. The
+replaced detailed manifest covered paths, content, mode, numeric ownership,
+and symlink targets only; this round adds no tar metadata flags or link checks.
+
+### RED
+
+After changing only the fixture contract, the suite exited 1 with
+`foreign Node.js manifest`. The equal installed tree carried an arbitrary
+non-v2 marker, proving the first implementation incorrectly classified marker
+content before verifying the tree.
+
+### Fix
+
+- Exact-v2 marker grammar must carry the verified staged digest. Every other
+  root-owned regular `0644` marker is treated as opaque and migrates only after
+  canonical installed/staged digest equality.
+- The atomic replacement temp now lives under the registered Node stage root,
+  outside `NODE_HOME` but on the same filesystem. A stale external crash temp
+  does not affect reruns; a stale internal temp from the prior implementation
+  is included in the digest and rejected.
+- Safety-scan and link-enumeration `find` failures have distinct injectors that
+  match their actual argument vectors. Both emit valid-looking output, return
+  nonzero, stop before commit, and clean registered staging.
+- Marker fixtures construct canonical expected bytes and use `cmp`; they cover
+  the required final newline, arbitrary non-v2 content, a real multiline
+  D/L/F marker, mismatched non-v2 preservation, and exact-v2 digest mismatch.
+
+### GREEN
+
+- `bash runtimes/wsl/tests/provision.Tests.sh` — exit 0 in 33 seconds.
+- `bash -n runtimes/wsl/provision.sh runtimes/wsl/tests/provision.Tests.sh`
+  — exit 0.
+- `shellcheck runtimes/wsl/provision.sh runtimes/wsl/tests/provision.Tests.sh`
+  — exit 0.
+- `git diff --check` — exit 0.
+- Informational fixture rerun: 486ms and 38 tracked logical invocations
+  (`tar=4`, `sha256sum=4`, `find=8`, `stat=22`); no threshold asserted.
+
+### SHA
+
+`032a48e2cb3d5c5c36485c8f7ee9f556e073a49f`
+
+### Gap
+
+The target WSL ext4 rerun and 4,800-file release-tree benchmark remain later
+work. No target timing claim is made from the small fixture.
