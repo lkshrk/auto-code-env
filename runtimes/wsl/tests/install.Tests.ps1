@@ -25,6 +25,15 @@ function Assert-NotMatch {
     }
 }
 
+function Assert-ArgumentCall {
+    param([string[]]$Expected, [string[]]$Actual, [string]$Message)
+
+    Assert-Equal $Expected.Count $Actual.Count "$Message argument count"
+    for ($index = 0; $index -lt $Expected.Count; $index++) {
+        Assert-Equal $Expected[$index] $Actual[$index] "$Message argument $index"
+    }
+}
+
 function Assert-Throws {
     param([scriptblock]$Action, [string]$Message)
 
@@ -267,6 +276,7 @@ try {
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslNamedInstallSupported")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionRegistered")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslArtifactArchitecture")))
+    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslImageSha256")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Resolve-WslImage")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Install-WslDistribution")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslExecutablePath")))
@@ -405,6 +415,7 @@ try {
     function Invoke-WebRequest {
         param([Uri]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
 
+        $script:DownloadedImageUri = $Uri.AbsoluteUri
         [System.IO.File]::WriteAllText($OutFile, "image", [System.Text.UTF8Encoding]::new($false))
     }
     $downloadedImage = Resolve-WslImage -ImageUri "https://example.invalid/openhands-worker-1.2.3-amd64.wsl" -ImageSha256 $imageHash -Architecture "AMD64"
@@ -436,8 +447,44 @@ try {
 
     Set-FakeWslScenario -Root $testRoot -Before "docker-desktop" -After "docker-desktop`nopenhands-worker"
     $env:FAKE_WSL_REQUIRE_STAGED_IMAGE = "1"
-    Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64") "new target should import and verify"
-    Assert-Match '(?s)^--list --quiet\n--install --from-file .+openhands-worker-1\.2\.3-amd64\.wsl --name openhands-worker --no-launch\n--list --quiet\n$' (Get-FakeWslCalls) "from-file install call order"
+    $spacedTemporaryRoot = Join-Path $testRoot "temporary images"
+    New-Item -ItemType Directory -Path $spacedTemporaryRoot | Out-Null
+    $originalTemp = $env:TEMP
+    $originalTmp = $env:TMP
+    $originalTmpDir = $env:TMPDIR
+    try {
+        $env:TEMP = $spacedTemporaryRoot
+        $env:TMP = $spacedTemporaryRoot
+        $env:TMPDIR = $spacedTemporaryRoot
+        Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64") "new target should import and verify"
+        $calls = Get-FakeWslArgumentCalls
+        Assert-Equal 3 $calls.Count "local import call count"
+        Assert-ArgumentCall -Expected @("--list", "--quiet") -Actual $calls[0] -Message "local initial list"
+        Assert-Equal "--install" $calls[1][0] "local import command"
+        Assert-Equal "--from-file" $calls[1][1] "local import source flag"
+        Assert-Match ([regex]::Escape($spacedTemporaryRoot)) $calls[1][2] "local import staged source should retain spaces as one argument"
+        Assert-Match 'openhands-worker-1\.2\.3-amd64\.wsl$' $calls[1][2] "local import staged source leaf"
+        Assert-ArgumentCall -Expected @("--install", "--from-file", $calls[1][2], "--name", "openhands-worker", "--no-launch") -Actual $calls[1] -Message "local import argv"
+        Assert-ArgumentCall -Expected @("--list", "--quiet") -Actual $calls[2] -Message "local verification list"
+
+        Set-FakeWslScenario -Root $testRoot -Before "docker-desktop" -After "docker-desktop`nopenhands-worker"
+        $env:FAKE_WSL_REQUIRE_STAGED_IMAGE = "1"
+        $script:DownloadedImageUri = $null
+        Assert-Equal $true (Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImageUri "https://example.invalid/openhands-worker-1.2.3-amd64.wsl" -ImageSha256 $imageHash -Architecture "AMD64") "HTTPS image should download, hash, and import"
+        Assert-Equal "https://example.invalid/openhands-worker-1.2.3-amd64.wsl" $script:DownloadedImageUri "HTTPS image download URI"
+        $calls = Get-FakeWslArgumentCalls
+        Assert-Equal 3 $calls.Count "HTTPS import call count"
+        Assert-ArgumentCall -Expected @("--list", "--quiet") -Actual $calls[0] -Message "HTTPS initial list"
+        Assert-Match ([regex]::Escape($spacedTemporaryRoot)) $calls[1][2] "HTTPS import staged source should retain spaces as one argument"
+        Assert-ArgumentCall -Expected @("--install", "--from-file", $calls[1][2], "--name", "openhands-worker", "--no-launch") -Actual $calls[1] -Message "HTTPS import argv"
+        Assert-ArgumentCall -Expected @("--list", "--quiet") -Actual $calls[2] -Message "HTTPS verification list"
+    }
+    finally {
+        $env:TEMP = $originalTemp
+        $env:TMP = $originalTmp
+        $env:TMPDIR = $originalTmpDir
+        Remove-Item -LiteralPath $spacedTemporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 
     Set-FakeWslScenario -Root $testRoot -ListExit 1
     Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64" } "nonzero list should fail"
@@ -450,6 +497,18 @@ try {
     Set-FakeWslScenario -Root $testRoot -After "docker-desktop"
     Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64" } "missing post-import target should fail"
     Assert-Match '(?s)^--list --quiet\n--install --from-file .+openhands-worker-1\.2\.3-amd64\.wsl --name openhands-worker --no-launch\n--list --quiet\n$' (Get-FakeWslCalls) "missing post-import target calls"
+
+    $temporaryImagesBefore = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter "openhands-worker-*" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    function Get-WslImageSha256 {
+        param([IO.Stream]$Stream)
+
+        throw "Simulated hash read failure."
+    }
+    Set-FakeWslScenario -Root $testRoot
+    Assert-Throws { Install-WslDistribution -WslPath $fakeWslPath -Name "openhands-worker" -ImagePath $imagePath -ImageSha256 $imageHash -Architecture "AMD64" } "hash read failure should fail before import"
+    Assert-Equal "--list --quiet`n" (Get-FakeWslCalls) "hash read failure should not invoke WSL import"
+    $temporaryImagesAfter = @(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter "openhands-worker-*" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    Assert-Equal ($temporaryImagesBefore -join "`n") ($temporaryImagesAfter -join "`n") "hash read failure should clean its temporary directory"
 
     $configPath = Join-Path $testRoot ".wslconfig"
     $original = "[wsl2]`nfirewall=true`nlocalhostForwarding=false`n"

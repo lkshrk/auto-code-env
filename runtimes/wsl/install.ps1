@@ -234,6 +234,18 @@ function Get-WslArtifactArchitecture {
     }
 }
 
+function Get-WslImageSha256 {
+    param([Parameter(Mandatory)][IO.Stream]$Stream)
+
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($Stream))).Replace("-", "")
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 function Resolve-WslImage {
     param(
         [string]$ImagePath,
@@ -288,13 +300,7 @@ function Resolve-WslImage {
             throw "Staged WSL image '$resolvedPath' must be a regular file."
         }
         $stream = [IO.File]::Open($staged.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-        $sha256 = [Security.Cryptography.SHA256]::Create()
-        try {
-            $actualHash = ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "")
-        }
-        finally {
-            $sha256.Dispose()
-        }
+        $actualHash = Get-WslImageSha256 -Stream $stream
         if ($actualHash -ine $ImageSha256) {
             throw "WSL image SHA-256 does not match ImageSha256."
         }

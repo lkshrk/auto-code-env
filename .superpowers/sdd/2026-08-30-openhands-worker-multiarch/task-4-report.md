@@ -31,3 +31,8 @@ Implemented verified architecture-specific WSL image imports.
 - The staged image stays open with read-only sharing while its SHA-256 is calculated and through WSL import; cleanup disposes the handle before removing only the owned directory.
 - WOW64 architecture now takes precedence via `PROCESSOR_ARCHITEW6432`, then process architecture, then `RuntimeInformation`.
 - Tests cover staged-path lifecycle, Windows-only write denial, cleanup on failed hashing, and no import after a hash mismatch.
+
+## Round 2 review fixes
+
+- Import tests now use NUL-delimited fake-WSL argv records, including staged temporary paths with spaces, instead of flattened command text.
+- Added a complete HTTPS download/hash/import argv test and an injected hash-read exception test that proves cleanup and no import.
