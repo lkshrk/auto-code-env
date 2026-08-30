@@ -728,6 +728,17 @@ run_container '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  mkdir -p /home/agent/.cache/npm/unrelated/deep
+  chown -R agent:agent /home/agent/.cache/npm/unrelated
+  chmod 0777 /home/agent/.cache/npm/unrelated/deep
+  ln -s /tmp /home/agent/.cache/npm/unrelated/deep-link
+  bash /src/runtimes/wsl/provision.sh
+  test -L /home/agent/.cache/npm/unrelated/deep-link
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
   useradd --create-home --shell /bin/bash --user-group agent
   chmod 0700 /home/agent
   mkdir /home/agent/.local

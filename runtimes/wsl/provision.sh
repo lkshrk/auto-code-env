@@ -131,34 +131,6 @@ ensure_private_directory() {
     assert_agent_directory "$path"
 }
 
-assert_agent_tree() {
-    local root=$1
-    local path mode target resolved
-
-    while IFS= read -r -d '' path; do
-        if [ "$(/usr/bin/stat -c '%U:%G' "$path")" != 'agent:agent' ]; then
-            fail "foreign agent path: $path"
-        fi
-        if [ -L "$path" ]; then
-            target=$(/usr/bin/readlink -- "$path") || fail "unable to read agent symlink: $path"
-            case $target in
-                /*|*$'\t'*|*$'\n'*) fail "unsafe agent symlink: $path" ;;
-            esac
-            resolved=$(/usr/bin/readlink -m -- "$(/usr/bin/dirname "$path")/$target") ||
-                fail "unable to resolve agent symlink: $path"
-            case $resolved in
-                "$root"|"$root"/*) ;;
-                *) fail "unsafe agent symlink: $path" ;;
-            esac
-        elif [ -d "$path" ] || [ -f "$path" ]; then
-            mode=$(/usr/bin/stat -c '%a' "$path")
-            (( (8#$mode & 0022) == 0 )) || fail "writable agent path: $path"
-        else
-            fail "unsupported agent path: $path"
-        fi
-    done < <(/usr/bin/find -P "$root" -xdev -print0)
-}
-
 assert_agent_package() {
     local package=$1
     local version=$2
@@ -253,8 +225,6 @@ preflight_agent_npm_paths() {
     ensure_private_directory "$AGENT_PREFIX"
     ensure_private_directory /home/agent/.cache
     ensure_private_directory "$NPM_CACHE"
-    assert_agent_tree "$AGENT_PREFIX"
-    assert_agent_tree "$NPM_CACHE"
 }
 
 install_agent_packages() {
@@ -267,8 +237,6 @@ install_agent_packages() {
 }
 
 verify_agent_packages() {
-    assert_agent_tree "$AGENT_PREFIX"
-    assert_agent_tree "$NPM_CACHE"
     assert_exact_agent_packages
     assert_agent_package @openhands/agent-canvas 1.16.0
     assert_agent_package @agentclientprotocol/claude-agent-acp 0.63.0

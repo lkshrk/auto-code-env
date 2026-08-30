@@ -162,7 +162,7 @@ empty root-owned `/etc/openhands/npmrc`. npm runs with a clean environment, the
 verified `/usr/local/bin/node` wrapper for lifecycle scripts, the pinned Node
 binary and bundled npm CLI, explicit prefix/cache paths, and audit,
 funding, and update notifications disabled. The provisioner fails on unsafe or
-foreign-owned npm paths, verifies each direct package's `package.json` name and
+foreign-owned npm root paths, verifies each direct package's `package.json` name and
 exact version using the pinned Node binary, confines every expected executable
 symlink to its owning package, and only then runs `claude --version` and
 `codex --version`. Canvas and ACP executables are validated without starting
@@ -173,6 +173,11 @@ Code installs separately with npm 11's `--strict-allow-scripts` and only
 `@anthropic-ai/claude-code` allowed, so transitive lifecycle scripts cannot
 float into the install. Exact global `npm ls --depth=0 --json` state and the
 complete global-bin set are verified on every run.
+
+The provisioner intentionally does not recursively validate npm's transitive
+package or cache trees: they are agent-owned mutable state, not source-locked
+artifacts. The direct-package and executable contract above is the durable
+validation boundary.
 
 The direct global package set is exactly:
 
