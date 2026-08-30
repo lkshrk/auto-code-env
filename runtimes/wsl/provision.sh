@@ -12,6 +12,18 @@ readonly NODE_BINARY="${NODE_HOME}/bin/node"
 readonly NPM_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npm-cli.js"
 readonly NPX_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npx-cli.js"
 readonly NODE_MANIFEST=.openhands-manifest
+readonly AGENT_PREFIX=/home/agent/.local
+readonly NPM_CACHE=/home/agent/.cache/npm
+readonly NPM_USERCONFIG="${AGENT_PREFIX}/npmrc"
+readonly NPM_GLOBALCONFIG="${AGENT_PREFIX}/etc/npmrc"
+readonly AGENT_BIN="${AGENT_PREFIX}/bin"
+readonly -a AGENT_PACKAGES=(
+    '@openhands/agent-canvas@1.16.0'
+    '@agentclientprotocol/claude-agent-acp@0.63.0'
+    '@agentclientprotocol/codex-acp@1.1.7'
+    '@anthropic-ai/claude-code@2.1.251'
+    '@openai/codex@0.151.0'
+)
 readonly UV_VERSION=0.12.7
 readonly UV_DIRECTORY=uv-x86_64-unknown-linux-gnu
 readonly UV_ARCHIVE="${UV_DIRECTORY}.tar.gz"
@@ -31,6 +43,11 @@ fail() {
 
 run_clean() {
     /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"
+}
+
+run_agent_clean() {
+    /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent \
+        PATH="${AGENT_BIN}:/usr/sbin:/usr/bin:/sbin:/bin" "$@"
 }
 
 path_exists() {
@@ -104,6 +121,127 @@ ensure_private_directory() {
     fi
     /usr/sbin/runuser -u agent -- /usr/bin/mkdir -m 0700 -- "$path"
     assert_agent_directory "$path"
+}
+
+ensure_empty_agent_file() {
+    local path=$1
+
+    if path_exists "$path"; then
+        if [ -L "$path" ] || [ ! -f "$path" ] || [ "$(/usr/bin/stat -c '%U:%G %a' "$path")" != 'agent:agent 600' ] ||
+            [ -s "$path" ]; then
+            fail "invalid npm configuration: $path"
+        fi
+        return
+    fi
+    /usr/sbin/runuser -u agent -- /usr/bin/touch -- "$path"
+    /usr/bin/chmod 0600 -- "$path"
+    if [ "$(/usr/bin/stat -c '%U:%G %a' "$path")" != 'agent:agent 600' ]; then
+        fail "invalid npm configuration: $path"
+    fi
+}
+
+assert_agent_tree() {
+    local root=$1
+    local path mode target resolved
+
+    while IFS= read -r -d '' path; do
+        if [ "$(/usr/bin/stat -c '%U:%G' "$path")" != 'agent:agent' ]; then
+            fail "foreign agent path: $path"
+        fi
+        if [ -L "$path" ]; then
+            target=$(/usr/bin/readlink -- "$path") || fail "unable to read agent symlink: $path"
+            case $target in
+                /*|*$'\t'*|*$'\n'*) fail "unsafe agent symlink: $path" ;;
+            esac
+            resolved=$(/usr/bin/readlink -m -- "$(/usr/bin/dirname "$path")/$target") ||
+                fail "unable to resolve agent symlink: $path"
+            case $resolved in
+                "$root"|"$root"/*) ;;
+                *) fail "unsafe agent symlink: $path" ;;
+            esac
+        elif [ -d "$path" ] || [ -f "$path" ]; then
+            mode=$(/usr/bin/stat -c '%a' "$path")
+            (( (8#$mode & 0022) == 0 )) || fail "writable agent path: $path"
+        else
+            fail "unsupported agent path: $path"
+        fi
+    done < <(/usr/bin/find -P "$root" -xdev -print0)
+}
+
+assert_agent_package() {
+    local package=$1
+    local version=$2
+    local package_dir="${AGENT_PREFIX}/lib/node_modules/${package}"
+    local output
+
+    if [ -L "$package_dir" ] || [ ! -d "$package_dir" ] || [ -L "$package_dir/package.json" ] ||
+        [ ! -f "$package_dir/package.json" ]; then
+        fail "invalid agent package: $package"
+    fi
+    # shellcheck disable=SC2016
+    output=$(run_agent_clean "$NODE_BINARY" -e \
+        'const packageJson = require(process.argv[1]); if (packageJson.name !== process.argv[2] || packageJson.version !== process.argv[3]) process.exit(1); process.stdout.write(`${packageJson.name}@${packageJson.version}`);' \
+        "$package_dir/package.json" "$package" "$version") || fail "invalid agent package: $package"
+    [ "$output" = "${package}@${version}" ] || fail "invalid agent package: $package"
+}
+
+assert_agent_bin() {
+    local name=$1
+    local package=$2
+    local path="${AGENT_BIN}/${name}"
+    local package_dir="${AGENT_PREFIX}/lib/node_modules/${package}"
+    local target resolved
+
+    if [ ! -L "$path" ] || [ "$(/usr/bin/stat -c '%U:%G' "$path")" != 'agent:agent' ]; then
+        fail "invalid agent executable: $name"
+    fi
+    target=$(/usr/bin/readlink -- "$path") || fail "unable to read agent executable: $name"
+    case $target in
+        /*|*$'\t'*|*$'\n'*) fail "unsafe agent executable: $name" ;;
+    esac
+    resolved=$(/usr/bin/readlink -m -- "$(/usr/bin/dirname "$path")/$target") || fail "unable to resolve agent executable: $name"
+    case $resolved in
+        "$package_dir"/*) ;;
+        *) fail "unsafe agent executable: $name" ;;
+    esac
+    if [ -L "$resolved" ] || [ ! -f "$resolved" ] || [ ! -x "$resolved" ] ||
+        [ "$(/usr/bin/stat -c '%U:%G' "$resolved")" != 'agent:agent' ]; then
+        fail "invalid agent executable: $name"
+    fi
+}
+
+preflight_agent_npm_paths() {
+    ensure_private_directory "$AGENT_PREFIX"
+    ensure_private_directory /home/agent/.cache
+    ensure_private_directory "$NPM_CACHE"
+    ensure_private_directory "${AGENT_PREFIX}/etc"
+    ensure_empty_agent_file "$NPM_USERCONFIG"
+    ensure_empty_agent_file "$NPM_GLOBALCONFIG"
+    assert_agent_tree "$AGENT_PREFIX"
+    assert_agent_tree "$NPM_CACHE"
+}
+
+install_agent_packages() {
+    run_agent_clean "$NODE_BINARY" "$NPM_CLI" --prefix "$AGENT_PREFIX" --cache "$NPM_CACHE" \
+        --userconfig "$NPM_USERCONFIG" --globalconfig "$NPM_GLOBALCONFIG" --global --no-audit --no-fund \
+        --no-update-notifier install "${AGENT_PACKAGES[@]}" || fail 'agent npm installation failed'
+}
+
+verify_agent_packages() {
+    assert_agent_tree "$AGENT_PREFIX"
+    assert_agent_tree "$NPM_CACHE"
+    assert_agent_package @openhands/agent-canvas 1.16.0
+    assert_agent_package @agentclientprotocol/claude-agent-acp 0.63.0
+    assert_agent_package @agentclientprotocol/codex-acp 1.1.7
+    assert_agent_package @anthropic-ai/claude-code 2.1.251
+    assert_agent_package @openai/codex 0.151.0
+    assert_agent_bin agent-canvas @openhands/agent-canvas
+    assert_agent_bin claude-agent-acp @agentclientprotocol/claude-agent-acp
+    assert_agent_bin codex-acp @agentclientprotocol/codex-acp
+    assert_agent_bin claude @anthropic-ai/claude-code
+    assert_agent_bin codex @openai/codex
+    run_agent_clean "${AGENT_BIN}/claude" --version >/dev/null || fail 'invalid Claude Code installation'
+    run_agent_clean "${AGENT_BIN}/codex" --version >/dev/null || fail 'invalid Codex installation'
 }
 
 install_wsl_config() {
@@ -575,3 +713,6 @@ stage_toolchain
 validate_existing_tool_paths
 commit_toolchain
 verify_toolchain
+preflight_agent_npm_paths
+install_agent_packages
+verify_agent_packages

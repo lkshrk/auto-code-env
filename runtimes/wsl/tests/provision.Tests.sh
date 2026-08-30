@@ -32,7 +32,42 @@ setup_fixture() {
     'test -z "${NODE_OPTIONS+x}" || exit 65' \
     'case "${1:-}" in' \
     '  --version) printf "%s\n" v24.20.0 ;;' \
-    '  */npm-cli.js|*/npx-cli.js) test "${2:-}" = --version && printf "%s\n" 11.19.0 ;;' \
+    '  -e)' \
+    '    test ! -e /tmp/fixture-wrong-package || test "$4" != @openhands/agent-canvas || exit 86' \
+    '    printf "%s@%s\n" "$4" "$5" ;;' \
+    '  */npx-cli.js) test "${2:-}" = --version && printf "%s\n" 11.19.0 ;;' \
+    '  */npm-cli.js)' \
+    '    if test "${2:-}" = --version; then printf "%s\n" 11.19.0; exit 0; fi' \
+    '    test "$(id -un)" = agent || exit 81' \
+    '    test "$HOME" = /home/agent || exit 82' \
+    '    test "$PATH" = /home/agent/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin || exit 83' \
+    '    shift' \
+    '    test "$1" = --prefix && prefix=$2 && shift 2' \
+    '    test "$1" = --cache && test "$2" = /home/agent/.cache/npm && shift 2' \
+    '    test "$1" = --userconfig && test "$2" = /home/agent/.local/npmrc && shift 2' \
+    '    test "$1" = --globalconfig && test "$2" = /home/agent/.local/etc/npmrc && shift 2' \
+    '    test "$1" = --global && test "$2" = --no-audit && test "$3" = --no-fund && test "$4" = --no-update-notifier && test "$5" = install && shift 5' \
+    '    printf "%s\n" "$@" >> /tmp/npm-installs' \
+    '    test ! -e /tmp/fixture-npm-fail || exit 84' \
+    '    mkdir -p "$prefix/lib/node_modules/@openhands" "$prefix/lib/node_modules/@agentclientprotocol" "$prefix/lib/node_modules/@anthropic-ai" "$prefix/lib/node_modules/@openai" "$prefix/bin"' \
+    '    for spec do' \
+    '      case "$spec" in' \
+    '        @openhands/agent-canvas@1.16.0) name=@openhands/agent-canvas version=1.16.0 bin=agent-canvas ;;' \
+    '        @agentclientprotocol/claude-agent-acp@0.63.0) name=@agentclientprotocol/claude-agent-acp version=0.63.0 bin=claude-agent-acp ;;' \
+    '        @agentclientprotocol/codex-acp@1.1.7) name=@agentclientprotocol/codex-acp version=1.1.7 bin=codex-acp ;;' \
+    '        @anthropic-ai/claude-code@2.1.251) name=@anthropic-ai/claude-code version=2.1.251 bin=claude ;;' \
+    '        @openai/codex@0.151.0) name=@openai/codex version=0.151.0 bin=codex ;;' \
+    '        *) exit 85 ;;' \
+    '      esac' \
+    '      package="$prefix/lib/node_modules/$name"' \
+    '      mkdir -p "$package/bin"' \
+    '      if test -e /tmp/fixture-wrong-package && test "$bin" = agent-canvas; then version=0.0.0; fi' \
+    '      printf "{\\\"name\\\":\\\"%s\\\",\\\"version\\\":\\\"%s\\\"}\\n" "$name" "$version" > "$package/package.json"' \
+    '      printf "#!/bin/sh\\ncase \\\"\\${1:-}\\\" in --version) printf \\\"%%s\\\\n\\\" %s ;; *) exit 0 ;; esac\\n" "$version" > "$package/bin/$bin"' \
+    '      chmod 0700 "$package/bin/$bin"' \
+    '      ln -sf "../lib/node_modules/$name/bin/$bin" "$prefix/bin/$bin"' \
+    '    done' \
+    '    test ! -e /tmp/fixture-foreign-bin || { rm "$prefix/bin/codex"; ln -s /tmp/foreign-bin "$prefix/bin/codex"; } ;;' \
     '  *) exit 64 ;;' \
     'esac' > "/tmp/fixture-src/$node_directory/bin/node"
   chmod 0755 "/tmp/fixture-src/$node_directory/bin/node"
@@ -201,6 +236,25 @@ run_container '
   for path in /home/agent /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do
     test "$(stat -c "%U:%G %a" "$path")" = "agent:agent 700"
   done
+  for path in /home/agent/.local /home/agent/.cache /home/agent/.cache/npm /home/agent/.local/etc; do
+    test "$(stat -c "%U:%G %a" "$path")" = "agent:agent 700"
+  done
+  test "$(stat -c "%U:%G %a" /home/agent/.local/npmrc)" = "agent:agent 600"
+  test "$(stat -c "%U:%G %a" /home/agent/.local/etc/npmrc)" = "agent:agent 600"
+  printf "%s\n" \
+    @openhands/agent-canvas@1.16.0 \
+    @agentclientprotocol/claude-agent-acp@0.63.0 \
+    @agentclientprotocol/codex-acp@1.1.7 \
+    @anthropic-ai/claude-code@2.1.251 \
+    @openai/codex@0.151.0 \
+    @openhands/agent-canvas@1.16.0 \
+    @agentclientprotocol/claude-agent-acp@0.63.0 \
+    @agentclientprotocol/codex-acp@1.1.7 \
+    @anthropic-ai/claude-code@2.1.251 \
+    @openai/codex@0.151.0 > /tmp/npm-installs.expected
+  cmp -s /tmp/npm-installs.expected /tmp/npm-installs
+  test "$(/home/agent/.local/bin/claude --version)" = 2.1.251
+  test "$(/home/agent/.local/bin/codex --version)" = 0.151.0
   test "$(stat -c "%U:%G %a" /etc/wsl.conf)" = "root:root 644"
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
 
@@ -586,6 +640,71 @@ run_container '
   test ! -e /etc/wsl.conf/wsl.conf
 '
 
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-wrong-package
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test ! -e /home/agent/.local/bin/claude
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-foreign-bin
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test -L /home/agent/.local/bin/codex
+  test "$(readlink /home/agent/.local/bin/codex)" = /tmp/foreign-bin
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-npm-fail
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%U:%G %a" /home/agent/.local)" = "agent:agent 700"
+  test ! -e /home/agent/.local/bin/claude
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  printf CLAUDE_CODE_OAUTH_TOKEN > /home/agent/.claude/credentials.json
+  printf OPENAI_API_KEY > /home/agent/.codex/auth.json
+  bash /src/runtimes/wsl/provision.sh
+  test "$(cat /home/agent/.claude/credentials.json)" = CLAUDE_CODE_OAUTH_TOKEN
+  test "$(cat /home/agent/.codex/auth.json)" = OPENAI_API_KEY
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  useradd --create-home --shell /bin/bash --user-group agent
+  chmod 0700 /home/agent
+  mkdir /home/agent/.local
+  chown root:root /home/agent/.local
+  chmod 0700 /home/agent/.local
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%U:%G %a" /home/agent/.local)" = "root:root 700"
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  useradd --create-home --shell /bin/bash --user-group agent
+  chmod 0700 /home/agent
+  mkdir -p /home/agent/.cache/npm
+  chown root:root /home/agent/.cache/npm
+  chmod 0700 /home/agent/.cache /home/agent/.cache/npm
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%U:%G %a" /home/agent/.cache/npm)" = "root:root 700"
+'
+
 if [ "${RUN_WSL_REAL_TOOLCHAIN_TESTS:-0}" = 1 ]; then
   docker run --rm --platform linux/amd64 --tmpfs /opt:rw,exec,mode=755,size=512m \
     -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c '
@@ -599,5 +718,23 @@ if [ "${RUN_WSL_REAL_TOOLCHAIN_TESTS:-0}" = 1 ]; then
       uvx_output=$(/usr/local/bin/uvx --version)
       [[ $uv_output == "uv 0.12.7 ("*" x86_64-unknown-linux-gnu)" ]]
       [[ $uvx_output == "uvx 0.12.7 ("*" x86_64-unknown-linux-gnu)" ]]
+      node=/opt/openhands/node-v24.20.0-linux-x64/bin/node
+      prefix=/home/agent/.local
+      for package in \
+        @openhands/agent-canvas@1.16.0 \
+        @agentclientprotocol/claude-agent-acp@0.63.0 \
+        @agentclientprotocol/codex-acp@1.1.7 \
+        @anthropic-ai/claude-code@2.1.251 \
+        @openai/codex@0.151.0; do
+        name=${package%@*}
+        version=${package##*@}
+        "$node" -e "const p = require(process.argv[1]); process.exit(p.name === process.argv[2] && p.version === process.argv[3] ? 0 : 1)" \
+          "$prefix/lib/node_modules/$name/package.json" "$name" "$version"
+      done
+      for command in agent-canvas claude-agent-acp codex-acp claude codex; do
+        test -L "$prefix/bin/$command"
+      done
+      runuser -u agent -- env -i HOME=/home/agent PATH=/home/agent/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin claude --version
+      runuser -u agent -- env -i HOME=/home/agent PATH=/home/agent/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin codex --version
     '
 fi

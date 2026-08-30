@@ -141,9 +141,30 @@ name are rejected. Existing mismatches, unsafe ancestors, writable trusted
 directories, and foreign files fail closed without replacement. The only added
 apt packages are `ca-certificates`, `curl`, and `xz-utils`.
 
-This stage installs no npm packages, OpenHands components, services, nginx
-configuration, firewall rules, or secrets. The next stage may add a separately
-verified runtime only after preserving this isolation boundary.
+Stage 5B installs the pinned agent command-line stack as `agent`, never as
+root. Its npm prefix is `/home/agent/.local`; npm cache and configuration are
+private agent-owned paths, and npm runs with a clean environment, the pinned
+Node binary and bundled npm CLI, explicit prefix/cache/config paths, and audit,
+funding, and update notifications disabled. The provisioner fails on unsafe or
+foreign-owned npm paths, verifies each direct package's `package.json` name and
+exact version using the pinned Node binary, confines every expected executable
+symlink to its owning package, and only then runs `claude --version` and
+`codex --version`. Canvas and ACP executables are validated without starting
+services. `.claude` and `.codex` are never replaced or populated with secrets.
+
+The direct global package set is exactly:
+
+- `@openhands/agent-canvas@1.16.0`
+- `@agentclientprotocol/claude-agent-acp@0.63.0`
+- `@agentclientprotocol/codex-acp@1.1.7`
+- `@anthropic-ai/claude-code@2.1.251`
+- `@openai/codex@0.151.0`
+
+These five direct packages are the pinning and validation ceiling. Their npm
+transitive dependencies remain package-manager-managed; do not add deep pins
+or manually alter the agent prefix without an explicit compatibility migration.
+This stage still installs no services, nginx configuration, firewall rules, or
+secrets.
 
 ## WSL configuration
 
@@ -232,11 +253,14 @@ Primary sources:
 
 Initial workers:
 
-- Claude Code through `@agentclientprotocol/claude-agent-acp`;
-- Codex through `@zed-industries/codex-acp`.
+- Claude Code through `@agentclientprotocol/claude-agent-acp@0.63.0` and
+  `@anthropic-ai/claude-code@2.1.251`;
+- Codex through `@agentclientprotocol/codex-acp@1.1.7` and
+  `@openai/codex@0.151.0`.
 
-Pin both ACP bridge packages after verifying compatible published versions.
-Verify execution with those exact versions, not only package presence.
+Agent Canvas is installed as `@openhands/agent-canvas@1.16.0`. Provisioning
+verifies all direct pins and their executable links before CLI smoke checks;
+service launch remains a later stage.
 
 PoC authentication uses existing subscriptions:
 
