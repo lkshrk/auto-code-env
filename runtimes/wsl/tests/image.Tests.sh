@@ -10,12 +10,16 @@ for file in "$bake_file" "$build_script"; do
   test -f "$file"
 done
 
-grep -F 'ghcr.io/lkshrk/openhands-worker:${VERSION}' "$bake_file"
-grep -Eq '^ *target *= *"oci"' "$bake_file"
-grep -Eq '^ *platforms *= *\["linux/amd64", "linux/arm64"\]' "$bake_file"
-grep -Eq '^ *target *= *"wsl"' "$bake_file"
-grep -Eq '^ *platforms *= *\["linux/amd64"\]' "$bake_file"
-grep -Eq '^ *platforms *= *\["linux/arm64"\]' "$bake_file"
+bake_json=$(docker buildx bake -f "$bake_file" --print image wsl-amd64 wsl-arm64)
+printf '%s' "$bake_json" | jq -e '
+  .target.image.tags == ["ghcr.io/lkshrk/openhands-worker:"] and
+  .target.image.target == "oci" and
+  .target.image.platforms == ["linux/amd64", "linux/arm64"] and
+  .target["wsl-amd64"].target == "wsl" and
+  .target["wsl-amd64"].platforms == ["linux/amd64"] and
+  .target["wsl-arm64"].target == "wsl" and
+  .target["wsl-arm64"].platforms == ["linux/arm64"]
+' >/dev/null
 
 test_root=$(mktemp -d)
 trap 'rm -rf -- "$test_root"' EXIT
@@ -30,6 +34,12 @@ for argument; do
     *type=tar,dest=*) printf artifact > "${argument#*type=tar,dest=}" ;;
   esac
 done
+if test -n "${CHECKSUM_COLLISION:-}"; then
+  destination=${argument#*type=tar,dest=}
+  artifact_name=${destination##*/.}
+  artifact_name=${artifact_name%.*}
+  printf collision > "${destination%/*}/${artifact_name}.sha256"
+fi
 EOF
 chmod 0755 "$fake_bin/docker"
 
@@ -42,5 +52,17 @@ checksum="$artifact.sha256"
 test -f "$artifact"
 test -f "$checksum"
 grep -F 'buildx bake -f runtimes/wsl/docker-bake.hcl wsl-amd64 --set wsl-amd64.output=type=tar,dest=' "$test_root/docker.log"
-grep -F "openhands-worker-1.2.3-amd64.wsl" "$checksum"
+(cd "$test_root/output" && sha256sum -c "$(basename "$checksum")")
+test -f "$test_root/output/openhands-worker-1.2.3-amd64.wsl"
+DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.3 arm64 "$test_root/output"
+(cd "$test_root/output" && sha256sum -c openhands-worker-1.2.3-arm64.wsl.sha256)
+
+before=$(sha256sum "$artifact")
 if DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.3 amd64 "$test_root/output"; then exit 1; fi
+test "$before" = "$(sha256sum "$artifact")"
+
+collision_artifact="$test_root/output/openhands-worker-1.2.4-amd64.wsl"
+collision_checksum="$collision_artifact.sha256"
+if CHECKSUM_COLLISION=1 DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.4 amd64 "$test_root/output"; then exit 1; fi
+test ! -e "$collision_artifact"
+test "$(cat "$collision_checksum")" = collision

@@ -33,7 +33,11 @@ fi
 
 temporary_artifact=$(mktemp "$output_dir/.${artifact_name}.XXXXXX")
 temporary_checksum=$(mktemp "$output_dir/.${artifact_name}.sha256.XXXXXX")
+artifact_linked=false
 cleanup() {
+  if "$artifact_linked" && test "$temporary_artifact" -ef "$artifact"; then
+    rm -f -- "$artifact"
+  fi
   rm -f -- "$temporary_artifact" "$temporary_checksum"
 }
 trap cleanup EXIT
@@ -48,4 +52,6 @@ test -f "$temporary_artifact"
 checksum_value=$(sha256sum -- "$temporary_artifact" | awk '{print $1}')
 printf '%s  %s\n' "$checksum_value" "$artifact_name" > "$temporary_checksum"
 ln -- "$temporary_artifact" "$artifact"
+artifact_linked=true
 ln -- "$temporary_checksum" "$checksum"
+artifact_linked=false
