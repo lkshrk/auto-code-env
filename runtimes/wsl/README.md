@@ -139,21 +139,25 @@ Stage 5A supports x86_64 only. It installs exactly Node.js `24.20.0` under
 archives are fully staged and validated before either tool is committed. The
 provisioner replaces inherited `PATH` with system-only directories before its
 first command and uses absolute trusted commands for validation and commits.
-Downloads, archive inspection, manifest generation, apt, and staged tool
+Downloads, archive inspection, integrity digest generation, apt, and staged tool
 validation run with clean allowlisted environments; curl disables user config,
 requires HTTPS with TLS 1.2 or newer, and uses the system CA bundle explicitly.
 
-The Node tree carries a root-owned manifest of every directory, symlink, and
-regular file, including exact modes and hashes. Reruns compare that manifest
-and a freshly generated tree manifest with the verified release without
-executing an existing installation. `/usr/local/bin/node` is a fixed symlink;
-the root-owned `npm` and `npx` wrappers invoke the versioned Node binary and
-absolute CLI files, independent of `PATH`. Missing entry points are repaired
-with registered sibling temporary files and atomic renames; failures clean all
-registered temporary paths. Release archives containing the reserved manifest
-name are rejected. Existing mismatches, unsafe ancestors, writable trusted
-directories, and foreign files fail closed without replacement. The only added
-apt packages are `ca-certificates`, `curl`, and `xz-utils`.
+The Node tree carries a root-owned `v2 sha256` marker containing a canonical
+whole-tree digest. A clean, pipefail-protected GNU tar stream includes sorted
+paths, directory and file modes, numeric ownership, symlink targets, and file
+content while normalizing timestamps and excluding only the root marker.
+Reruns recompute the installed digest against the separately staged release
+without executing the installed tree. Legacy multiline manifests are never
+trusted: they are replaced atomically only after that digest comparison
+succeeds. `/usr/local/bin/node` is a fixed symlink; the root-owned `npm` and
+`npx` wrappers invoke the versioned Node binary and absolute CLI files,
+independent of `PATH`. Missing entry points are repaired with registered
+sibling temporary files and atomic renames; failures clean all registered
+temporary paths. Release archives containing the reserved marker name are
+rejected. Existing mismatches, unsafe ancestors, writable trusted directories,
+and foreign files fail closed without replacement. The only added apt packages
+are `ca-certificates`, `curl`, and `xz-utils`.
 
 Stage 5B installs the pinned agent command-line stack as `agent`, never as
 root. Its npm prefix is `/home/agent/.local`; its cache is private and

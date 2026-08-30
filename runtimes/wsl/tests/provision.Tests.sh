@@ -178,7 +178,7 @@ setup_fixture() {
     '    /usr/bin/cp -- /fixtures/uv-x86_64-unknown-linux-gnu.tar.gz "$output" ;;' \
     '  *) exit 72 ;;' \
     'esac' > /usr/bin/curl
-  for command in find sha256sum sort tar; do
+  for command in find sha256sum stat tar; do
     cp "/usr/bin/$command" "/usr/bin/$command.fixture-real"
   done
   printf '%s\n' \
@@ -188,9 +188,15 @@ setup_fixture() {
     '  /usr/bin/tar.fixture-real "$@"' \
     '  exit 74' \
     'fi' \
+    'if test -e /tmp/fixture-fail-tar-digest && test "${1:-}" = --create; then' \
+    '  /usr/bin/tar.fixture-real "$@"' \
+    '  exit 78' \
+    'fi' \
+    'test "${1:-}" != --create || printf "%s\n" tar >> /tmp/node-digest-processes' \
     'exec /usr/bin/tar.fixture-real "$@"' > /usr/bin/tar
   printf '%s\n' \
     '#!/bin/sh' \
+    'case "$*" in *node-v24.20.0-linux-x64*) printf "%s\n" find >> /tmp/node-digest-processes ;; esac' \
     'if test -e /tmp/fixture-fail-find && test "${2:-}" = -type && test "${3:-}" = l; then' \
     '  /usr/bin/find.fixture-real "$@"' \
     '  exit 75' \
@@ -198,21 +204,18 @@ setup_fixture() {
     'exec /usr/bin/find.fixture-real "$@"' > /usr/bin/find
   printf '%s\n' \
     '#!/bin/sh' \
-    'if test -e /tmp/fixture-fail-sort; then' \
-    '  /usr/bin/sort.fixture-real "$@"' \
-    '  exit 76' \
+    'case "$*" in *node-v24.20.0-linux-x64/*) exit 79 ;; esac' \
+    'test "$#" -ne 0 || printf "%s\n" sha256sum >> /tmp/node-digest-processes' \
+    'if test -e /tmp/fixture-fail-sha256sum && test "$#" -eq 0; then' \
+    '  /usr/bin/sha256sum.fixture-real "$@"' \
+    '  exit 77' \
     'fi' \
-    'exec /usr/bin/sort.fixture-real "$@"' > /usr/bin/sort
+    'exec /usr/bin/sha256sum.fixture-real "$@"' > /usr/bin/sha256sum
   printf '%s\n' \
     '#!/bin/sh' \
-    'case "$*" in' \
-    '  *node-v24.20.0-linux-x64/*) if test -e /tmp/fixture-fail-sha256sum; then' \
-    '    /usr/bin/sha256sum.fixture-real "$@"' \
-    '    exit 77' \
-    '  fi ;;' \
-    'esac' \
-    'exec /usr/bin/sha256sum.fixture-real "$@"' > /usr/bin/sha256sum
-  chmod 0755 /usr/bin/apt-get /usr/bin/curl /usr/bin/find /usr/bin/mv /usr/bin/sha256sum /usr/bin/sort /usr/bin/tar /usr/bin/uname
+    'case "$*" in *node-v24.20.0-linux-x64*) printf "%s\n" stat >> /tmp/node-digest-processes ;; esac' \
+    'exec /usr/bin/stat.fixture-real "$@"' > /usr/bin/stat
+  chmod 0755 /usr/bin/apt-get /usr/bin/curl /usr/bin/find /usr/bin/mv /usr/bin/sha256sum /usr/bin/stat /usr/bin/tar /usr/bin/uname
 }
 
 run_container() {
@@ -244,7 +247,14 @@ run_container '
     UV_TOOL_DIR=/tmp/poison PATH=/tmp/inherited-path:/usr/sbin:/usr/bin:/sbin:/bin \
     /bin/bash /src/runtimes/wsl/provision.sh
   test ! -e /tmp/inherited-path-used
+  : > /tmp/node-digest-processes
+  benchmark_started=$(/usr/bin/date +%s%N)
   /bin/bash /src/runtimes/wsl/provision.sh
+  benchmark_elapsed_ms=$((($(/usr/bin/date +%s%N) - benchmark_started) / 1000000))
+  printf "node-digest benchmark: rerun_ms=%s tracked_processes=%s tar=%s sha256sum=%s find=%s stat=%s\n" \
+    "$benchmark_elapsed_ms" "$(wc -l < /tmp/node-digest-processes)" \
+    "$(grep -c ^tar$ /tmp/node-digest-processes)" "$(grep -c ^sha256sum$ /tmp/node-digest-processes)" \
+    "$(grep -c ^find$ /tmp/node-digest-processes)" "$(grep -c ^stat$ /tmp/node-digest-processes)"
   printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils" update "install -y --no-install-recommends ca-certificates curl xz-utils" > /tmp/apt-calls.expected
   cmp -s /tmp/apt-calls.expected /tmp/apt-calls
 
@@ -300,6 +310,7 @@ run_container '
   test "$(stat -c "%U:%G %a" /opt/openhands)" = "root:root 755"
   test "$(stat -c "%U:%G %a" "$node_home")" = "root:root 755"
   test "$(stat -c "%U:%G %a" "$node_home/.openhands-manifest")" = "root:root 644"
+  [[ $(cat "$node_home/.openhands-manifest") =~ ^v2\ sha256\ [0-9a-f]{64}$ ]]
   test "$(stat -c "%U:%G" /usr/local/bin/node)" = "root:root"
   test "$(readlink /usr/local/bin/node)" = "$node_home/bin/node"
   for path in /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/uv /usr/local/bin/uvx; do
@@ -355,12 +366,12 @@ run_container '
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
-  printf extra > /opt/openhands/node-v24.20.0-linux-x64/extra
+  printf extra > /opt/openhands/node-v24.20.0-linux-x64/lib/.openhands-manifest
   rm /usr/local/bin/node
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
-  test "$(cat /opt/openhands/node-v24.20.0-linux-x64/extra)" = extra
+  test "$(cat /opt/openhands/node-v24.20.0-linux-x64/lib/.openhands-manifest)" = extra
   test ! -e /usr/local/bin/node
 '
 
@@ -379,13 +390,99 @@ run_container '
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   bash /src/runtimes/wsl/provision.sh
-  chmod 0666 /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js
+  chmod 0600 /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js
   rm /usr/local/bin/node
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
-  test "$(stat -c "%a" /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js)" = 666
+  test "$(stat -c "%a" /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js)" = 600
   test ! -e /usr/local/bin/node
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  chown agent:agent /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js
+  rm /usr/local/bin/node
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(stat -c "%U:%G" /opt/openhands/node-v24.20.0-linux-x64/lib/node_modules/npm/node_modules/example/index.js)" = agent:agent
+  test ! -e /usr/local/bin/node
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  rm /opt/openhands/node-v24.20.0-linux-x64/bin/npm
+  ln -s ../lib/node_modules/npm/bin/npx-cli.js /opt/openhands/node-v24.20.0-linux-x64/bin/npm
+  rm /usr/local/bin/node
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(readlink /opt/openhands/node-v24.20.0-linux-x64/bin/npm)" = ../lib/node_modules/npm/bin/npx-cli.js
+  test ! -e /usr/local/bin/node
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
+  cp "$node_home/.openhands-manifest" /tmp/manifest.expected
+  touch -d @123 "$node_home" "$node_home/bin" "$node_home/bin/node"
+  bash /src/runtimes/wsl/provision.sh
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
+  printf foreign > "$node_home/.openhands-manifest"
+  cp "$node_home/.openhands-manifest" /tmp/manifest.expected
+  rm /usr/local/bin/uvx
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
+  test ! -e /usr/local/bin/uvx
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
+  printf "D\t755\tbin\n" > "$node_home/.openhands-manifest"
+  bash /src/runtimes/wsl/provision.sh
+  [[ $(cat "$node_home/.openhands-manifest") =~ ^v2\ sha256\ [0-9a-f]{64}$ ]]
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
+  printf corrupt > "$node_home/lib/node_modules/npm/node_modules/example/index.js"
+  printf "D\t755\tbin\n" > "$node_home/.openhands-manifest"
+  cp "$node_home/.openhands-manifest" /tmp/manifest.expected
+  rm /usr/local/bin/uvx
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
+  test ! -e /usr/local/bin/uvx
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  bash /src/runtimes/wsl/provision.sh
+  node_home=/opt/openhands/node-v24.20.0-linux-x64
+  printf "D\t755\tbin\n" > "$node_home/.openhands-manifest"
+  cp "$node_home/.openhands-manifest" /tmp/manifest.expected
+  if FIXTURE_FAIL_RENAME_DEST="$node_home/.openhands-manifest" bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  cmp -s /tmp/manifest.expected "$node_home/.openhands-manifest"
+  ! compgen -G "$node_home/.openhands-manifest.*" >/dev/null
 '
 
 run_container '
@@ -499,7 +596,7 @@ EOF
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   failures=0
-  for producer in tar-list find sort sha256sum; do
+  for producer in tar-list find tar-digest sha256sum; do
     rm -rf /opt/openhands
     rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/uv /usr/local/bin/uvx
     rm -f /tmp/fixture-fail-*

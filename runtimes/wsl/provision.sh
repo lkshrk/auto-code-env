@@ -85,10 +85,10 @@ assert_agent_directory() {
 }
 
 assert_agent() {
-    local entry name uid gid home shell
+    local entry name uid _gid home shell
 
     entry=$(/usr/bin/getent passwd agent) || fail 'agent account is missing'
-    IFS=: read -r name _ uid gid _ home shell <<< "$entry"
+    IFS=: read -r name _ uid _gid _ home shell <<< "$entry"
     case $uid in
         ''|*[!0-9]*) fail 'agent UID is invalid' ;;
     esac
@@ -440,44 +440,81 @@ assert_safe_tree_links() {
     done < "$links_file"
 }
 
-generate_node_manifest() {
+assert_safe_node_tree() {
+    local root=$1
+    local unsafe_file unsafe
+
+    unsafe_file=$(/usr/bin/mktemp "$node_stage_root/tree-unsafe.XXXXXX") || fail 'unable to create Node.js safety scan'
+    register_cleanup "$unsafe_file"
+    run_clean /usr/bin/find -P "$root" -mindepth 1 ! -path "$root/$NODE_MANIFEST" \
+        \( -path "*"$'\t'"*" -o -path "*"$'\n'"*" -o ! -uid 0 -o ! -gid 0 \
+        -o \( \( -type f -o -type d \) -perm /022 \) \
+        -o ! \( -type f -o -type d -o -type l \) \) -print0 -quit > "$unsafe_file" ||
+        fail 'unable to inspect Node.js tree'
+    if IFS= read -r -d '' unsafe < "$unsafe_file"; then
+        fail "unsafe Node.js path: ${unsafe#"$root/"}"
+    fi
+    assert_safe_tree_links "$root"
+}
+
+canonical_node_digest() {
+    local root=$1
+    local digest_output pipeline_status
+
+    if digest_output=$(
+        set -o pipefail
+        run_clean /usr/bin/tar --create --file=- --format=gnu --sort=name --mtime=@0 --numeric-owner \
+            --anchored --exclude="./$NODE_MANIFEST" --directory="$root" . |
+            run_clean /usr/bin/sha256sum
+        pipeline_status=("${PIPESTATUS[@]}")
+        [ "${pipeline_status[1]}" -eq 0 ] || exit 91
+        [ "${pipeline_status[0]}" -eq 0 ] || exit 90
+    ); then
+        :
+    else
+        case $? in
+            90) fail 'unable to archive Node.js tree' ;;
+            91) fail 'unable to hash Node.js tree' ;;
+            *) fail 'unable to compute Node.js digest' ;;
+        esac
+    fi
+    [[ $digest_output =~ ^([0-9a-f]{64})\ \ -$ ]] || fail 'invalid Node.js digest'
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+write_node_manifest() {
     local root=$1
     local output=$2
-    local paths_file sorted_file path relative metadata mode uid gid hash_output hash target
+    local digest temp
 
-    paths_file=$(/usr/bin/mktemp "$node_stage_root/manifest-paths.XXXXXX") || fail 'unable to create manifest path list'
-    register_cleanup "$paths_file"
-    sorted_file=$(/usr/bin/mktemp "$node_stage_root/manifest-sorted.XXXXXX") || fail 'unable to create sorted manifest path list'
-    register_cleanup "$sorted_file"
-    run_clean /usr/bin/find "$root" -mindepth 1 ! -path "$root/$NODE_MANIFEST" -print0 > "$paths_file" ||
-        fail 'unable to list Node.js files'
-    run_clean /usr/bin/sort -z -- "$paths_file" > "$sorted_file" || fail 'unable to sort Node.js files'
-    : > "$output" || fail 'unable to create Node.js manifest'
+    digest=$(canonical_node_digest "$root")
+    temp=$(/usr/bin/mktemp "${output}.XXXXXX") || fail 'unable to create Node.js manifest'
+    register_cleanup "$temp"
+    printf 'v2 sha256 %s\n' "$digest" > "$temp" || fail 'unable to write Node.js manifest'
+    /usr/bin/chown root:root "$temp"
+    /usr/bin/chmod 0644 "$temp"
+    /usr/bin/mv -T -- "$temp" "$output" || fail 'unable to publish Node.js manifest'
+}
 
-    while IFS= read -r -d '' path; do
-        relative=${path#"$root/"}
-        [[ $relative != *$'\t'* && $relative != *$'\n'* ]] || fail "unsupported Node.js path: $relative"
-        metadata=$(run_clean /usr/bin/stat -c '%a %u %g' -- "$path") || fail "unable to inspect Node.js path: $relative"
-        IFS=' ' read -r mode uid gid <<< "$metadata"
-        [ "$uid:$gid" = '0:0' ] || fail "invalid Node.js ownership: $relative"
+read_node_manifest_digest() {
+    local manifest=$1
+    local -a lines=()
 
-        if [ -L "$path" ]; then
-            target=$(run_clean /usr/bin/readlink "$path") || fail "unable to read Node.js symlink: $relative"
-            [[ $target != *$'\t'* && $target != *$'\n'* ]] || fail "unsupported Node.js symlink: $relative"
-            printf 'L\t%s\t%s\t%s\n' "$mode" "$target" "$relative" >> "$output"
-        elif [ -d "$path" ]; then
-            (( (8#$mode & 0022) == 0 )) || fail "writable Node.js directory: $relative"
-            printf 'D\t%s\t%s\n' "$mode" "$relative" >> "$output"
-        elif [ -f "$path" ]; then
-            (( (8#$mode & 0022) == 0 )) || fail "writable Node.js file: $relative"
-            hash_output=$(run_clean /usr/bin/sha256sum -- "$path") || fail "unable to hash Node.js file: $relative"
-            hash=${hash_output:0:64}
-            [[ $hash =~ ^[0-9a-f]{64}$ ]] || fail "invalid Node.js hash: $relative"
-            printf 'F\t%s\t%s\t%s\n' "$mode" "$hash" "$relative" >> "$output"
-        else
-            fail "unsupported Node.js file type: $relative"
-        fi
-    done < "$sorted_file"
+    mapfile -t lines < "$manifest" || fail 'invalid staged Node.js manifest'
+    if [ "${#lines[@]}" -ne 1 ] || [[ ! ${lines[0]} =~ ^v2\ sha256\ ([0-9a-f]{64})$ ]]; then
+        fail 'invalid staged Node.js manifest'
+    fi
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+replace_node_manifest() {
+    local destination="$NODE_HOME/$NODE_MANIFEST"
+    local temp
+
+    temp=$(/usr/bin/mktemp "${destination}.XXXXXX") || fail 'unable to create Node.js manifest replacement'
+    register_cleanup "$temp"
+    /usr/bin/install -T -o root -g root -m 0644 "$staged_node_manifest" "$temp"
+    /usr/bin/mv -T -- "$temp" "$destination" || fail 'unable to replace Node.js manifest'
 }
 
 stage_node() {
@@ -496,7 +533,6 @@ stage_node() {
     run_clean /usr/bin/tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$node_stage_root"
     staged_node_home="$node_stage_root/$NODE_DIRECTORY"
     assert_exact_root_directory "$staged_node_home"
-    assert_safe_tree_links "$staged_node_home"
     assert_root_nonwritable_file "$staged_node_home/bin/node"
     assert_root_nonwritable_file "$staged_node_home/lib/node_modules/npm/bin/npm-cli.js"
     assert_root_nonwritable_file "$staged_node_home/lib/node_modules/npm/bin/npx-cli.js"
@@ -504,8 +540,9 @@ stage_node() {
     if path_exists "$staged_node_home/$NODE_MANIFEST"; then
         fail 'Node.js archive contains reserved manifest'
     fi
+    assert_safe_node_tree "$staged_node_home"
     staged_node_manifest="$node_stage_root/$NODE_MANIFEST"
-    generate_node_manifest "$staged_node_home" "$staged_node_manifest"
+    write_node_manifest "$staged_node_home" "$staged_node_manifest"
     /usr/bin/install -T -o root -g root -m 0644 "$staged_node_manifest" "$staged_node_home/$NODE_MANIFEST"
 
     [ "$(run_clean "$staged_node_home/bin/node" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js archive'
@@ -550,17 +587,24 @@ stage_toolchain() {
 }
 
 validate_installed_node_tree() {
-    local current_manifest
+    local first_line installed_digest staged_digest legacy=false
 
     assert_exact_root_directory "$NODE_HOME"
     assert_root_file "$NODE_HOME/$NODE_MANIFEST" 644
-    /usr/bin/cmp -s "$NODE_HOME/$NODE_MANIFEST" "$staged_node_manifest" || fail 'foreign Node.js manifest'
-    assert_safe_tree_links "$NODE_HOME"
-
-    current_manifest=$(/usr/bin/mktemp "$node_stage_root/installed-manifest.XXXXXX")
-    register_cleanup "$current_manifest"
-    generate_node_manifest "$NODE_HOME" "$current_manifest"
-    /usr/bin/cmp -s "$current_manifest" "$staged_node_manifest" || fail 'invalid Node.js installation'
+    staged_digest=$(read_node_manifest_digest "$staged_node_manifest")
+    if ! /usr/bin/cmp -s "$NODE_HOME/$NODE_MANIFEST" "$staged_node_manifest"; then
+        IFS= read -r first_line < "$NODE_HOME/$NODE_MANIFEST" || fail 'foreign Node.js manifest'
+        case $first_line in
+            D$'\t'*|F$'\t'*|L$'\t'*) legacy=true ;;
+            *) fail 'foreign Node.js manifest' ;;
+        esac
+    fi
+    assert_safe_node_tree "$NODE_HOME"
+    installed_digest=$(canonical_node_digest "$NODE_HOME")
+    [ "$installed_digest" = "$staged_digest" ] || fail 'invalid Node.js installation'
+    if $legacy; then
+        replace_node_manifest
+    fi
 }
 
 validate_existing_tool_paths() {
