@@ -1133,13 +1133,21 @@ run_container '
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   rm /usr/bin/python3
-  printf "#!/bin/sh\\nprintf \"%%s:%%s\\\\n\" \"\$1\" \"\$2\" >> /tmp/python-invocations\\nexit 1\\n" > /usr/bin/python3
+  printf "#!/bin/sh\\nprintf \"%%s:%%s:%%s\\\\n\" \"\$1\" \"\$2\" \"\$3\" >> /tmp/python-invocations\\nexit 1\\n" > /usr/bin/python3
   chmod 0755 /usr/bin/python3
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
-  test "$(cat /tmp/python-invocations)" = "-c:import queue"
+  test "$(cat /tmp/python-invocations)" = "-I:-c:import queue"
   test ! -e /usr/local/libexec/openhands-rbw-pinentry
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  mkdir /tmp/python-cwd-shadow
+  printf "raise SystemExit(1)\\n" > /tmp/python-cwd-shadow/queue.py
+  cd /tmp/python-cwd-shadow
+  bash /src/runtimes/wsl/provision.sh
 '
 
 run_container '

@@ -56,3 +56,7 @@ Native arm64 image build exposed that `python3-minimal` provides `/usr/bin/pytho
 Fixture coverage now builds Ubuntu 26.04 with full `python3`, expects the exact apt command to include both packages, verifies `python3` package files, rejects a corrupted `python3` package, and replaces the Python entry point with a recorder that fails only `-c 'import queue'`. Provisioning fails after exactly that one invocation and before pinentry is created.
 
 Validation: `bash runtimes/wsl/tests/provision.Tests.sh` exited `0` in a persistent tty run; `bash -n runtimes/wsl/provision.sh`; `bash -n runtimes/wsl/tests/provision.Tests.sh`; `shellcheck runtimes/wsl/provision.sh runtimes/wsl/tests/provision.Tests.sh`; and `git diff --check -- runtimes/wsl/provision.sh runtimes/wsl/tests/provision.Tests.sh` all passed.
+
+## Python import isolation
+
+The standard-library proof now invokes Python as `/usr/bin/python3 -I -c 'import queue'`. `-I` prevents a `queue.py` in the provisioner's current directory from spoofing a successful standard-library import. The failure recorder requires the exact argument sequence `-I:-c:import queue`; a cwd-shadow fixture writes a failing `queue.py` and proves provisioning still succeeds. Focused Ubuntu 26.04 fixture execution with that shadow file passed, as did a persistent full fixture run (`EXIT=0`, about 49 seconds), `bash -n`, ShellCheck, and `git diff --check`.

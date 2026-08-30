@@ -390,7 +390,7 @@ assert_python_package() {
         resolved=$PYTHON_BINARY
     fi
     assert_root_file "$resolved" 755
-    run_clean "$PYTHON_BINARY" -c 'import queue' || fail 'python3 standard library is incomplete'
+    run_clean "$PYTHON_BINARY" -I -c 'import queue' || fail 'python3 standard library is incomplete'
 }
 
 write_rbw_pinentry() {
