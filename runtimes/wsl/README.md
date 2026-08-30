@@ -182,7 +182,10 @@ complete global-bin set are verified on every run.
 The provisioner intentionally does not recursively validate npm's transitive
 package or cache trees: they are agent-owned mutable state, not source-locked
 artifacts. The direct-package and executable contract above is the durable
-validation boundary.
+validation boundary. Before and after npm runs, it checks only the fixed
+prefix/bin/node_modules ancestor and scope directories for real agent-owned,
+non-writable paths; canonical package and executable targets must remain
+inside that direct boundary.
 
 The direct global package set is exactly:
 

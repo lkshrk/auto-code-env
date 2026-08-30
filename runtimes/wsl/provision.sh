@@ -131,20 +131,53 @@ ensure_private_directory() {
     assert_agent_directory "$path"
 }
 
+assert_agent_npm_ancestor() {
+    local path=$1
+    local required=$2
+    local mode
+
+    if ! path_exists "$path"; then
+        [ "$required" = false ] && return
+        fail "missing agent npm directory: $path"
+    fi
+    if [ -L "$path" ] || [ ! -d "$path" ] || [ "$(/usr/bin/stat -c '%U:%G' "$path")" != 'agent:agent' ]; then
+        fail "invalid agent npm directory: $path"
+    fi
+    mode=$(/usr/bin/stat -c '%a' "$path")
+    (( (8#$mode & 0022) == 0 )) || fail "writable agent npm directory: $path"
+}
+
+assert_agent_npm_ancestors() {
+    local required=$1
+    local path
+
+    for path in "${AGENT_BIN}" "${AGENT_PREFIX}/lib" "${AGENT_PREFIX}/lib/node_modules" \
+        "${AGENT_PREFIX}/lib/node_modules/@openhands" "${AGENT_PREFIX}/lib/node_modules/@agentclientprotocol" \
+        "${AGENT_PREFIX}/lib/node_modules/@anthropic-ai" "${AGENT_PREFIX}/lib/node_modules/@openai"; do
+        assert_agent_npm_ancestor "$path" "$required"
+    done
+}
+
 assert_agent_package() {
     local package=$1
     local version=$2
     local package_dir="${AGENT_PREFIX}/lib/node_modules/${package}"
-    local output
+    local node_modules_dir canonical_package_dir output
 
     if [ -L "$package_dir" ] || [ ! -d "$package_dir" ] || [ -L "$package_dir/package.json" ] ||
         [ ! -f "$package_dir/package.json" ]; then
         fail "invalid agent package: $package"
     fi
+    node_modules_dir=$(/usr/bin/readlink -f -- "${AGENT_PREFIX}/lib/node_modules") || fail "invalid agent package: $package"
+    canonical_package_dir=$(/usr/bin/readlink -f -- "$package_dir") || fail "invalid agent package: $package"
+    case $canonical_package_dir in
+        "$node_modules_dir"/*) ;;
+        *) fail "invalid agent package: $package" ;;
+    esac
     # shellcheck disable=SC2016
     output=$(run_agent_clean "$NODE_BINARY" -e \
         'const packageJson = require(process.argv[1]); if (packageJson.name !== process.argv[2] || packageJson.version !== process.argv[3]) process.exit(1); process.stdout.write(`${packageJson.name}@${packageJson.version}`);' \
-        "$package_dir/package.json" "$package" "$version") || fail "invalid agent package: $package"
+        "$canonical_package_dir/package.json" "$package" "$version") || fail "invalid agent package: $package"
     [ "$output" = "${package}@${version}" ] || fail "invalid agent package: $package"
 }
 
@@ -166,7 +199,7 @@ assert_agent_bin() {
     local package=$2
     local path="${AGENT_BIN}/${name}"
     local package_dir="${AGENT_PREFIX}/lib/node_modules/${package}"
-    local target resolved
+    local canonical_package_dir target resolved
 
     if [ ! -L "$path" ] || [ "$(/usr/bin/stat -c '%U:%G' "$path")" != 'agent:agent' ]; then
         fail "invalid agent executable: $name"
@@ -175,9 +208,10 @@ assert_agent_bin() {
     case $target in
         /*|*$'\t'*|*$'\n'*) fail "unsafe agent executable: $name" ;;
     esac
-    resolved=$(/usr/bin/readlink -m -- "$(/usr/bin/dirname "$path")/$target") || fail "unable to resolve agent executable: $name"
+    canonical_package_dir=$(/usr/bin/readlink -f -- "$package_dir") || fail "invalid agent executable: $name"
+    resolved=$(/usr/bin/readlink -f -- "$path") || fail "unable to resolve agent executable: $name"
     case $resolved in
-        "$package_dir"/*) ;;
+        "$canonical_package_dir"/*) ;;
         *) fail "unsafe agent executable: $name" ;;
     esac
     if [ -L "$resolved" ] || [ ! -f "$resolved" ] || [ ! -x "$resolved" ] ||
@@ -225,6 +259,7 @@ preflight_agent_npm_paths() {
     ensure_private_directory "$AGENT_PREFIX"
     ensure_private_directory /home/agent/.cache
     ensure_private_directory "$NPM_CACHE"
+    assert_agent_npm_ancestors false
 }
 
 install_agent_packages() {
@@ -240,6 +275,7 @@ verify_agent_packages() {
     assert_agent_directory "$AGENT_PREFIX"
     assert_agent_directory /home/agent/.cache
     assert_agent_directory "$NPM_CACHE"
+    assert_agent_npm_ancestors true
     assert_exact_agent_packages
     assert_agent_package @openhands/agent-canvas 1.16.0
     assert_agent_package @agentclientprotocol/claude-agent-acp 0.63.0

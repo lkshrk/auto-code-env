@@ -933,6 +933,24 @@ run_container '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
+  useradd --create-home --shell /bin/bash --user-group agent
+  chmod 0700 /home/agent
+  mkdir -p /home/agent/.local/lib/node_modules /tmp/external-openai/codex/bin
+  chown -R agent:agent /home/agent/.local /tmp/external-openai
+  chmod 0700 /home/agent/.local /home/agent/.local/lib /home/agent/.local/lib/node_modules
+  printf "{\"name\":\"@openai/codex\",\"version\":\"0.151.0\"}\n" > /tmp/external-openai/codex/package.json
+  printf "#!/bin/sh\n" > /tmp/external-openai/codex/bin/codex
+  chmod 0700 /tmp/external-openai/codex/bin/codex
+  printf sentinel > /tmp/external-openai/sentinel
+  ln -s /tmp/external-openai /home/agent/.local/lib/node_modules/@openai
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(cat /tmp/external-openai/sentinel)" = sentinel
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
   ln -s /tmp /etc/openhands
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
