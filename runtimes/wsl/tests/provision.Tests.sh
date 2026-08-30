@@ -128,6 +128,31 @@ setup_fixture() {
   sed -i 's/x86_64-unknown-linux-gnu/aarch64-unknown-linux-gnu/g' /tmp/fixture-src/uv-aarch64-unknown-linux-gnu/uv /tmp/fixture-src/uv-aarch64-unknown-linux-gnu/uvx
   tar -czf /fixtures/uv-aarch64-unknown-linux-gnu.tar.gz -C /tmp/fixture-src uv-aarch64-unknown-linux-gnu
 
+  mkdir -p /tmp/fixture-src/omni
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'if test "${1:-}" = --version; then printf "%s\\n" "omni version v0.10.4 (fixture)"; exit 0; fi' \
+    'test "$1" = --config && test "$2" = /etc/openhands/omni/settings.json && test "$3" = --cache-dir && test "$5" = --state-dir && test "$7" = --yes && test "$8" = tools && test "$9" = sync && test "${10}" = --group || exit 91' \
+    'group=${11}' \
+    'printf "%s|%s|%s|%s|%s\\n" "$group" "$(id -un)" "${NPM_CONFIG_IGNORE_SCRIPTS-}" "${NPM_CONFIG_STRICT_ALLOW_SCRIPTS-}" "${NPM_CONFIG_ALLOW_SCRIPTS-}" >> /tmp/omni-calls' \
+    'case "$group" in' \
+    '  openhands-system)' \
+    '    test "$(id -u)" = 0 && test "$4" = /var/cache/openhands/omni && test "$6" = /var/lib/openhands/omni || exit 92' \
+    '    if test ! -e /usr/bin/rbw; then printf "%s\\n" "#!/bin/sh" "case \"\${1:-}\" in" "  --version) printf \"%s\\n\" \"rbw 1.13.2\" ;;" "  *) exit 0 ;;" "esac" > /usr/bin/rbw; chmod 0755 /usr/bin/rbw; fi; chmod 0666 /tmp/omni-calls ;;' \
+    '  openhands-agent-no-scripts)' \
+    '    test "$(id -un)" = agent && test "$4" = /home/agent/.cache/omni && test "$6" = /home/agent/.local/state/omni && test "$NPM_CONFIG_IGNORE_SCRIPTS" = true && test -z "${NPM_CONFIG_STRICT_ALLOW_SCRIPTS-}${NPM_CONFIG_ALLOW_SCRIPTS-}" || exit 93' \
+    '    /usr/local/bin/node /opt/openhands/node-v24.20.0-linux-*/lib/node_modules/npm/bin/npm-cli.js --prefix /home/agent/.local --cache /home/agent/.cache/npm --global --no-audit --no-fund --no-update-notifier --ignore-scripts install @openhands/agent-canvas@1.16.0 @agentclientprotocol/claude-agent-acp@0.63.0 @agentclientprotocol/codex-acp@1.1.7 @openai/codex@0.151.0 ;;' \
+    '  openhands-agent-claude)' \
+    '    test "$(id -un)" = agent && test "$4" = /home/agent/.cache/omni && test "$6" = /home/agent/.local/state/omni && test "$NPM_CONFIG_STRICT_ALLOW_SCRIPTS" = true && test "$NPM_CONFIG_ALLOW_SCRIPTS" = @anthropic-ai/claude-code && test -z "${NPM_CONFIG_IGNORE_SCRIPTS-}" || exit 94' \
+    '    /usr/local/bin/node /opt/openhands/node-v24.20.0-linux-*/lib/node_modules/npm/bin/npm-cli.js --prefix /home/agent/.local --cache /home/agent/.cache/npm --global --no-audit --no-fund --no-update-notifier --strict-allow-scripts --allow-scripts=@anthropic-ai/claude-code install @anthropic-ai/claude-code@2.1.251 ;;' \
+    '  *) exit 95 ;;' \
+    'esac' > /tmp/fixture-src/omni/omni
+  chmod 0755 /tmp/fixture-src/omni/omni
+  printf license > /tmp/fixture-src/omni/LICENSE
+  printf readme > /tmp/fixture-src/omni/README.md
+  tar -czf /fixtures/omni_linux_x86_64.tar.gz -C /tmp/fixture-src/omni LICENSE README.md omni
+  cp /fixtures/omni_linux_x86_64.tar.gz /fixtures/omni_linux_arm64.tar.gz
+
   cp /usr/bin/mv /usr/bin/mv.fixture-real
   printf '%s\n' \
     '#!/bin/sh' \
@@ -149,12 +174,7 @@ setup_fixture() {
     'test "$PATH" = /usr/sbin:/usr/bin:/sbin:/bin || exit 73' \
     'printf "%s\n" "$*" >> /tmp/apt-calls' \
     'case "$*" in' \
-    '  update|"install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal python3 rbw=1.13.2-7")' \
-    '    if test ! -e /usr/bin/rbw; then' \
-    '      printf "%s\\n" "#!/bin/sh" "case \"\${1:-}\" in" "  --version) printf \"%s\\n\" \"rbw 1.13.2\" ;;" "  *) exit 0 ;;" "esac" > /usr/bin/rbw' \
-    '      chmod 0755 /usr/bin/rbw' \
-    '    fi' \
-    '    exit 0 ;;' \
+    '  update|"install -y --no-install-recommends ca-certificates curl xz-utils") exit 0 ;;' \
     '  *) exit 71 ;;' \
     'esac' > /usr/bin/apt-get
   printf '%s\n' \
@@ -216,6 +236,13 @@ setup_fixture() {
     '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-*.tar.gz)' \
     '    test "$url" = "https://github.com/astral-sh/uv/releases/download/0.12.7/uv-$uv_target.tar.gz" || exit 72' \
     '    /usr/bin/cp -- "/fixtures/uv-$uv_target.tar.gz" "$output" ;;' \
+    '  https://github.com/lkshrk/omni/releases/download/v0.10.4/checksums.txt)' \
+    '    case "$(cat /tmp/fixture-machine-arch)" in x86_64|amd64) omni_target=x86_64 ;; aarch64|arm64) omni_target=arm64 ;; *) exit 72 ;; esac' \
+    '    hash=$(/usr/bin/sha256sum "/fixtures/omni_linux_$omni_target.tar.gz"); hash=${hash%% *}; printf "%s  omni_linux_%s.tar.gz\\ndeadbeef  other\\n" "$hash" "$omni_target" > "$output" ;;' \
+    '  https://github.com/lkshrk/omni/releases/download/v0.10.4/omni_linux_*.tar.gz)' \
+    '    case "$(cat /tmp/fixture-machine-arch)" in x86_64|amd64) omni_target=x86_64 ;; aarch64|arm64) omni_target=arm64 ;; *) exit 72 ;; esac' \
+    '    test "$url" = "https://github.com/lkshrk/omni/releases/download/v0.10.4/omni_linux_$omni_target.tar.gz" || exit 72' \
+    '    /usr/bin/cp -- "/fixtures/omni_linux_$omni_target.tar.gz" "$output" ;;' \
     '  *) exit 72 ;;' \
     'esac' > /usr/bin/curl
   for command in find sha256sum stat tar; do
@@ -299,7 +326,7 @@ run_container '
     "$benchmark_elapsed_ms" "$(wc -l < /tmp/node-digest-processes)" \
     "$(grep -c ^tar$ /tmp/node-digest-processes)" "$(grep -c ^sha256sum$ /tmp/node-digest-processes)" \
     "$(grep -c ^find$ /tmp/node-digest-processes)" "$(grep -c ^stat$ /tmp/node-digest-processes)"
-  printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal python3 rbw=1.13.2-7" update "install -y --no-install-recommends ca-certificates curl xz-utils python3-minimal python3 rbw=1.13.2-7" > /tmp/apt-calls.expected
+  printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils" update "install -y --no-install-recommends ca-certificates curl xz-utils" > /tmp/apt-calls.expected
   cmp -s /tmp/apt-calls.expected /tmp/apt-calls
 
   test "$(getent passwd agent | cut -d: -f6,7)" = "/home/agent:/bin/bash"
@@ -317,6 +344,21 @@ run_container '
   test "$(stat -c "%U:%G %a" /etc/openhands)" = "root:root 755"
   test "$(stat -c "%U:%G %a" /etc/openhands/npmrc)" = "root:root 644"
   test ! -s /etc/openhands/npmrc
+  test "$(stat -c "%U:%G %a" /etc/openhands/omni)" = "root:root 755"
+  test "$(stat -c "%U:%G %a" /etc/openhands/omni/settings.json)" = "root:root 644"
+  cmp -s /etc/openhands/omni/settings.json /src/runtimes/wsl/omni/settings.json
+  test "$(stat -c "%U:%G %a" /var/cache/openhands/omni)" = "root:root 755"
+  test "$(stat -c "%U:%G %a" /var/lib/openhands/omni)" = "root:root 755"
+  test "$(stat -c "%U:%G %a" /home/agent/.cache/omni)" = "agent:agent 700"
+  test "$(stat -c "%U:%G %a" /home/agent/.local/state/omni)" = "agent:agent 700"
+  printf "%s\n" \
+    "openhands-system|root|||" \
+    "openhands-agent-no-scripts|agent|true||" \
+    "openhands-agent-claude|agent||true|@anthropic-ai/claude-code" \
+    "openhands-system|root|||" \
+    "openhands-agent-no-scripts|agent|true||" \
+    "openhands-agent-claude|agent||true|@anthropic-ai/claude-code" > /tmp/omni-calls.expected
+  cmp -s /tmp/omni-calls.expected /tmp/omni-calls
   printf "%s\n" \
     @openhands/agent-canvas@1.16.0 \
     @agentclientprotocol/claude-agent-acp@0.63.0 \

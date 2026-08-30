@@ -9,10 +9,20 @@ nginx_site="$repo_root/runtimes/wsl/runtime/nginx-site.conf"
 distro_config="$repo_root/runtimes/wsl/wsl-distribution.conf"
 containerfile="$repo_root/runtimes/wsl/Containerfile"
 canvas_patch="$repo_root/runtimes/wsl/runtime/patch-agent-canvas-automation.mjs"
+omni_settings="$repo_root/runtimes/wsl/omni/settings.json"
 
-for file in "$entrypoint" "$unit" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch"; do
+for file in "$entrypoint" "$unit" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$omni_settings"; do
   test -f "$file"
 done
+test "$(jq -r '.version' "$omni_settings")" = 24
+jq -e '
+  .settings.auto_import == false and
+  .settings.dots_disabled == true and
+  ([.tools[].providers[].provider] | all(. == "apt" or . == "npm")) and
+  ([.groups[].name] | sort) == ["openhands-agent-claude", "openhands-agent-no-scripts", "openhands-system"] and
+  ([.. | objects | select(has("provider")) | .provider] | index("script") | not)
+' "$omni_settings" >/dev/null
+if rg -n -i 'secret|token|password|credential|api[_-]?key' "$omni_settings"; then exit 1; fi
 grep -F 'OpenHands/OpenHands#16217' "$canvas_patch"
 grep -F 'Remove this patch when' "$canvas_patch"
 
@@ -38,6 +48,8 @@ grep -F '/usr/sbin/userdel -r ubuntu' "$containerfile"
 if grep -F '/usr/sbin/groupdel ubuntu' "$containerfile"; then exit 1; fi
 grep -F '! -e /home/ubuntu' "$containerfile"
 grep -F 'OPENHANDS_IMAGE_BUILD=1' "$containerfile"
+grep -F 'runtimes/wsl/omni/settings.json /opt/openhands-build/omni/settings.json' "$containerfile"
+if grep -F 'apt-get install -y --no-install-recommends nginx' "$containerfile"; then exit 1; fi
 grep -F 'openhands-agent-server==1.44.0' "$containerfile"
 grep -F 'openhands-automation==1.9.0' "$containerfile"
 grep -F 'patch-agent-canvas-automation.mjs' "$containerfile"

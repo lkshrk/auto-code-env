@@ -11,18 +11,19 @@ readonly AGENT_PREFIX=/home/agent/.local
 readonly NPM_CACHE=/home/agent/.cache/npm
 readonly NPM_GLOBALCONFIG="${OPENHANDS_ETC}/npmrc"
 readonly AGENT_BIN="${AGENT_PREFIX}/bin"
-readonly CLAUDE_CODE_PACKAGE='@anthropic-ai/claude-code@2.1.251'
+readonly OMNI_VERSION=0.10.4
+readonly OMNI_BINARY=/usr/local/bin/omni
+readonly OMNI_CONFIG_DIRECTORY="${OPENHANDS_ETC}/omni"
+readonly OMNI_CONFIG="${OMNI_CONFIG_DIRECTORY}/settings.json"
+readonly OMNI_ROOT_CACHE=/var/cache/openhands/omni
+readonly OMNI_ROOT_STATE=/var/lib/openhands/omni
+readonly OMNI_AGENT_CACHE=/home/agent/.cache/omni
+readonly OMNI_AGENT_STATE=/home/agent/.local/state/omni
 readonly -a AGENT_PACKAGES=(
     '@openhands/agent-canvas@1.16.0'
     '@agentclientprotocol/claude-agent-acp@0.63.0'
     '@agentclientprotocol/codex-acp@1.1.7'
     '@anthropic-ai/claude-code@2.1.251'
-    '@openai/codex@0.151.0'
-)
-readonly -a AGENT_NO_SCRIPT_PACKAGES=(
-    '@openhands/agent-canvas@1.16.0'
-    '@agentclientprotocol/claude-agent-acp@0.63.0'
-    '@agentclientprotocol/codex-acp@1.1.7'
     '@openai/codex@0.151.0'
 )
 readonly UV_VERSION=0.12.7
@@ -39,6 +40,8 @@ staged_node_home=
 staged_node_manifest=
 uv_stage_root=
 staged_uv_directory=
+omni_stage_root=
+staged_omni=
 cleanup_paths=()
 
 fail() {
@@ -54,6 +57,24 @@ run_agent_clean() {
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent \
         PATH=/usr/local/bin:/usr/bin:/bin NPM_CONFIG_USERCONFIG=/dev/null \
         NPM_CONFIG_GLOBALCONFIG="$NPM_GLOBALCONFIG" "$@"
+}
+
+run_agent_omni() {
+    local -a npm_environment=()
+
+    if [ "${NPM_CONFIG_IGNORE_SCRIPTS+x}" = x ]; then
+        npm_environment+=("NPM_CONFIG_IGNORE_SCRIPTS=$NPM_CONFIG_IGNORE_SCRIPTS")
+    fi
+    if [ "${NPM_CONFIG_STRICT_ALLOW_SCRIPTS+x}" = x ]; then
+        npm_environment+=("NPM_CONFIG_STRICT_ALLOW_SCRIPTS=$NPM_CONFIG_STRICT_ALLOW_SCRIPTS")
+    fi
+    if [ "${NPM_CONFIG_ALLOW_SCRIPTS+x}" = x ]; then
+        npm_environment+=("NPM_CONFIG_ALLOW_SCRIPTS=$NPM_CONFIG_ALLOW_SCRIPTS")
+    fi
+    /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent \
+        PATH=/usr/local/bin:/usr/bin:/bin NPM_CONFIG_USERCONFIG=/dev/null \
+        NPM_CONFIG_GLOBALCONFIG="$NPM_GLOBALCONFIG" NPM_CONFIG_PREFIX="$AGENT_PREFIX" \
+        NPM_CONFIG_CACHE="$NPM_CACHE" "${npm_environment[@]}" "$@"
 }
 
 path_exists() {
@@ -115,6 +136,18 @@ resolve_assets() {
     fi
     if [ -z "$config_path" ] || [ ! -f "$config_path" ] || [ "$(/usr/bin/dirname "$config_path")" != "$asset_dir" ]; then
         fail 'wsl.conf must resolve to the provisioning script directory'
+    fi
+
+    payload_path="$asset_dir/omni/settings.json"
+    if [ -L "$asset_dir/omni" ] || [ -L "$payload_path" ] || [ ! -f "$payload_path" ]; then
+        fail 'omni/settings.json must be a regular sibling file'
+    fi
+    if ! omni_config_source=$(/usr/bin/readlink -f -- "$payload_path"); then
+        fail 'unable to resolve omni/settings.json'
+    fi
+    if [ -z "$omni_config_source" ] || [ ! -f "$omni_config_source" ] ||
+        [ "$(/usr/bin/dirname "$omni_config_source")" != "$asset_dir/omni" ]; then
+        fail 'omni/settings.json must resolve to the provisioning script directory'
     fi
 }
 
@@ -236,13 +269,7 @@ assert_exact_agent_bins() {
 }
 
 ensure_npm_global_config() {
-    assert_trusted_root_directory /etc
-    if path_exists "$OPENHANDS_ETC"; then
-        assert_exact_root_directory "$OPENHANDS_ETC"
-    else
-        /usr/bin/mkdir -m 0755 -- "$OPENHANDS_ETC"
-        assert_exact_root_directory "$OPENHANDS_ETC"
-    fi
+    ensure_openhands_etc
     if path_exists "$NPM_GLOBALCONFIG"; then
         assert_root_file "$NPM_GLOBALCONFIG" 644
         [ ! -s "$NPM_GLOBALCONFIG" ] || fail "invalid npm configuration: $NPM_GLOBALCONFIG"
@@ -252,21 +279,22 @@ ensure_npm_global_config() {
     fi
 }
 
+ensure_openhands_etc() {
+    assert_trusted_root_directory /etc
+    if path_exists "$OPENHANDS_ETC"; then
+        assert_exact_root_directory "$OPENHANDS_ETC"
+    else
+        /usr/bin/mkdir -m 0755 -- "$OPENHANDS_ETC"
+        assert_exact_root_directory "$OPENHANDS_ETC"
+    fi
+}
+
 preflight_agent_npm_paths() {
     ensure_npm_global_config
     ensure_private_directory "$AGENT_PREFIX"
     ensure_private_directory /home/agent/.cache
     ensure_private_directory "$NPM_CACHE"
     assert_agent_npm_ancestors false
-}
-
-install_agent_packages() {
-    run_agent_clean "$NODE_BINARY" "$NPM_CLI" --prefix "$AGENT_PREFIX" --cache "$NPM_CACHE" \
-        --global --no-audit --no-fund --no-update-notifier --ignore-scripts install \
-        "${AGENT_NO_SCRIPT_PACKAGES[@]}" || fail 'agent npm installation failed'
-    run_agent_clean "$NODE_BINARY" "$NPM_CLI" --prefix "$AGENT_PREFIX" --cache "$NPM_CACHE" \
-        --global --no-audit --no-fund --no-update-notifier --strict-allow-scripts \
-        --allow-scripts=@anthropic-ai/claude-code install "$CLAUDE_CODE_PACKAGE" || fail 'Claude Code installation failed'
 }
 
 verify_agent_packages() {
@@ -753,14 +781,132 @@ stage_uv() {
     assert_uv_version uvx "$staged_uv_directory/uvx" archive
 }
 
+assert_safe_omni_archive() {
+    local archive=$1
+    local members_file member
+    local -a members=()
+
+    members_file=$(/usr/bin/mktemp "$omni_stage_root/archive-members.XXXXXX") ||
+        fail 'unable to list Omni archive members'
+    register_cleanup "$members_file"
+    run_clean /usr/bin/tar -tzf "$archive" > "$members_file" || fail 'unreadable Omni archive'
+    mapfile -t members < "$members_file" || fail 'unable to read Omni archive members'
+    [ "${#members[@]}" -eq 3 ] || fail 'invalid Omni archive contents'
+    for member in "${members[@]}"; do
+        case $member in LICENSE|README.md|omni) ;; *) fail "unsafe Omni archive member: $member" ;; esac
+    done
+    [ "${members[0]}" = LICENSE ] && [ "${members[1]}" = README.md ] && [ "${members[2]}" = omni ] ||
+        fail 'invalid Omni archive contents'
+}
+
+assert_omni_version() {
+    local binary=$1
+    local context=$2
+    local output
+
+    output=$(run_clean "$binary" --version) || fail "unable to run Omni $context"
+    case $output in "omni version v${OMNI_VERSION} ("*) ;; *) fail "invalid Omni $context" ;; esac
+}
+
+stage_omni() {
+    local checksums="$omni_stage_root/checksums.txt"
+    local archive="$omni_stage_root/$OMNI_ARCHIVE"
+    local checksum
+
+    download "https://github.com/lkshrk/omni/releases/download/v${OMNI_VERSION}/checksums.txt" "$checksums"
+    download "https://github.com/lkshrk/omni/releases/download/v${OMNI_VERSION}/${OMNI_ARCHIVE}" "$archive"
+    checksum=$(/usr/bin/awk -v archive="$OMNI_ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' "$checksums") ||
+        fail 'Omni checksum is missing or ambiguous'
+    printf '%s\n' "$checksum" | (cd "$omni_stage_root" && run_clean /usr/bin/sha256sum -c -) ||
+        fail 'Omni checksum verification failed'
+    assert_safe_omni_archive "$archive"
+    staged_omni="$omni_stage_root/omni"
+    run_clean /usr/bin/tar -xOf "$archive" omni > "$staged_omni" || fail 'unable to extract Omni binary'
+    /usr/bin/chown root:root "$staged_omni"
+    /usr/bin/chmod 0755 "$staged_omni"
+    assert_root_file "$staged_omni" 755
+    assert_omni_version "$staged_omni" archive
+}
+
+install_omni_config() {
+    ensure_openhands_etc
+    if path_exists "$OMNI_CONFIG_DIRECTORY"; then
+        assert_exact_root_directory "$OMNI_CONFIG_DIRECTORY"
+    else
+        /usr/bin/mkdir -m 0755 -- "$OMNI_CONFIG_DIRECTORY"
+        assert_exact_root_directory "$OMNI_CONFIG_DIRECTORY"
+    fi
+    if path_exists "$OMNI_CONFIG"; then
+        assert_root_file "$OMNI_CONFIG" 644
+        /usr/bin/cmp -s "$OMNI_CONFIG" "$omni_config_source" || fail 'foreign Omni configuration'
+        return
+    fi
+    /usr/bin/install -T -o root -g root -m 0644 "$omni_config_source" "$OMNI_CONFIG"
+    assert_root_file "$OMNI_CONFIG" 644
+    /usr/bin/cmp -s "$OMNI_CONFIG" "$omni_config_source" || fail 'invalid Omni configuration'
+}
+
+install_omni() {
+    local temp
+
+    if path_exists "$OMNI_BINARY"; then
+        assert_root_file "$OMNI_BINARY" 755
+        /usr/bin/cmp -s "$OMNI_BINARY" "$staged_omni" || fail 'foreign Omni installation'
+        assert_omni_version "$OMNI_BINARY" installation
+        return
+    fi
+    temp=$(/usr/bin/mktemp /usr/local/bin/.omni.XXXXXX) || fail 'unable to stage Omni binary'
+    register_cleanup "$temp"
+    /usr/bin/install -T -o root -g root -m 0755 "$staged_omni" "$temp"
+    /usr/bin/mv -T -n -- "$temp" "$OMNI_BINARY"
+    /usr/bin/rm -f -- "$temp"
+    assert_root_file "$OMNI_BINARY" 755
+    /usr/bin/cmp -s "$OMNI_BINARY" "$staged_omni" || fail 'invalid Omni installation'
+    assert_omni_version "$OMNI_BINARY" installation
+}
+
+prepare_omni_state() {
+    for path in /var /var/cache /var/lib; do
+        assert_trusted_root_directory "$path"
+    done
+    for path in /var/cache/openhands "$OMNI_ROOT_CACHE" /var/lib/openhands "$OMNI_ROOT_STATE"; do
+        if path_exists "$path"; then
+            assert_exact_root_directory "$path"
+        else
+            /usr/bin/mkdir -m 0755 -- "$path"
+            assert_exact_root_directory "$path"
+        fi
+    done
+    ensure_private_directory /home/agent/.cache
+    ensure_private_directory /home/agent/.local
+    ensure_private_directory "$OMNI_AGENT_CACHE"
+    ensure_private_directory /home/agent/.local/state
+    ensure_private_directory "$OMNI_AGENT_STATE"
+}
+
+sync_omni_tools() {
+    run_clean "$OMNI_BINARY" --config "$OMNI_CONFIG" --cache-dir "$OMNI_ROOT_CACHE" --state-dir "$OMNI_ROOT_STATE" \
+        --yes tools sync --group openhands-system || fail 'Omni system tool sync failed'
+    NPM_CONFIG_IGNORE_SCRIPTS=true run_agent_omni "$OMNI_BINARY" --config "$OMNI_CONFIG" \
+        --cache-dir "$OMNI_AGENT_CACHE" --state-dir "$OMNI_AGENT_STATE" --yes tools sync \
+        --group openhands-agent-no-scripts || fail 'Omni no-script agent tool sync failed'
+    NPM_CONFIG_STRICT_ALLOW_SCRIPTS=true NPM_CONFIG_ALLOW_SCRIPTS=@anthropic-ai/claude-code \
+        run_agent_omni "$OMNI_BINARY" --config "$OMNI_CONFIG" --cache-dir "$OMNI_AGENT_CACHE" \
+        --state-dir "$OMNI_AGENT_STATE" --yes tools sync --group openhands-agent-claude ||
+        fail 'Omni Claude Code tool sync failed'
+}
+
 stage_toolchain() {
     node_stage_root=$(/usr/bin/mktemp -d "$OPENHANDS_ROOT/.node-stage.XXXXXX")
     register_cleanup "$node_stage_root"
     uv_stage_root=$(/usr/bin/mktemp -d /usr/local/bin/.uv-stage.XXXXXX)
     register_cleanup "$uv_stage_root"
+    omni_stage_root=$(/usr/bin/mktemp -d /usr/local/bin/.omni-stage.XXXXXX)
+    register_cleanup "$omni_stage_root"
 
     stage_node
     stage_uv
+    stage_omni
 }
 
 validate_installed_node_tree() {
@@ -915,8 +1061,8 @@ fi
 
 machine_arch=$(/usr/bin/uname -m)
 case "$machine_arch" in
-    x86_64|amd64) node_arch=x64; uv_target=x86_64-unknown-linux-gnu ;;
-    aarch64|arm64) node_arch=arm64; uv_target=aarch64-unknown-linux-gnu ;;
+    x86_64|amd64) node_arch=x64; uv_target=x86_64-unknown-linux-gnu; omni_target=x86_64 ;;
+    aarch64|arm64) node_arch=arm64; uv_target=aarch64-unknown-linux-gnu; omni_target=arm64 ;;
     *) fail "unsupported architecture: $machine_arch" ;;
 esac
 readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-${node_arch}"
@@ -928,6 +1074,8 @@ readonly NPX_CLI="${NODE_HOME}/lib/node_modules/npm/bin/npx-cli.js"
 readonly UV_TARGET="$uv_target"
 readonly UV_DIRECTORY="uv-${UV_TARGET}"
 readonly UV_ARCHIVE="${UV_DIRECTORY}.tar.gz"
+readonly OMNI_TARGET="$omni_target"
+readonly OMNI_ARCHIVE="omni_linux_${OMNI_TARGET}.tar.gz"
 
 resolve_assets
 if ! /usr/bin/id agent >/dev/null 2>&1; then
@@ -948,12 +1096,15 @@ fi
 preflight_tool_paths
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
 /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
-    /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils "$PYTHON_PACKAGE" "$PYTHON_STDLIB_PACKAGE" "rbw=${RBW_PACKAGE_VERSION}"
-verify_rbw
+    /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils
 stage_toolchain
 validate_existing_tool_paths
 commit_toolchain
 verify_toolchain
+install_omni
+install_omni_config
+prepare_omni_state
 preflight_agent_npm_paths
-install_agent_packages
+sync_omni_tools
+verify_rbw
 verify_agent_packages

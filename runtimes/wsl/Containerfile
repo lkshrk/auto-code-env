@@ -6,8 +6,8 @@ RUN test "$(/usr/bin/getent passwd ubuntu)" = 'ubuntu:x:1000:1000:Ubuntu:/home/u
     ! /usr/bin/getent passwd ubuntu && ! /usr/bin/getent group ubuntu && ! -e /home/ubuntu
 
 COPY --chown=root:root runtimes/wsl/provision.sh runtimes/wsl/wsl.conf runtimes/wsl/runtime/patch-agent-canvas-automation.mjs /opt/openhands-build/
+COPY --chown=root:root runtimes/wsl/omni/settings.json /opt/openhands-build/omni/settings.json
 RUN OPENHANDS_IMAGE_BUILD=1 /bin/bash /opt/openhands-build/provision.sh && \
-    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends nginx && \
     /usr/bin/rm -f /etc/nginx/sites-enabled/default && \
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin UV_CACHE_DIR=/home/agent/.cache/uv \
       /usr/local/bin/uvx --from openhands-agent-server==1.44.0 --with openhands-sdk==1.44.0 --with openhands-tools==1.44.0 --with openhands-workspace==1.44.0 --with 'agent-client-protocol<0.11' --with 'posthog>=6,<7' agent-server --import-modules canvas_ui_tool --help >/dev/null && \
