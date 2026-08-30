@@ -6,6 +6,40 @@ if (!path) throw new Error("usage: patch-agent-canvas-automation.mjs <dev-with-a
 // Temporary workaround for OpenHands/OpenHands#16217. Remove this patch when #16635 ships in Agent Canvas.
 const replacements = [
   [
+    `  const uvxArgs = [];
+  let source = "";
+
+`,
+    ""
+  ],
+  [
+    `    uvxArgs.push(
+      "--refresh",
+      "--from",
+      gitUrl,
+      "uvicorn",
+      "openhands.automation.app:app",
+    );
+    source = \`git (${"${gitRef}"})\`;
+`,
+    `    return {
+      command: "uv",
+      args: [
+        "run",
+        "--no-project",
+        "--refresh",
+        "--with",
+        gitUrl,
+        "python",
+        "-m",
+        "uvicorn",
+        "openhands.automation.app:app",
+      ],
+      source: \`git (${"${gitRef}"})\`,
+    };
+`
+  ],
+  [
     `  } else if (version) {
     // Use specific PyPI version
     uvxArgs.push(
@@ -62,13 +96,23 @@ const replacements = [
       source: \`PyPI (${"${DEFAULT_AUTOMATION_VERSION}"}, default)\`,
     };
 `
+  ],
+  [
+    `
+  return {
+    command: "uvx",
+    args: uvxArgs,
+    source,
+  };
+`,
+    "\n"
   ]
 ];
 
 let source = readFileSync(path, "utf8");
-for (const [before, after] of replacements) {
+for (const [index, [before, after]] of replacements.entries()) {
   const count = source.split(before).length - 1;
-  if (count !== 1) throw new Error(`expected one unpatched Agent Canvas snippet, found ${count}`);
+  if (count !== 1) throw new Error(`expected one unpatched Agent Canvas snippet ${index}, found ${count}`);
   source = source.replace(before, after);
 }
 writeFileSync(path, source);

@@ -77,8 +77,16 @@ printf '%s\n' \
   'function buildAutomationCommand() {' \
   '  const uvxArgs = [];' \
   '  let source = "";' \
+  '' \
   '  if (gitRef) {' \
-  '    uvxArgs.push("--from", gitUrl, "uvicorn", "openhands.automation.app:app");' \
+  '    uvxArgs.push(' \
+  '      "--refresh",' \
+  '      "--from",' \
+  '      gitUrl,' \
+  '      "uvicorn",' \
+  '      "openhands.automation.app:app",' \
+  '    );' \
+  '    source = `git (${gitRef})`;' \
   '  } else if (version) {' \
   '    // Use specific PyPI version' \
   '    uvxArgs.push(' \
@@ -98,13 +106,20 @@ printf '%s\n' \
   '    );' \
   '    source = `PyPI (${DEFAULT_AUTOMATION_VERSION}, default)`;' \
   '  }' \
-  '  return { command: "uvx", args: uvxArgs, source };' \
+  '  return {' \
+  '    command: "uvx",' \
+  '    args: uvxArgs,' \
+  '    source,' \
+  '  };' \
   '}' > "$fixture"
 node "$canvas_patch" "$fixture"
 node --check "$fixture"
 grep -F '"--no-project"' "$fixture"
+grep -F '"--refresh",' "$fixture"
 grep -F '"python",' "$fixture"
 grep -F '"-m",' "$fixture"
+if grep -F 'uvxArgs' "$fixture"; then exit 1; fi
+if grep -F 'command: "uvx"' "$fixture"; then exit 1; fi
 if sed -n '/else if (version)/,/} else {/p' "$fixture" | grep -F 'uvxArgs.push('; then exit 1; fi
 if sed -n '/} else {/,/return {/p' "$fixture" | grep -F 'uvxArgs.push('; then exit 1; fi
 if node "$canvas_patch" "$fixture"; then exit 1; fi
