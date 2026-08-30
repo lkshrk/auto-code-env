@@ -84,6 +84,10 @@ and proves malformed or symlink staging paths fail closed without touching their
 foreign content. Native smoke is not retried locally: post-round-two evidence
 reached real agent npm installation before Docker exhausted storage.
 
+The stale symlink fixture makes its parent agent-owned so recovery is reached,
+and the interruption fixture requires the provisioning process exit status to
+be exactly `143`; an ancestor-lookup fallback exit (`99`) cannot pass.
+
 Controller verification after `bef885f` and `c08cb32`: native `linux/arm64`
 smoke target with cache-only inputs exited `0`. Real Omni installed the root
 git/nginx/python/exact-rbw group, then Canvas/ACP/Codex with lifecycle scripts

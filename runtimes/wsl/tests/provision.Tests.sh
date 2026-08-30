@@ -1309,7 +1309,7 @@ run_container '
   useradd -K HOME_MODE=0700 -K UMASK=0077 --create-home --shell /bin/bash --user-group agent
   mkdir -p /home/agent/.cache/omni /tmp/foreign-omni-config
   printf keep > /tmp/foreign-omni-config/keep
-  chown -R agent:agent /home/agent/.cache/omni
+  chown -R agent:agent /home/agent/.cache
   chmod 0700 /home/agent/.cache /home/agent/.cache/omni
   ln -s /tmp/foreign-omni-config /home/agent/.cache/omni/.config.Abc123
   if bash /src/runtimes/wsl/provision.sh; then exit 1; fi
@@ -1319,7 +1319,11 @@ run_container '
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   touch /tmp/fixture-omni-term-after-artifacts
-  if bash /src/runtimes/wsl/provision.sh; then exit 1; fi
+  set +e
+  bash /src/runtimes/wsl/provision.sh
+  status=$?
+  set -e
+  test "$status" = 143
   test "$(stat -c "%U:%G %a" /etc/openhands/omni)" = "root:root 755"
   test "$(stat -c "%U:%G %a" /etc/openhands/omni/settings.json)" = "root:root 644"
   cmp -s /etc/openhands/omni/settings.json /src/runtimes/wsl/omni/settings.json
