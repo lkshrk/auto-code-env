@@ -7,12 +7,12 @@ fixture_image=auto-code-env-wsl-stage5a-fixture:ubuntu-26.04
 
 ensure_fixture_image() {
   if docker image inspect "$fixture_image" >/dev/null 2>&1 &&
-    docker run --rm "$fixture_image" test -x /usr/bin/python3; then
+    docker run --rm "$fixture_image" /usr/bin/python3 -c 'import queue'; then
     return
   fi
   printf '%s\n' \
     'FROM ubuntu:26.04' \
-    'RUN apt-get update && apt-get install -y --no-install-recommends python3-minimal xz-utils && rm -rf /var/lib/apt/lists/*' |
+    'RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-minimal xz-utils && rm -rf /var/lib/apt/lists/*' |
     docker build --quiet --tag "$fixture_image" -
 }
 
@@ -168,7 +168,7 @@ setup_fixture() {
   printf '%s\n' \
     '#!/bin/sh' \
     'test "${1:-}" = --verify || exit 1' \
-    'case "${2:-}" in rbw) test ! -e /tmp/fixture-dpkg-verify-nonzero || exit 1; if test -e /tmp/fixture-rbw-dpkg-verify-output; then cat /tmp/fixture-rbw-dpkg-verify-output; elif test -e /tmp/fixture-dpkg-verify-fail; then printf "??5?????? /usr/bin/rbw\\n"; fi ;; python3-minimal) test ! -e /tmp/fixture-python-dpkg-verify-nonzero || exit 1; if test -e /tmp/fixture-python-dpkg-verify-output; then cat /tmp/fixture-python-dpkg-verify-output; elif test -e /tmp/fixture-python-dpkg-verify-fail; then printf "??5?????? /usr/bin/python3\\n"; fi ;; *) exit 1 ;; esac' \
+    'case "${2:-}" in rbw) test ! -e /tmp/fixture-dpkg-verify-nonzero || exit 1; if test -e /tmp/fixture-rbw-dpkg-verify-output; then cat /tmp/fixture-rbw-dpkg-verify-output; elif test -e /tmp/fixture-dpkg-verify-fail; then printf "??5?????? /usr/bin/rbw\\n"; fi ;; python3-minimal) test ! -e /tmp/fixture-python-dpkg-verify-nonzero || exit 1; if test -e /tmp/fixture-python-dpkg-verify-output; then cat /tmp/fixture-python-dpkg-verify-output; elif test -e /tmp/fixture-python-dpkg-verify-fail; then printf "??5?????? /usr/bin/python3\\n"; fi ;; python3) test ! -e /tmp/fixture-python-stdlib-dpkg-verify-nonzero || exit 1; if test -e /tmp/fixture-python-stdlib-dpkg-verify-output; then cat /tmp/fixture-python-stdlib-dpkg-verify-output; elif test -e /tmp/fixture-python-stdlib-dpkg-verify-fail; then printf "??5?????? /usr/lib/python3/queue.py\\n"; fi ;; *) exit 1 ;; esac' \
     > /usr/bin/dpkg
   printf '%s\n' '#!/bin/sh' 'machine_arch=${FIXTURE_UNAME:-x86_64}' 'printf "%s\n" "$machine_arch" > /tmp/fixture-machine-arch' 'printf "%s\n" "$machine_arch"' > /usr/bin/uname
   printf '%s\n' \
@@ -1037,6 +1037,7 @@ run_container '
   test -L /usr/bin/python3
   case "$(readlink /usr/bin/python3)" in python3.[0-9]*) ;; *) exit 1 ;; esac
   test "$(stat -Lc "%U:%G %a" /usr/bin/python3)" = "root:root 755"
+  /usr/bin/python3 -c "import queue"
   test "$(stat -c "%U:%G %a" /usr/local/libexec)" = "root:root 755"
   pinentry=/usr/local/libexec/openhands-rbw-pinentry
   test "$(stat -c "%U:%G %a" "$pinentry")" = "root:root 755"
@@ -1122,6 +1123,26 @@ run_container '
 '
 
 run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-python-stdlib-dpkg-verify-fail
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  rm /usr/bin/python3
+  printf "#!/bin/sh\\nprintf \"%%s:%%s\\\\n\" \"\$1\" \"\$2\" >> /tmp/python-invocations\\nexit 1\\n" > /usr/bin/python3
+  chmod 0755 /usr/bin/python3
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(cat /tmp/python-invocations)" = "-c:import queue"
+  test ! -e /usr/local/libexec/openhands-rbw-pinentry
+'
+
+run_container '
   verifier_source="source <(sed '\''/^trap cleanup EXIT$/,\$d'\'' /src/runtimes/wsl/provision.sh)"
   for package in rbw python; do
     case "$package" in
@@ -1145,6 +1166,13 @@ run_container '
       exit 1
     fi
   done
+  : > /tmp/fixture-python-dpkg-verify-output
+  printf "missing /usr/share/doc/python3/copyright\\n" > /tmp/fixture-python-stdlib-dpkg-verify-output
+  bash -euo pipefail -c "$verifier_source; assert_python_package"
+  printf "??5?????? /usr/lib/python3/queue.py\\n" > /tmp/fixture-python-stdlib-dpkg-verify-output
+  if bash -euo pipefail -c "$verifier_source; assert_python_package"; then
+    exit 1
+  fi
 '
 
 run_container '

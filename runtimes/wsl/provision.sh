@@ -373,6 +373,7 @@ assert_python_package() {
     owner=$(run_clean /usr/bin/dpkg-query -S "$PYTHON_BINARY") || fail 'unable to query python3 binary owner'
     [ "$owner" = "$PYTHON_PACKAGE: $PYTHON_BINARY" ] || fail 'invalid python3 binary owner'
     assert_package_files "$PYTHON_PACKAGE"
+    assert_package_files "$PYTHON_STDLIB_PACKAGE"
     if [ -L "$PYTHON_BINARY" ]; then
         target=$(/usr/bin/readlink "$PYTHON_BINARY") || fail 'unable to read python3 entry point'
         case $target in
