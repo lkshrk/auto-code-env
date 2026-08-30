@@ -1,5 +1,10 @@
 FROM ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b AS provisioned
 
+RUN test "$(/usr/bin/getent passwd ubuntu)" = 'ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash' && \
+    test "$(/usr/bin/getent group ubuntu)" = 'ubuntu:x:1000:' && \
+    /usr/sbin/userdel -r ubuntu && /usr/sbin/groupdel ubuntu && \
+    ! /usr/bin/getent passwd ubuntu && ! /usr/bin/getent group ubuntu && ! -e /home/ubuntu
+
 COPY --chown=root:root runtimes/wsl/provision.sh runtimes/wsl/wsl.conf runtimes/wsl/runtime/patch-agent-canvas-automation.mjs /opt/openhands-build/
 RUN OPENHANDS_IMAGE_BUILD=1 /bin/bash /opt/openhands-build/provision.sh && \
     /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends nginx && \
