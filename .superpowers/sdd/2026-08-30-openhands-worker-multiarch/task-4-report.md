@@ -36,3 +36,8 @@ Implemented verified architecture-specific WSL image imports.
 
 - Import tests now use NUL-delimited fake-WSL argv records, including staged temporary paths with spaces, instead of flattened command text.
 - Added a complete HTTPS download/hash/import argv test and an injected hash-read exception test that proves cleanup and no import.
+
+## Omni cleanup
+
+- Removed unreachable Store-install discovery and all dynamic WSL bootstrap asset-transfer/provisioning helpers, tests, and fake-WSL support.
+- The installer source contract now rejects their reintroduction; retained coverage is limited to host networking, verified artifact import, and distribution identity.

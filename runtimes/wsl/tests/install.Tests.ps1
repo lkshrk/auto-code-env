@@ -153,26 +153,6 @@ if [ "$1" = "--terminate" ]; then
     exit "${FAKE_WSL_TERMINATE_EXIT:-0}"
 fi
 
-if [ "$1" = "--distribution" ] && [ "$3" = "--user" ] && [ "$4" = "root" ] && [ "$5" = "--exec" ] && [ "$6" = "sh" ]; then
-    count=0
-    if [ -f "$FAKE_WSL_STAGE4C_TRANSFER_COUNT" ]; then
-        count=$(cat "$FAKE_WSL_STAGE4C_TRANSFER_COUNT")
-    fi
-    count=$((count + 1))
-    printf '%s\n' "$count" > "$FAKE_WSL_STAGE4C_TRANSFER_COUNT"
-    if [ "${FAKE_WSL_STAGE4C_FAIL_CALL:-0}" -eq "$count" ]; then
-        exit "${FAKE_WSL_STAGE4C_FAIL_EXIT:-1}"
-    fi
-    exit "${FAKE_WSL_STAGE4B_TRANSFER_EXIT:-0}"
-fi
-
-if [ "$1" = "--distribution" ] && [ "$3" = "--user" ] && [ "$4" = "root" ] && [ "$5" = "--exec" ] && [ "$6" = "/bin/bash" ]; then
-    exit "${FAKE_WSL_STAGE4B_PROVISION_EXIT:-0}"
-fi
-
-if [ "$1" = "--distribution" ] && [ "$3" = "--exec" ] && [ "$4" = "sh" ]; then
-    exit "${FAKE_WSL_STAGE4B_VERIFY_EXIT:-0}"
-fi
 
 exit 99
 '@, [System.Text.UTF8Encoding]::new($false))
@@ -207,11 +187,9 @@ function Set-FakeWslScenario {
     $env:FAKE_WSL_LOG = Join-Path $Root "fake-wsl.log"
     $env:FAKE_WSL_ARGV_LOG = Join-Path $Root "fake-wsl.argv"
     $env:FAKE_WSL_LIST_COUNT = Join-Path $Root "fake-wsl.list-count"
-    $env:FAKE_WSL_STAGE4C_TRANSFER_COUNT = Join-Path $Root "fake-wsl.stage4c-transfer-count"
     [System.IO.File]::WriteAllText($env:FAKE_WSL_LOG, "", [System.Text.UTF8Encoding]::new($false))
     [System.IO.File]::WriteAllBytes($env:FAKE_WSL_ARGV_LOG, [byte[]]@())
     Remove-Item -LiteralPath $env:FAKE_WSL_LIST_COUNT -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $env:FAKE_WSL_STAGE4C_TRANSFER_COUNT -Force -ErrorAction SilentlyContinue
     $env:FAKE_WSL_LIST_BEFORE = $Before
     $env:FAKE_WSL_LIST_AFTER = $After
     $env:FAKE_WSL_HELP = $Help
@@ -227,11 +205,6 @@ function Set-FakeWslScenario {
     $env:FAKE_WSL_TERMINATE_EXIT = "$TerminateExit"
     $env:FAKE_WSL_ID_NUL = if ($NulId) { "1" } else { "0" }
     $env:FAKE_WSL_RELEASE_NUL = if ($NulRelease) { "1" } else { "0" }
-    $env:FAKE_WSL_STAGE4B_TRANSFER_EXIT = "0"
-    $env:FAKE_WSL_STAGE4B_PROVISION_EXIT = "0"
-    $env:FAKE_WSL_STAGE4B_VERIFY_EXIT = "0"
-    $env:FAKE_WSL_STAGE4C_FAIL_CALL = "0"
-    $env:FAKE_WSL_STAGE4C_FAIL_EXIT = "1"
     $env:FAKE_WSL_REQUIRE_STAGED_IMAGE = "0"
 }
 
@@ -272,8 +245,6 @@ New-Item -ItemType Directory -Path $testRoot | Out-Null
 try {
     $installPath = Join-Path $PSScriptRoot ".." "install.ps1"
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Set-WslMirroredNetworking")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionAvailable")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslNamedInstallSupported")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionRegistered")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslArtifactArchitecture")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslImageSha256")))
@@ -284,24 +255,6 @@ try {
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Restore-WslConfig")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-UbuntuRelease")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Assert-WslDistributionIdentity")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBootstrapAsset")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslShellProgramWrapper")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "ConvertTo-WslShellProgramBase64")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBootstrapTransferInitCommand")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBootstrapTransferChunkCommand")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBootstrapTransferFinalizeCommand")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBootstrapTransferCleanupCommand")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Invoke-WslBootstrapAssetTransfer")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBaseProvisioningIsolationCommand")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslBaseProvisioningVerificationCommand")))
-    . ([scriptblock]::Create((Import-InstallFunction $installPath "Invoke-WslBaseProvisioning")))
-
-    $lfProgram = "set -eu`necho canonical`n"
-    foreach ($variant in @($lfProgram, ($lfProgram -replace "`n", "`r`n"), ($lfProgram -replace "`n", "`r"))) {
-        $decodedProgram = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((ConvertTo-WslShellProgramBase64 -Program $variant)))
-        Assert-Equal $lfProgram $decodedProgram "shell program bytes should decode as canonical LF"
-        Assert-NotMatch "`r" $decodedProgram "decoded shell program must not contain carriage returns"
-    }
 
     Assert-Equal "C:\Windows\System32\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $true -Is64BitOperatingSystem $true) "64-bit process WSL path"
     Assert-Equal "C:\Windows\Sysnative\wsl.exe" (Get-WslExecutablePath -WindowsDirectory "C:\Windows" -Is64BitProcess $false -Is64BitOperatingSystem $true) "32-bit process WSL path"
@@ -314,29 +267,6 @@ try {
     $nulSeparatedVersion = [string]::Join([char]0, [char[]]"WSL version: 2.7.0")
     Assert-Equal $true (Test-WslVersionSupported -Output @($nulSeparatedVersion)) "NUL-separated WSL 2.7.0 should be supported"
 
-    $onlineOutput = @(
-        "The following is a list of valid distributions that can be installed.",
-        "Install using 'wsl.exe --install <Distro>'.",
-        "",
-        "NAME                            FRIENDLY NAME",
-        "Ubuntu-26.04                    Ubuntu 26.04 LTS"
-    )
-    Assert-Equal $true (Test-WslDistributionAvailable -Output $onlineOutput -Distribution "Ubuntu-26.04") "exact online distribution should be available"
-    Assert-Equal $false (Test-WslDistributionAvailable -Output @("Ubuntu-26.04-extra             Wrong") -Distribution "Ubuntu-26.04") "near-match distribution should be unavailable"
-    $nulSeparatedLine = [string]::Join([char]0, [char[]]"Ubuntu-26.04                    Ubuntu 26.04 LTS")
-    Assert-Equal $true (Test-WslDistributionAvailable -Output @($nulSeparatedLine) -Distribution "Ubuntu-26.04") "NUL-separated online distribution should be available"
-
-    $installHelp = @(
-        "Usage: wsl.exe [Argument] [Options...] [CommandLine]",
-        "    --install [Distro] [Options]",
-        "        --distribution, -d <Distro>",
-        "        --name <Name>",
-        "        --no-launch"
-    )
-    Assert-Equal $true (Test-WslNamedInstallSupported -Output $installHelp) "literal named-install help should be supported"
-    Assert-Equal $false (Test-WslNamedInstallSupported -Output @("        --name-suffix <Name>")) "near-match named-install help should be rejected"
-    $nulSeparatedHelp = [string]::Join([char]0, [char[]]"        --name <Name>")
-    Assert-Equal $true (Test-WslNamedInstallSupported -Output @($nulSeparatedHelp)) "NUL-separated named-install help should be supported"
 
     $registered = @("docker-desktop", "openhands-worker")
     Assert-Equal $true (Test-WslDistributionRegistered -Output $registered -Name "openhands-worker") "exact registered distribution should be found"
@@ -554,350 +484,6 @@ try {
     Restore-WslConfig -Path $newConfigPath -BackupPath $newConfigChanged.BackupPath
     Assert-Equal $false (Test-Path -LiteralPath $newConfigPath) "rollback should delete a newly created config"
 
-    $assetDirectory = Join-Path $testRoot "assets"
-    New-Item -ItemType Directory -Path $assetDirectory | Out-Null
-    $provisionAsset = Join-Path $assetDirectory "provision.sh"
-    $configAsset = Join-Path $assetDirectory "wsl.conf"
-    [System.IO.File]::WriteAllBytes($provisionAsset, [byte[]](35, 33, 47, 98, 105, 110, 47, 115, 104, 10))
-    [System.IO.File]::WriteAllBytes($configAsset, [byte[]](91, 117, 115, 101, 114, 93, 10))
-    $asset = Get-WslBootstrapAsset -Path $provisionAsset
-    Assert-Equal "IyEvYmluL3NoCg==" $asset.Base64 "asset bytes should use base64 without text conversion"
-    Assert-Equal "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf" $asset.Sha256 "asset hash should cover exact bytes"
-    $linkedAsset = Join-Path $assetDirectory "linked.conf"
-    New-Item -ItemType SymbolicLink -Path $linkedAsset -Target $configAsset | Out-Null
-    Assert-Throws { Get-WslBootstrapAsset -Path $linkedAsset } "reparse-point bootstrap source should fail"
-
-    $largeProvisionAsset = Join-Path $assetDirectory "large-provision.sh"
-    $largeProvisionBytes = New-Object byte[] 27549
-    for ($index = 0; $index -lt $largeProvisionBytes.Length; $index++) {
-        $largeProvisionBytes[$index] = $index % 251
-    }
-    [System.IO.File]::WriteAllBytes($largeProvisionAsset, $largeProvisionBytes)
-    $largeAsset = Get-WslBootstrapAsset -Path $largeProvisionAsset
-    Assert-Equal 36732 $largeAsset.Base64.Length "large regression asset base64 size"
-    Assert-Equal "d0e1ff4cd274f9ea4d01ef9cd65d577c1912b0c857b3cb4bbdd712812861fb1a" $largeAsset.Sha256 "large regression asset exact hash"
-    Assert-Equal 5 $largeAsset.Chunks.Count "large regression asset chunk count"
-    Assert-Equal $largeAsset.Base64 ($largeAsset.Chunks -join "") "large regression chunks should preserve order and bytes"
-    foreach ($chunk in $largeAsset.Chunks) {
-        Assert-Equal $true ($chunk.Length -le 8192) "large regression chunk length ceiling"
-        Assert-Equal 0 ($chunk.Length % 4) "large regression chunk length must preserve base64 quanta"
-    }
-    Assert-Equal 8192 $largeAsset.Chunks[0].Length "full chunk size"
-    Assert-Equal 3964 $largeAsset.Chunks[4].Length "final chunk size"
-    Set-FakeWslScenario -Root $testRoot
-    Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $largeProvisionAsset -ConfigPath $configAsset
-    $largeCalls = Get-FakeWslArgumentCalls
-    Assert-Equal 14 $largeCalls.Count "large bootstrap transfer WSL call count"
-    $largestNativeArgument = 0
-    $largestNativeArgumentCount = 0
-    foreach ($call in $largeCalls) {
-        $largestNativeArgumentCount = [Math]::Max($largestNativeArgumentCount, $call.Count)
-        foreach ($argument in $call) {
-            $largestNativeArgument = [Math]::Max($largestNativeArgument, $argument.Length)
-        }
-    }
-    Assert-Equal 8192 $largestNativeArgument "large bootstrap transfer native argument ceiling"
-    Assert-Equal 12 $largestNativeArgumentCount "large bootstrap transfer native argument count ceiling"
-    $initProgramBase64 = ConvertTo-WslShellProgramBase64 -Program (Get-WslBootstrapTransferInitCommand)
-    $chunkProgramBase64 = ConvertTo-WslShellProgramBase64 -Program (Get-WslBootstrapTransferChunkCommand)
-    $finalizeProgramBase64 = ConvertTo-WslShellProgramBase64 -Program (Get-WslBootstrapTransferFinalizeCommand)
-    Assert-Equal $initProgramBase64 $largeCalls[0][9] "large asset init phase order"
-    for ($index = 0; $index -lt $largeAsset.Chunks.Count; $index++) {
-        Assert-Equal $chunkProgramBase64 $largeCalls[$index + 1][9] "large asset chunk phase order"
-        Assert-Equal "provision.sh" $largeCalls[$index + 1][10] "large asset chunk destination"
-        Assert-Equal $largeAsset.Chunks[$index] $largeCalls[$index + 1][11] "large asset chunk payload order"
-    }
-    Assert-Equal $finalizeProgramBase64 $largeCalls[6][9] "large asset finalize phase order"
-    Assert-Equal $largeAsset.Sha256 $largeCalls[6][11] "large asset finalize hash"
-
-    $cleanupProgramBase64 = ConvertTo-WslShellProgramBase64 -Program (Get-WslBootstrapTransferCleanupCommand)
-    Set-FakeWslScenario -Root $testRoot
-    $env:FAKE_WSL_STAGE4C_FAIL_CALL = "4"
-    Assert-ThrowsMessage -Action { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $largeProvisionAsset -ConfigPath $configAsset } -Patterns @("chunk 3") -Message "middle chunk failure should identify its ordered chunk"
-    $failedChunkCalls = Get-FakeWslArgumentCalls
-    Assert-Equal 6 $failedChunkCalls.Count "middle chunk failure should clean staging and stop only the target"
-    Assert-Equal $chunkProgramBase64 $failedChunkCalls[3][9] "injected failure should occur on the third chunk"
-    Assert-Equal $largeAsset.Chunks[2] $failedChunkCalls[3][11] "injected failure should preserve chunk order"
-    Assert-Equal $cleanupProgramBase64 $failedChunkCalls[4][9] "middle chunk failure should invoke remote cleanup"
-    Assert-Equal "provision.sh" $failedChunkCalls[4][10] "middle chunk cleanup should target only the active asset"
-    Assert-Equal (@("--terminate", "openhands-worker") -join [char]0) ($failedChunkCalls[5] -join [char]0) "middle chunk failure should terminate only the target"
-    $env:FAKE_WSL_STAGE4C_FAIL_CALL = "0"
-    Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $largeProvisionAsset -ConfigPath $configAsset
-    $retriedChunkCalls = Get-FakeWslArgumentCalls
-    Assert-Equal 20 $retriedChunkCalls.Count "retry after middle chunk cleanup should complete the full lifecycle"
-    Assert-Equal (@("--terminate", "openhands-worker") -join [char]0) ($retriedChunkCalls[19] -join [char]0) "retry should finish with only the target stopped"
-
-    Set-FakeWslScenario -Root $testRoot
-    Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset
-    $stage4cArguments = Get-FakeWslArgumentCalls
-    Assert-Equal 10 $stage4cArguments.Count "Stage 4C should make six transfer and four lifecycle WSL calls"
-    $expectedTransferPhases = @(
-        @($initProgramBase64, "provision.sh"),
-        @($chunkProgramBase64, "provision.sh", "IyEvYmluL3NoCg=="),
-        @($finalizeProgramBase64, "provision.sh", "a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf"),
-        @($initProgramBase64, "wsl.conf"),
-        @($chunkProgramBase64, "wsl.conf", "W3VzZXJdCg=="),
-        @($finalizeProgramBase64, "wsl.conf", "37411c06650b34746ff1b60a9bb4148608d868972b658eb56bbacea8f504f7b2")
-    )
-    for ($index = 0; $index -lt $expectedTransferPhases.Count; $index++) {
-        $expected = @("--distribution", "openhands-worker", "--user", "root", "--exec", "sh", "-ec", (Get-WslShellProgramWrapper), "sh") + $expectedTransferPhases[$index]
-        Assert-Equal ($expected -join [char]0) ($stage4cArguments[$index] -join [char]0) "Stage 4C transfer argv boundaries and phase order"
-        Assert-NotMatch "`n" $stage4cArguments[$index][7] "native transfer wrapper must be single-line"
-        Assert-NotMatch "'" $stage4cArguments[$index][7] "native transfer wrapper must not contain single quotes"
-        Assert-NotMatch ([string][char]34) $stage4cArguments[$index][7] "native transfer wrapper must not contain double quotes"
-    }
-    Assert-Equal (Get-WslBootstrapTransferInitCommand) ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($stage4cArguments[0][9]))) "init program base64 must preserve exact UTF-8 bytes"
-    Assert-Equal (Get-WslBootstrapTransferChunkCommand) ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($stage4cArguments[1][9]))) "chunk program base64 must preserve exact UTF-8 bytes"
-    Assert-Equal (Get-WslBootstrapTransferFinalizeCommand) ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($stage4cArguments[2][9]))) "finalize program base64 must preserve exact UTF-8 bytes"
-    Assert-Equal (@("--distribution", "openhands-worker", "--user", "root", "--exec", "/bin/bash", "/root/openhands-bootstrap/provision.sh") -join [char]0) ($stage4cArguments[6] -join [char]0) "Stage 4C provision call"
-    Assert-Equal (@("--terminate", "openhands-worker") -join [char]0) ($stage4cArguments[7] -join [char]0) "Stage 4C restart only target"
-    $verificationProgram = Get-WslBaseProvisioningVerificationCommand
-    $verificationProgramBase64 = ConvertTo-WslShellProgramBase64 -Program $verificationProgram
-    $expectedVerificationArguments = @("--distribution", "openhands-worker", "--exec", "sh", "-ec", (Get-WslShellProgramWrapper), "sh", $verificationProgramBase64) -join [char]0
-    Assert-Equal $expectedVerificationArguments ($stage4cArguments[8] -join [char]0) "verification argv boundaries and fixed shell body"
-    Assert-NotMatch "`n" $stage4cArguments[8][5] "native verification wrapper must be single-line"
-    Assert-NotMatch "'" $stage4cArguments[8][5] "native verification wrapper must not contain single quotes"
-    Assert-NotMatch ([string][char]34) $stage4cArguments[8][5] "native verification wrapper must not contain double quotes"
-    Assert-Equal $verificationProgram ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($stage4cArguments[8][7]))) "verification program base64 must preserve exact UTF-8 bytes"
-    Assert-Equal (@("--terminate", "openhands-worker") -join [char]0) ($stage4cArguments[9] -join [char]0) "Stage 4C final stop only target"
-    Assert-Match '\[ -z "\$\{WSL_INTEROP:-\}" \]' $verificationProgram "Stage 4B should verify WSL_INTEROP is absent"
-    Assert-Match '\[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop \]' $verificationProgram "Stage 4B should verify WSLInterop binfmt is absent"
-    $verificationRoot = Join-Path $testRoot ("verification-" + [Guid]::NewGuid().ToString("N"))
-    $safeAgentPaths = @(".openhands", ".claude", ".codex", "workspaces") | ForEach-Object { Join-Path $verificationRoot $_ }
-    New-Item -ItemType Directory -Path $verificationRoot | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $verificationRoot "mnt-c") | Out-Null
-    foreach ($path in $safeAgentPaths) {
-        New-Item -ItemType Directory -Path $path | Out-Null
-    }
-    & chmod 700 @safeAgentPaths
-    Assert-Equal 0 $LASTEXITCODE "verification test setup should set private directory modes"
-    $currentUser = ((& id -un) -join "").Trim()
-    $currentGroup = ((& id -gn) -join "").Trim()
-    $pidOne = [System.IO.File]::ReadAllText("/proc/1/comm").Trim()
-    $safeVerificationProgram = $verificationProgram.Replace('[ "$(id -un)" = agent ]', ('[ "$(id -un)" = ' + $currentUser + ' ]'))
-    $safeVerificationProgram = $safeVerificationProgram.Replace('[ "$(cat /proc/1/comm)" = systemd ]', ('[ "$(cat /proc/1/comm)" = ' + $pidOne + ' ]'))
-    $safeVerificationProgram = $safeVerificationProgram.Replace('/mnt/c', (Join-Path $verificationRoot "mnt-c"))
-    $safeVerificationProgram = $safeVerificationProgram.Replace('/proc/sys/fs/binfmt_misc/WSLInterop', (Join-Path $verificationRoot "WSLInterop"))
-    for ($index = 0; $index -lt $safeAgentPaths.Count; $index++) {
-        $safeVerificationProgram = $safeVerificationProgram.Replace(@('/home/agent/.openhands', '/home/agent/.claude', '/home/agent/.codex', '/home/agent/workspaces')[$index], $safeAgentPaths[$index])
-    }
-    $safeVerificationProgram = $safeVerificationProgram.Replace('agent:agent 700', "${currentUser}:${currentGroup} 700")
-    $mountpointShimDirectory = Join-Path $verificationRoot "mountpoint-shim"
-    New-Item -ItemType Directory -Path $mountpointShimDirectory | Out-Null
-    $mountpointShimPath = Join-Path $mountpointShimDirectory "mountpoint"
-    [System.IO.File]::WriteAllText($mountpointShimPath, "#!/bin/sh`nif [ `"`$2`" = / ]; then exit 0; fi`nexit 32`n", [System.Text.UTF8Encoding]::new($false))
-    & chmod +x $mountpointShimPath
-    Assert-Equal 0 $LASTEXITCODE "mountpoint shim should be executable"
-    $previousInterop = $env:WSL_INTEROP
-    $previousPath = $env:PATH
-    try {
-        $env:WSL_INTEROP = ""
-        $env:PATH = "${mountpointShimDirectory}:$previousPath"
-        $absentDriveVerificationProgram = $safeVerificationProgram.Replace((Join-Path $verificationRoot "mnt-c"), (Join-Path $verificationRoot "missing-mnt-c"))
-        & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $absentDriveVerificationProgram)
-        Assert-Equal 0 $LASTEXITCODE "combined verification program should accept an absent Windows drive path"
-        & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $safeVerificationProgram)
-        Assert-Equal 0 $LASTEXITCODE "combined verification program should execute with mapped target facts"
-        $mountedDriveVerificationProgram = $safeVerificationProgram.Replace((Join-Path $verificationRoot "mnt-c"), "/")
-        & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $mountedDriveVerificationProgram)
-        Assert-Equal 1 $LASTEXITCODE "combined verification program should reject a mounted Windows drive"
-        [System.IO.File]::WriteAllText($mountpointShimPath, "#!/bin/sh`nexit 127`n", [System.Text.UTF8Encoding]::new($false))
-        & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program $safeVerificationProgram)
-        Assert-Equal 1 $LASTEXITCODE "combined verification program should reject mountpoint errors"
-        $verificationLines = @($verificationProgram -split "`n")
-        Assert-Equal 16 $verificationLines.Count "combined verification program line count"
-        Assert-Equal 'if [ -e /mnt/c ] || [ -L /mnt/c ]; then' $verificationLines[3] "mount check line boundary"
-        Assert-Equal '    elif [ "$?" -ne 32 ]; then' $verificationLines[6] "mount status boundary"
-        Assert-Equal 'set -e' $verificationLines[10] "isolation fragment start line boundary"
-        Assert-Equal '[ ! -e /proc/sys/fs/binfmt_misc/WSLInterop ]' $verificationLines[12] "isolation fragment end line boundary"
-        Assert-Equal 'for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do' $verificationLines[13] "directory loop line boundary"
-
-        $isolationWrapper = Get-WslShellProgramWrapper
-        $isolationProgram = ConvertTo-WslShellProgramBase64 -Program (Get-WslBaseProvisioningIsolationCommand)
-        & sh -ec $isolationWrapper sh $isolationProgram
-        Assert-Equal 0 $LASTEXITCODE "verification wrapper should accept an empty WSL_INTEROP and absent binfmt"
-        $env:WSL_INTEROP = "unexpected"
-        & sh -ec $isolationWrapper sh $isolationProgram
-        Assert-Equal 1 $LASTEXITCODE "verification wrapper should reject WSL_INTEROP"
-    }
-    finally {
-        $env:WSL_INTEROP = $previousInterop
-        $env:PATH = $previousPath
-        Remove-Item -LiteralPath $verificationRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    $wrapperTempRoot = Join-Path $testRoot ("wrapper-temp-" + [Guid]::NewGuid().ToString("N"))
-    $hostileTmpDir = Join-Path $wrapperTempRoot "mnt-like path"
-    New-Item -ItemType Directory -Path $hostileTmpDir -Force | Out-Null
-    $hostileSentinel = Join-Path $hostileTmpDir "sentinel"
-    [System.IO.File]::WriteAllText($hostileSentinel, "untouched", [System.Text.UTF8Encoding]::new($false))
-    $previousTmpDir = $env:TMPDIR
-    try {
-        Assert-Equal 0 @(Get-ChildItem -LiteralPath /tmp -Filter "openhands-bootstrap.*" -Force -ErrorAction SilentlyContinue).Count "wrapper test context should start without bootstrap leftovers"
-        $env:TMPDIR = $hostileTmpDir
-        & sh -ec (Get-WslShellProgramWrapper) sh (ConvertTo-WslShellProgramBase64 -Program "exit 0")
-        Assert-Equal 0 $LASTEXITCODE "wrapper should succeed with hostile TMPDIR"
-        Assert-Equal "untouched" ([System.IO.File]::ReadAllText($hostileSentinel)) "wrapper should not use hostile TMPDIR"
-        Assert-Equal 0 @(Get-ChildItem -LiteralPath /tmp -Filter "openhands-bootstrap.*" -Force -ErrorAction SilentlyContinue).Count "wrapper should remove its successful temporary program"
-
-        & sh -ec (Get-WslShellProgramWrapper) sh "not-base64"
-        Assert-Equal 1 $LASTEXITCODE "wrapper should preserve decode failure status"
-        Assert-Equal "untouched" ([System.IO.File]::ReadAllText($hostileSentinel)) "decode failure should not touch hostile TMPDIR"
-        Assert-Equal 0 @(Get-ChildItem -LiteralPath /tmp -Filter "openhands-bootstrap.*" -Force -ErrorAction SilentlyContinue).Count "wrapper should remove its temporary program after decode failure"
-
-        $failingProgram = ConvertTo-WslShellProgramBase64 -Program "exit 23"
-        & sh -ec (Get-WslShellProgramWrapper) sh $failingProgram
-        Assert-Equal 23 $LASTEXITCODE "wrapper should preserve inner program failure status"
-        Assert-Equal "untouched" ([System.IO.File]::ReadAllText($hostileSentinel)) "inner failure should not touch hostile TMPDIR"
-        Assert-Equal 0 @(Get-ChildItem -LiteralPath /tmp -Filter "openhands-bootstrap.*" -Force -ErrorAction SilentlyContinue).Count "wrapper should remove its temporary program after inner program failure"
-    }
-    finally {
-        $env:TMPDIR = $previousTmpDir
-        Remove-Item -LiteralPath $wrapperTempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    Set-FakeWslScenario -Root $testRoot
-    $env:FAKE_WSL_STAGE4B_TRANSFER_EXIT = "1"
-    $env:FAKE_WSL_TERMINATE_EXIT = "1"
-    Assert-ThrowsMessage -Action { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset } -Patterns @("initialize", "clean", "terminate") -Message "transfer, staging cleanup, and termination failures should all be reported"
-    $transferFailureCalls = Get-FakeWslArgumentCalls
-    Assert-Equal 3 $transferFailureCalls.Count "init failure should attempt remote cleanup and terminate only the target"
-    Assert-Equal $initProgramBase64 $transferFailureCalls[0][9] "init failure phase"
-    Assert-Equal $cleanupProgramBase64 $transferFailureCalls[1][9] "init failure remote cleanup phase"
-    Assert-Equal (@("--terminate", "openhands-worker") -join [char]0) ($transferFailureCalls[2] -join [char]0) "init failure target-only termination"
-
-    Set-FakeWslScenario -Root $testRoot
-    $env:FAKE_WSL_STAGE4B_PROVISION_EXIT = "1"
-    Assert-Throws { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset } "provision failure should fail"
-    Assert-Match '(?s)^--distribution openhands-worker --user root --exec sh -ec .*\n--distribution openhands-worker --user root --exec /bin/bash /root/openhands-bootstrap/provision.sh\n--terminate openhands-worker\n$' (Get-FakeWslCalls) "provision failure should terminate only the target"
-
-    Set-FakeWslScenario -Root $testRoot
-    $env:FAKE_WSL_STAGE4B_VERIFY_EXIT = "1"
-    Assert-Throws { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset } "verification failure should fail"
-    Assert-Match '(?s)--distribution openhands-worker --exec sh -ec .*\n--terminate openhands-worker\n$' (Get-FakeWslCalls) "verification failure should leave only the target stopped"
-
-    Set-FakeWslScenario -Root $testRoot
-    $env:FAKE_WSL_STAGE4B_VERIFY_EXIT = "1"
-    $env:FAKE_WSL_TERMINATE_EXIT = "1"
-    Assert-ThrowsMessage -Action { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset } -Patterns @("restart", "terminate") -Message "restart and cleanup failures should both be reported"
-
-    Assert-Throws { Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath (Join-Path $assetDirectory "missing.sh") -ConfigPath $configAsset } "missing bootstrap source should fail before WSL starts"
-
-    $bootstrapPath = Join-Path $testRoot ("bootstrap-" + [Guid]::NewGuid().ToString("N"))
-    Assert-NotMatch '^/root(?:/|$)' $bootstrapPath "transfer shell test path must stay inside the test root"
-    Assert-Match ('^' + [regex]::Escape($testRoot) + [regex]::Escape([IO.Path]::DirectorySeparatorChar)) $bootstrapPath "transfer shell test path must be under the test root"
-    try {
-        $productionBootstrap = "bootstrap=/root/openhands-bootstrap"
-        $localPrograms = @(
-            (Get-WslBootstrapTransferInitCommand),
-            (Get-WslBootstrapTransferChunkCommand),
-            (Get-WslBootstrapTransferFinalizeCommand),
-            (Get-WslBootstrapTransferCleanupCommand)
-        ) | ForEach-Object {
-            Assert-Equal 1 ([regex]::Matches($_, [regex]::Escape($productionBootstrap))).Count "production bootstrap assignment should be replaced exactly once"
-            $_.Replace($productionBootstrap, "bootstrap='$bootstrapPath'")
-        }
-        foreach ($program in $localPrograms) {
-            Assert-NotMatch '/root/openhands-bootstrap' $program "execution test must not use the production bootstrap path"
-        }
-        $localInitProgram = ConvertTo-WslShellProgramBase64 -Program $localPrograms[0]
-        $localChunkProgram = ConvertTo-WslShellProgramBase64 -Program $localPrograms[1]
-        $localFinalizeProgram = ConvertTo-WslShellProgramBase64 -Program $localPrograms[2]
-        $localCleanupProgram = ConvertTo-WslShellProgramBase64 -Program $localPrograms[3]
-        $wrapper = Get-WslShellProgramWrapper
-        $invokeLocalTransfer = {
-            param([string]$AssetName, $AssetValue)
-
-            & sh -ec $wrapper sh $localInitProgram $AssetName
-            Assert-Equal 0 $LASTEXITCODE "local transfer init should succeed"
-            foreach ($chunk in $AssetValue.Chunks) {
-                & sh -ec $wrapper sh $localChunkProgram $AssetName $chunk
-                Assert-Equal 0 $LASTEXITCODE "local transfer chunk should succeed"
-            }
-            & sh -ec $wrapper sh $localFinalizeProgram $AssetName $AssetValue.Sha256
-            Assert-Equal 0 $LASTEXITCODE "local transfer finalize should succeed"
-        }
-
-        & $invokeLocalTransfer "provision.sh" $largeAsset
-        & $invokeLocalTransfer "wsl.conf" (Get-WslBootstrapAsset -Path $configAsset)
-        Assert-Equal $largeAsset.Base64 ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/provision.sh"))) "transfer shell should write exact large provision bytes"
-        Assert-Equal "W3VzZXJdCg==" ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/wsl.conf"))) "transfer shell should write exact config bytes"
-        Assert-Equal $largeAsset.Sha256 (((& sha256sum "$bootstrapPath/provision.sh") -split ' ')[0]) "transfer shell provision hash"
-        Assert-Equal "root:root 700" ((& stat -c '%U:%G %a' "$bootstrapPath/provision.sh").Trim()) "transfer shell provision ownership and mode"
-        Assert-Equal "root:root 600" ((& stat -c '%U:%G %a' "$bootstrapPath/wsl.conf").Trim()) "transfer shell config ownership and mode"
-
-        $encodedStaging = "$bootstrapPath/.provision.sh.base64.tmp"
-        $decodedStaging = "$bootstrapPath/.provision.sh.decoded.tmp"
-        [System.IO.File]::WriteAllText($encodedStaging, "stale", [System.Text.UTF8Encoding]::new($false))
-        [System.IO.File]::WriteAllText($decodedStaging, "stale", [System.Text.UTF8Encoding]::new($false))
-        & chmod 600 $encodedStaging $decodedStaging
-        & sh -ec $wrapper sh $localInitProgram "provision.sh"
-        Assert-Equal 0 $LASTEXITCODE "init should replace safe stale staging"
-        Assert-Equal 0 ([System.IO.File]::ReadAllBytes($encodedStaging).Length) "init should truncate safe encoded staging"
-        Assert-Equal $false (Test-Path -LiteralPath $decodedStaging) "init should remove safe decoded staging"
-        & $invokeLocalTransfer "provision.sh" $largeAsset
-        Assert-Equal $largeAsset.Base64 ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/provision.sh"))) "transfer shell rerun should preserve exact bytes"
-
-        & sh -ec $wrapper sh $localInitProgram "provision.sh"
-        foreach ($chunk in $largeAsset.Chunks) {
-            & sh -ec $wrapper sh $localChunkProgram "provision.sh" $chunk
-            Assert-Equal 0 $LASTEXITCODE "hash mismatch setup chunk should succeed"
-        }
-        & sh -ec $wrapper sh $localFinalizeProgram "provision.sh" ("0" * 64)
-        Assert-Equal 1 $LASTEXITCODE "transfer shell should reject a mismatched SHA-256"
-        Assert-Equal $largeAsset.Base64 ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$bootstrapPath/provision.sh"))) "failed hash verification should preserve the prior asset"
-        Assert-Equal $false (Test-Path -LiteralPath $encodedStaging) "hash failure should clean encoded staging"
-        Assert-Equal $false (Test-Path -LiteralPath $decodedStaging) "hash failure should clean decoded staging"
-
-        & sh -ec $wrapper sh $localInitProgram "provision.sh"
-        & sh -ec $wrapper sh $localChunkProgram "provision.sh" $largeAsset.Chunks[0]
-        Assert-Equal 0 $LASTEXITCODE "chunk failure setup should append its first chunk"
-        & sh -ec $wrapper sh $localChunkProgram "provision.sh" "not-base64!"
-        Assert-Equal 1 $LASTEXITCODE "invalid middle chunk should fail"
-        Assert-Equal $false (Test-Path -LiteralPath $encodedStaging) "chunk failure should clean encoded staging"
-        Assert-Equal $false (Test-Path -LiteralPath $decodedStaging) "chunk failure should clean decoded staging"
-        & $invokeLocalTransfer "provision.sh" $largeAsset
-
-        $unsafeSentinel = Join-Path $testRoot "unsafe-staging-sentinel"
-        [System.IO.File]::WriteAllText($unsafeSentinel, "untouched", [System.Text.UTF8Encoding]::new($false))
-        New-Item -ItemType SymbolicLink -Path $encodedStaging -Target $unsafeSentinel | Out-Null
-        & sh -ec $wrapper sh $localInitProgram "provision.sh"
-        Assert-Equal 1 $LASTEXITCODE "init should reject an unsafe staging collision"
-        & sh -ec $wrapper sh $localCleanupProgram "provision.sh"
-        Assert-Equal 1 $LASTEXITCODE "cleanup should reject an unsafe staging collision"
-        Assert-Equal "untouched" ([System.IO.File]::ReadAllText($unsafeSentinel)) "unsafe collision should remain untouched"
-        Assert-Equal $true (Test-Path -LiteralPath $encodedStaging) "unsafe staging link should remain untouched"
-        Remove-Item -LiteralPath $encodedStaging -Force
-
-        New-Item -ItemType Directory -Path $encodedStaging | Out-Null
-        & sh -ec $wrapper sh $localInitProgram "provision.sh"
-        Assert-Equal 1 $LASTEXITCODE "init should reject a staging type collision"
-        Assert-Equal $true (Test-Path -LiteralPath $encodedStaging -PathType Container) "staging type collision should remain untouched"
-        Remove-Item -LiteralPath $encodedStaging -Force
-
-        [System.IO.File]::WriteAllText($encodedStaging, "foreign", [System.Text.UTF8Encoding]::new($false))
-        & chmod 600 $encodedStaging
-        & chown 65534:65534 $encodedStaging
-        & sh -ec $wrapper sh $localInitProgram "provision.sh"
-        Assert-Equal 1 $LASTEXITCODE "init should reject a foreign-owned staging collision"
-        Assert-Equal "foreign" ([System.IO.File]::ReadAllText($encodedStaging)) "foreign-owned collision should remain untouched"
-        Assert-Equal "65534:65534 600" ((& stat -c '%u:%g %a' $encodedStaging).Trim()) "foreign-owned collision identity should remain untouched"
-        Remove-Item -LiteralPath $encodedStaging -Force
-        & $invokeLocalTransfer "provision.sh" $largeAsset
-
-        & sh -ec $wrapper sh "not-base64" "provision.sh"
-        Assert-Equal 1 $LASTEXITCODE "wrapper should reject a corrupted program payload"
-    }
-    finally {
-        if (Test-Path -LiteralPath $bootstrapPath) {
-            Remove-Item -LiteralPath $bootstrapPath -Recurse -Force
-        }
-    }
-
-    Set-FakeWslScenario -Root $testRoot
-    Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset
-    Invoke-WslBaseProvisioning -WslPath $fakeWslPath -Name "openhands-worker" -ProvisionPath $provisionAsset -ConfigPath $configAsset
-    Assert-Equal 4 ([regex]::Matches((Get-FakeWslCalls), '(?m)^--terminate openhands-worker$')).Count "reruns should stop only the target after each restart and verification"
 
     $formattedPath = Join-Path $testRoot "formatted.wslconfig"
     [System.IO.File]::WriteAllText($formattedPath, "[wsl2]`n  networkingMode = nat ; retain this`n`tdnsTunneling = false # retain this too`n", [System.Text.UTF8Encoding]::new($false))
@@ -929,7 +515,7 @@ try {
     Assert-NotMatch 'IsWindowsVersionAtLeast|File\]::Move\([^\r\n]+,\s*[^\r\n]+,\s*\$true\)|::new\(' $source "Windows PowerShell 5.1 compatibility"
     Assert-NotMatch '\$env:SystemRoot' $source "trusted Windows directory source"
     Assert-Match 'GetFolderPath\s*\(' $source "trusted Windows directory API"
-    Assert-NotMatch '--list --online|Invoke-WslBaseProvisioning\s+-WslPath' $source "installer should not use online discovery or dynamic provisioning"
+    Assert-NotMatch 'Test-WslDistributionAvailable|Test-WslNamedInstallSupported|Get-WslBootstrapAsset|Invoke-WslBootstrapAssetTransfer|Invoke-WslBaseProvisioning|--list --online' $source "installer should not retain online discovery or dynamic provisioning"
 
     Write-Host "PASS: WSL mirrored networking configuration"
 }
