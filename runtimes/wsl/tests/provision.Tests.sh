@@ -1059,13 +1059,13 @@ run_container '
   cmp -s /tmp/pinentry-unknown.expected /tmp/pinentry-unknown.actual
   test ! -s /tmp/pinentry.stderr
   rm "$credentials/rbw_master"
-  printf "%s\n" "OK rbw credential pinentry ready" "OK" "OK" "ERR 83886179 credential unavailable" > /tmp/pinentry-missing.expected
+  printf "%s\n" "OK rbw credential pinentry ready" "OK" "ERR 83886179 credential unavailable" > /tmp/pinentry-missing.expected
   printf "%s\n" "SETPROMPT Master Password" "GETPIN" |
     env -i PATH=/usr/bin:/bin CREDENTIALS_DIRECTORY="$credentials" "$pinentry" > /tmp/pinentry-missing.actual 2>/tmp/pinentry.stderr
   cmp -s /tmp/pinentry-missing.expected /tmp/pinentry-missing.actual
   test ! -s /tmp/pinentry.stderr
   : > "$credentials/rbw_master"
-  printf "%s\n" "OK rbw credential pinentry ready" "OK" "OK" "ERR 83886179 empty credential" > /tmp/pinentry-empty.expected
+  printf "%s\n" "OK rbw credential pinentry ready" "OK" "ERR 83886179 empty credential" > /tmp/pinentry-empty.expected
   printf "%s\n" "SETPROMPT Master Password" "GETPIN" |
     env -i PATH=/usr/bin:/bin CREDENTIALS_DIRECTORY="$credentials" "$pinentry" > /tmp/pinentry-empty.actual 2>/tmp/pinentry.stderr
   cmp -s /tmp/pinentry-empty.expected /tmp/pinentry-empty.actual
