@@ -29,6 +29,10 @@ fail() {
     exit 1
 }
 
+run_clean() {
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"
+}
+
 path_exists() {
     [ -e "$1" ] || [ -L "$1" ]
 }
@@ -167,7 +171,7 @@ assert_uv_version() {
     local context=$3
     local output prefix metadata
 
-    output=$("$binary" --version)
+    output=$(run_clean "$binary" --version)
     prefix="$name $UV_VERSION ("
     if [[ $output == *$'\n'* ]] || [[ $output != "$prefix"* ]] || [[ $output != *')' ]]; then
         fail "invalid $name $context"
@@ -236,18 +240,25 @@ download() {
     local url=$1
     local output=$2
 
-    /usr/bin/curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --output "$output" "$url"
+    run_clean /usr/bin/curl --disable --fail --location --proto '=https' --proto-redir '=https' \
+        --tlsv1.2 --tls-max 1.3 --cacert /etc/ssl/certs/ca-certificates.crt --retry 3 \
+        --output "$output" "$url"
 }
 
 assert_safe_archive() {
     local archive=$1
     local expected_root=$2
+    local members_file
     local member
     local members=0
 
-    /usr/bin/tar -tf "$archive" >/dev/null || fail "unreadable archive: $archive"
+    members_file=$(/usr/bin/mktemp "${archive}.members.XXXXXX") || fail 'unable to create archive member list'
+    register_cleanup "$members_file"
+    run_clean /usr/bin/tar --quoting-style=escape -tf "$archive" > "$members_file" ||
+        fail "unreadable archive: $archive"
     while IFS= read -r member; do
         members=$((members + 1))
+        [[ $member != *\\* ]] || fail "unsupported archive member: $member"
         case $member in
             "$expected_root"|"$expected_root/"|"$expected_root/"*) ;;
             *) fail "unsafe archive member: $member" ;;
@@ -255,61 +266,73 @@ assert_safe_archive() {
         case "/$member/" in
             *'/../'*) fail "unsafe archive member: $member" ;;
         esac
-    done < <(/usr/bin/tar -tf "$archive")
+    done < "$members_file"
     [ "$members" -gt 0 ] || fail "empty archive: $archive"
 }
 
 assert_safe_tree_links() {
     local root=$1
-    local link target resolved
+    local links_file link owner target resolved
 
+    links_file=$(/usr/bin/mktemp "$node_stage_root/tree-links.XXXXXX") || fail 'unable to create symlink list'
+    register_cleanup "$links_file"
+    run_clean /usr/bin/find "$root" -type l -print0 > "$links_file" || fail 'unable to list symlinks'
     while IFS= read -r -d '' link; do
-        [ "$(/usr/bin/stat -c '%u:%g' "$link")" = '0:0' ] || fail "invalid symlink owner: $link"
-        target=$(/usr/bin/readlink "$link")
+        owner=$(run_clean /usr/bin/stat -c '%u:%g' "$link") || fail "unable to inspect symlink: $link"
+        [ "$owner" = '0:0' ] || fail "invalid symlink owner: $link"
+        target=$(run_clean /usr/bin/readlink "$link") || fail "unable to read symlink: $link"
         case $target in
             /*) fail "unsafe symlink target: $link" ;;
         esac
         [[ $target != *$'\t'* && $target != *$'\n'* ]] || fail "unsafe symlink target: $link"
-        resolved=$(/usr/bin/readlink -m -- "$(/usr/bin/dirname "$link")/$target")
+        resolved=$(run_clean /usr/bin/readlink -m -- "$(/usr/bin/dirname "$link")/$target") ||
+            fail "unable to resolve symlink: $link"
         case $resolved in
             "$root/"*) ;;
             *) fail "unsafe symlink target: $link" ;;
         esac
         [ -e "$link" ] || fail "dangling symlink: $link"
-    done < <(/usr/bin/find "$root" -type l -print0)
+    done < "$links_file"
 }
 
 generate_node_manifest() {
     local root=$1
     local output=$2
+    local paths_file sorted_file path relative metadata mode uid gid hash_output hash target
 
-    (
-        cd "$root"
-        while IFS= read -r -d '' path; do
-            local relative mode uid gid hash target
+    paths_file=$(/usr/bin/mktemp "$node_stage_root/manifest-paths.XXXXXX") || fail 'unable to create manifest path list'
+    register_cleanup "$paths_file"
+    sorted_file=$(/usr/bin/mktemp "$node_stage_root/manifest-sorted.XXXXXX") || fail 'unable to create sorted manifest path list'
+    register_cleanup "$sorted_file"
+    run_clean /usr/bin/find "$root" -mindepth 1 ! -path "$root/$NODE_MANIFEST" -print0 > "$paths_file" ||
+        fail 'unable to list Node.js files'
+    run_clean /usr/bin/sort -z -- "$paths_file" > "$sorted_file" || fail 'unable to sort Node.js files'
+    : > "$output" || fail 'unable to create Node.js manifest'
 
-            relative=${path#./}
-            [[ $relative != *$'\t'* && $relative != *$'\n'* ]] || fail "unsupported Node.js path: $relative"
-            IFS=' ' read -r mode uid gid < <(/usr/bin/stat -c '%a %u %g' -- "$path")
-            [ "$uid:$gid" = '0:0' ] || fail "invalid Node.js ownership: $relative"
+    while IFS= read -r -d '' path; do
+        relative=${path#"$root/"}
+        [[ $relative != *$'\t'* && $relative != *$'\n'* ]] || fail "unsupported Node.js path: $relative"
+        metadata=$(run_clean /usr/bin/stat -c '%a %u %g' -- "$path") || fail "unable to inspect Node.js path: $relative"
+        IFS=' ' read -r mode uid gid <<< "$metadata"
+        [ "$uid:$gid" = '0:0' ] || fail "invalid Node.js ownership: $relative"
 
-            if [ -L "$path" ]; then
-                target=$(/usr/bin/readlink "$path")
-                [[ $target != *$'\t'* && $target != *$'\n'* ]] || fail "unsupported Node.js symlink: $relative"
-                printf 'L\t%s\t%s\t%s\n' "$mode" "$target" "$relative"
-            elif [ -d "$path" ]; then
-                (( (8#$mode & 0022) == 0 )) || fail "writable Node.js directory: $relative"
-                printf 'D\t%s\t%s\n' "$mode" "$relative"
-            elif [ -f "$path" ]; then
-                (( (8#$mode & 0022) == 0 )) || fail "writable Node.js file: $relative"
-                hash=$(/usr/bin/sha256sum -- "$path")
-                hash=${hash%% *}
-                printf 'F\t%s\t%s\t%s\n' "$mode" "$hash" "$relative"
-            else
-                fail "unsupported Node.js file type: $relative"
-            fi
-        done < <(/usr/bin/find . -mindepth 1 ! -path "./$NODE_MANIFEST" -print0 | LC_ALL=C /usr/bin/sort -z)
-    ) > "$output" || fail 'unable to generate Node.js manifest'
+        if [ -L "$path" ]; then
+            target=$(run_clean /usr/bin/readlink "$path") || fail "unable to read Node.js symlink: $relative"
+            [[ $target != *$'\t'* && $target != *$'\n'* ]] || fail "unsupported Node.js symlink: $relative"
+            printf 'L\t%s\t%s\t%s\n' "$mode" "$target" "$relative" >> "$output"
+        elif [ -d "$path" ]; then
+            (( (8#$mode & 0022) == 0 )) || fail "writable Node.js directory: $relative"
+            printf 'D\t%s\t%s\n' "$mode" "$relative" >> "$output"
+        elif [ -f "$path" ]; then
+            (( (8#$mode & 0022) == 0 )) || fail "writable Node.js file: $relative"
+            hash_output=$(run_clean /usr/bin/sha256sum -- "$path") || fail "unable to hash Node.js file: $relative"
+            hash=${hash_output:0:64}
+            [[ $hash =~ ^[0-9a-f]{64}$ ]] || fail "invalid Node.js hash: $relative"
+            printf 'F\t%s\t%s\t%s\n' "$mode" "$hash" "$relative" >> "$output"
+        else
+            fail "unsupported Node.js file type: $relative"
+        fi
+    done < "$sorted_file"
 }
 
 stage_node() {
@@ -321,11 +344,11 @@ stage_node() {
     download "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ARCHIVE}" "$archive"
     checksum=$(/usr/bin/awk -v archive="$NODE_ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' "$checksums") ||
         fail 'Node.js checksum is missing or ambiguous'
-    printf '%s\n' "$checksum" | (cd "$node_stage_root" && /usr/bin/sha256sum -c -) ||
+    printf '%s\n' "$checksum" | (cd "$node_stage_root" && run_clean /usr/bin/sha256sum -c -) ||
         fail 'Node.js checksum verification failed'
 
     assert_safe_archive "$archive" "$NODE_DIRECTORY"
-    /usr/bin/tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$node_stage_root"
+    run_clean /usr/bin/tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$node_stage_root"
     staged_node_home="$node_stage_root/$NODE_DIRECTORY"
     assert_exact_root_directory "$staged_node_home"
     assert_safe_tree_links "$staged_node_home"
@@ -340,10 +363,10 @@ stage_node() {
     generate_node_manifest "$staged_node_home" "$staged_node_manifest"
     /usr/bin/install -T -o root -g root -m 0644 "$staged_node_manifest" "$staged_node_home/$NODE_MANIFEST"
 
-    [ "$("$staged_node_home/bin/node" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js archive'
-    [ "$("$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npm-cli.js" --version)" = '11.19.0' ] ||
+    [ "$(run_clean "$staged_node_home/bin/node" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js archive'
+    [ "$(run_clean "$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npm-cli.js" --version)" = '11.19.0' ] ||
         fail 'invalid npm archive'
-    [ "$("$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npx-cli.js" --version)" = '11.19.0' ] ||
+    [ "$(run_clean "$staged_node_home/bin/node" "$staged_node_home/lib/node_modules/npm/bin/npx-cli.js" --version)" = '11.19.0' ] ||
         fail 'invalid npx archive'
 }
 
@@ -357,11 +380,11 @@ stage_uv() {
     checksum=$(/usr/bin/awk 'NF { print $1; count++ } END { if (count != 1) exit 1 }' "$checksum_file") ||
         fail 'uv checksum is missing or ambiguous'
     [[ $checksum =~ ^[0-9a-f]{64}$ ]] || fail 'uv checksum is invalid'
-    printf '%s  %s\n' "$checksum" "$UV_ARCHIVE" | (cd "$uv_stage_root" && /usr/bin/sha256sum -c -) ||
+    printf '%s  %s\n' "$checksum" "$UV_ARCHIVE" | (cd "$uv_stage_root" && run_clean /usr/bin/sha256sum -c -) ||
         fail 'uv checksum verification failed'
 
     assert_safe_archive "$archive" "$UV_DIRECTORY"
-    /usr/bin/tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$uv_stage_root"
+    run_clean /usr/bin/tar -xf "$archive" --no-same-owner --no-same-permissions --delay-directory-restore -C "$uv_stage_root"
     staged_uv_directory="$uv_stage_root/$UV_DIRECTORY"
     assert_exact_root_directory "$staged_uv_directory"
     assert_safe_tree_links "$staged_uv_directory"
@@ -509,9 +532,9 @@ verify_toolchain() {
     /usr/bin/cmp -s /usr/local/bin/uv "$staged_uv_directory/uv" || fail 'invalid uv installation'
     /usr/bin/cmp -s /usr/local/bin/uvx "$staged_uv_directory/uvx" || fail 'invalid uvx installation'
 
-    [ "$("$NODE_BINARY" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js installation'
-    [ "$("$NODE_BINARY" "$NPM_CLI" --version)" = '11.19.0' ] || fail 'invalid npm installation'
-    [ "$("$NODE_BINARY" "$NPX_CLI" --version)" = '11.19.0' ] || fail 'invalid npx installation'
+    [ "$(run_clean "$NODE_BINARY" --version)" = "v$NODE_VERSION" ] || fail 'invalid Node.js installation'
+    [ "$(run_clean "$NODE_BINARY" "$NPM_CLI" --version)" = '11.19.0' ] || fail 'invalid npm installation'
+    [ "$(run_clean "$NODE_BINARY" "$NPX_CLI" --version)" = '11.19.0' ] || fail 'invalid npx installation'
     assert_uv_version uv /usr/local/bin/uv installation
     assert_uv_version uvx /usr/local/bin/uvx installation
 }
@@ -545,8 +568,9 @@ if [ "$(/usr/bin/uname -m)" != 'x86_64' ]; then
     fail 'unsupported architecture: only x86_64 is supported'
 fi
 preflight_tool_paths
-DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
-DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils
+/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
+/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive \
+    /usr/bin/apt-get install -y --no-install-recommends ca-certificates curl xz-utils
 stage_toolchain
 validate_existing_tool_paths
 commit_toolchain

@@ -29,6 +29,7 @@ setup_fixture() {
 
   printf '%s\n' \
     '#!/bin/sh' \
+    'test -z "${NODE_OPTIONS+x}" || exit 65' \
     'case "${1:-}" in' \
     '  --version) printf "%s\n" v24.20.0 ;;' \
     '  */npm-cli.js|*/npx-cli.js) test "${2:-}" = --version && printf "%s\n" 11.19.0 ;;' \
@@ -48,11 +49,17 @@ setup_fixture() {
 
   printf '%s\n' \
     '#!/bin/sh' \
-    'printf "%s\n" "${FIXTURE_UV_VERSION_OUTPUT:-uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)}"' \
+    'test -z "${UV_TOOL_DIR+x}" || exit 65' \
+    'if test -e /tmp/fixture-uv-version-output; then cat /tmp/fixture-uv-version-output; else' \
+    '  printf "%s\n" "uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)"' \
+    'fi' \
     > "/tmp/fixture-src/$uv_directory/uv"
   printf '%s\n' \
     '#!/bin/sh' \
-    'printf "%s\n" "${FIXTURE_UVX_VERSION_OUTPUT:-uvx 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)}"' \
+    'test -z "${UV_TOOL_DIR+x}" || exit 65' \
+    'if test -e /tmp/fixture-uvx-version-output; then cat /tmp/fixture-uvx-version-output; else' \
+    '  printf "%s\n" "uvx 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)"' \
+    'fi' \
     > "/tmp/fixture-src/$uv_directory/uvx"
   chmod 0755 "/tmp/fixture-src/$uv_directory/uv" "/tmp/fixture-src/$uv_directory/uvx"
   tar -czf "/fixtures/$uv_archive" -C /tmp/fixture-src "$uv_directory"
@@ -80,26 +87,34 @@ setup_fixture() {
   printf '%s\n' \
     '#!/bin/sh' \
     'test "$PATH" = /usr/sbin:/usr/bin:/sbin:/bin || exit 73' \
-    'test "$#" -eq 10' \
-    'test "$1" = --fail' \
-    'test "$2" = --location' \
-    'test "$3" = --proto' \
-    'test "$4" = =https' \
-    'test "$5" = --tlsv1.2' \
-    'test "$6" = --retry' \
-    'test "$7" = 3' \
-    'test "$8" = --output' \
-    'output=$9' \
-    'url=${10}' \
+    'test -z "${HOME+x}${CURL_CA_BUNDLE+x}${SSL_CERT_FILE+x}${SSL_CERT_DIR+x}" || exit 73' \
+    'test "$#" -eq 17' \
+    'test "$1" = --disable' \
+    'test "$2" = --fail' \
+    'test "$3" = --location' \
+    'test "$4" = --proto' \
+    'test "$5" = =https' \
+    'test "$6" = --proto-redir' \
+    'test "$7" = =https' \
+    'test "$8" = --tlsv1.2' \
+    'test "$9" = --tls-max' \
+    'test "${10}" = 1.3' \
+    'test "${11}" = --cacert' \
+    'test "${12}" = /etc/ssl/certs/ca-certificates.crt' \
+    'test "${13}" = --retry' \
+    'test "${14}" = 3' \
+    'test "${15}" = --output' \
+    'output=${16}' \
+    'url=${17}' \
     'node_source=/fixtures/node-v24.20.0-linux-x64.tar.xz' \
-    'if test "${FIXTURE_RESERVED_MANIFEST:-}" = 1; then node_source=/fixtures/reserved-node-v24.20.0-linux-x64.tar.xz; fi' \
+    'if test -e /tmp/fixture-reserved-manifest; then node_source=/fixtures/reserved-node-v24.20.0-linux-x64.tar.xz; fi' \
     'case "$url" in' \
     '  https://nodejs.org/dist/v24.20.0/SHASUMS256.txt)' \
     '    hash=$(/usr/bin/sha256sum "$node_source"); hash=${hash%% *}' \
     '    printf "%s  %s\n" "$hash" node-v24.20.0-linux-x64.tar.xz > "$output" ;;' \
     '  https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.xz)' \
     '    /usr/bin/cp -- "$node_source" "$output"' \
-    '    if test "${FIXTURE_CORRUPT_NODE_DOWNLOAD:-}" = 1; then printf corrupt >> "$output"; fi ;;' \
+    '    if test -e /tmp/fixture-corrupt-node-download; then printf corrupt >> "$output"; fi ;;' \
     '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-x86_64-unknown-linux-gnu.tar.gz.sha256)' \
     '    hash=$(/usr/bin/sha256sum /fixtures/uv-x86_64-unknown-linux-gnu.tar.gz); hash=${hash%% *}' \
     '    printf "%s  %s\n" "$hash" uv-x86_64-unknown-linux-gnu.tar.gz > "$output" ;;' \
@@ -107,7 +122,41 @@ setup_fixture() {
     '    /usr/bin/cp -- /fixtures/uv-x86_64-unknown-linux-gnu.tar.gz "$output" ;;' \
     '  *) exit 72 ;;' \
     'esac' > /usr/bin/curl
-  chmod 0755 /usr/bin/apt-get /usr/bin/curl /usr/bin/mv /usr/bin/uname
+  for command in find sha256sum sort tar; do
+    cp "/usr/bin/$command" "/usr/bin/$command.fixture-real"
+  done
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'test -z "${TAR_OPTIONS+x}" || exit 73' \
+    'if test -e /tmp/fixture-fail-tar-list && test "${1:-}" = --quoting-style=escape; then' \
+    '  /usr/bin/tar.fixture-real "$@"' \
+    '  exit 74' \
+    'fi' \
+    'exec /usr/bin/tar.fixture-real "$@"' > /usr/bin/tar
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'if test -e /tmp/fixture-fail-find && test "${2:-}" = -type && test "${3:-}" = l; then' \
+    '  /usr/bin/find.fixture-real "$@"' \
+    '  exit 75' \
+    'fi' \
+    'exec /usr/bin/find.fixture-real "$@"' > /usr/bin/find
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'if test -e /tmp/fixture-fail-sort; then' \
+    '  /usr/bin/sort.fixture-real "$@"' \
+    '  exit 76' \
+    'fi' \
+    'exec /usr/bin/sort.fixture-real "$@"' > /usr/bin/sort
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'case "$*" in' \
+    '  *node-v24.20.0-linux-x64/*) if test -e /tmp/fixture-fail-sha256sum; then' \
+    '    /usr/bin/sha256sum.fixture-real "$@"' \
+    '    exit 77' \
+    '  fi ;;' \
+    'esac' \
+    'exec /usr/bin/sha256sum.fixture-real "$@"' > /usr/bin/sha256sum
+  chmod 0755 /usr/bin/apt-get /usr/bin/curl /usr/bin/find /usr/bin/mv /usr/bin/sha256sum /usr/bin/sort /usr/bin/tar /usr/bin/uname
 }
 
 run_container() {
@@ -131,7 +180,13 @@ run_container '
   mkdir /tmp/inherited-path
   printf "%s\n" "#!/bin/sh" "touch /tmp/inherited-path-used" "exec /usr/bin/id \"\$@\"" > /tmp/inherited-path/id
   chmod 0755 /tmp/inherited-path/id
-  PATH=/tmp/inherited-path:/usr/sbin:/usr/bin:/sbin:/bin /bin/bash /src/runtimes/wsl/provision.sh
+  mkdir /tmp/poison-home
+  printf "%s\n" "--proxy http://127.0.0.1:1" > /tmp/poison-home/.curlrc
+  printf poison > /tmp/poison-ca
+  HOME=/tmp/poison-home CURL_CA_BUNDLE=/tmp/poison-ca SSL_CERT_FILE=/tmp/poison-ca \
+    SSL_CERT_DIR=/tmp NODE_OPTIONS=--require=/tmp/poison.js TAR_OPTIONS=--version \
+    UV_TOOL_DIR=/tmp/poison PATH=/tmp/inherited-path:/usr/sbin:/usr/bin:/sbin:/bin \
+    /bin/bash /src/runtimes/wsl/provision.sh
   test ! -e /tmp/inherited-path-used
   /bin/bash /src/runtimes/wsl/provision.sh
   printf "%s\n" update "install -y --no-install-recommends ca-certificates curl xz-utils" update "install -y --no-install-recommends ca-certificates curl xz-utils" > /tmp/apt-calls.expected
@@ -294,7 +349,8 @@ run_container '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
-  FIXTURE_CORRUPT_NODE_DOWNLOAD=1 bash /src/runtimes/wsl/provision.sh && exit 1
+  touch /tmp/fixture-corrupt-node-download
+  bash /src/runtimes/wsl/provision.sh && exit 1
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
   test ! -e /opt/openhands/node-v24.20.0-linux-x64
   test ! -e /usr/local/bin/uv
@@ -302,7 +358,8 @@ run_container '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
-  if FIXTURE_RESERVED_MANIFEST=1 bash /src/runtimes/wsl/provision.sh; then
+  touch /tmp/fixture-reserved-manifest
+  if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
   cmp -s /etc/wsl.conf /src/runtimes/wsl/wsl.conf
@@ -334,7 +391,8 @@ EOF
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
   while IFS= read -r output; do
-    if FIXTURE_UV_VERSION_OUTPUT="$output" /bin/bash /src/runtimes/wsl/provision.sh; then
+    printf "%s\n" "$output" > /tmp/fixture-uv-version-output
+    if /bin/bash /src/runtimes/wsl/provision.sh; then
       exit 1
     fi
     test ! -e /opt/openhands/node-v24.20.0-linux-x64
@@ -347,12 +405,36 @@ uv 0.12.7 a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu
 uv 0.12.7+1 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)
 uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu
 EOF
-  if FIXTURE_UVX_VERSION_OUTPUT="uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)" \
-    /bin/bash /src/runtimes/wsl/provision.sh; then
+  rm /tmp/fixture-uv-version-output
+  printf "%s\n" "uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)" > /tmp/fixture-uvx-version-output
+  if /bin/bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
   test ! -e /opt/openhands/node-v24.20.0-linux-x64
   test ! -e /usr/local/bin/uvx
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  failures=0
+  for producer in tar-list find sort sha256sum; do
+    rm -rf /opt/openhands
+    rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/uv /usr/local/bin/uvx
+    rm -f /tmp/fixture-fail-*
+    touch "/tmp/fixture-fail-$producer"
+    if bash /src/runtimes/wsl/provision.sh; then
+      printf "producer failure was ignored: %s\n" "$producer" >&2
+      failures=$((failures + 1))
+    fi
+    if test -e /opt/openhands/node-v24.20.0-linux-x64 || test -e /usr/local/bin/node ||
+      test -e /usr/local/bin/npm || test -e /usr/local/bin/npx || test -e /usr/local/bin/uv ||
+      test -e /usr/local/bin/uvx || compgen -G "/opt/openhands/.node-stage.*" >/dev/null ||
+      compgen -G "/usr/local/bin/.uv-stage.*" >/dev/null; then
+      printf "producer failure left committed or staged files: %s\n" "$producer" >&2
+      failures=$((failures + 1))
+    fi
+  done
+  test "$failures" -eq 0
 '
 
 run_container '
