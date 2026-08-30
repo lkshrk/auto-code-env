@@ -345,13 +345,15 @@ assert_root_nonwritable_file() {
 }
 
 assert_rbw_package() {
-    local status owner
+    local status owner verification
 
     status=$(run_clean /usr/bin/dpkg-query -W -f="\${db:Status-Abbrev} \${Version}\\n" rbw) ||
         fail 'unable to query rbw package'
     [ "$status" = "ii  $RBW_PACKAGE_VERSION" ] || fail 'invalid rbw package'
     owner=$(run_clean /usr/bin/dpkg-query -S "$RBW_BINARY") || fail 'unable to query rbw binary owner'
     [ "$owner" = "rbw: $RBW_BINARY" ] || fail 'invalid rbw binary owner'
+    verification=$(run_clean /usr/bin/dpkg --verify rbw) || fail 'unable to verify rbw package'
+    [ -z "$verification" ] || fail 'invalid rbw package files'
 }
 
 write_rbw_pinentry() {
@@ -421,6 +423,11 @@ PYTHON
         /usr/bin/cmp -s "$RBW_PINENTRY" "$temp" || fail 'foreign rbw pinentry'
     else
         /usr/bin/mv -T -n -- "$temp" "$RBW_PINENTRY"
+        if path_exists "$temp"; then
+            assert_root_file "$RBW_PINENTRY" 755
+            /usr/bin/cmp -s "$RBW_PINENTRY" "$temp" || fail 'foreign rbw pinentry'
+            /usr/bin/rm -f -- "$temp"
+        fi
     fi
     assert_root_file "$RBW_PINENTRY" 755
 }

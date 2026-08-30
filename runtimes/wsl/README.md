@@ -205,8 +205,9 @@ This stage still installs no services, nginx configuration, firewall rules, or
 secrets.
 
 Stage 6A installs Ubuntu's exact `rbw=1.13.2-7` package. Before running its
-binary, the provisioner verifies the installed package status/version, the
-package ownership of `/usr/bin/rbw`, and its root-owned executable mode. It
+binary, the provisioner verifies the installed package status/version, a clean
+`dpkg --verify rbw` result, the package ownership of `/usr/bin/rbw`, and its
+root-owned executable mode. It
 also atomically installs the root-owned `/usr/local/libexec/openhands-rbw-pinentry`.
 That Python-stdlib Assuan helper serves credential bytes from
 `$CREDENTIALS_DIRECTORY/rbw_master` only for the exact `Master Password` prompt,

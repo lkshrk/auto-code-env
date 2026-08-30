@@ -130,6 +130,11 @@ setup_fixture() {
     '  printf "%s\n" "$last" >> /tmp/rename-failures' \
     '  exit 70' \
     'fi' \
+    'if test -n "${FIXTURE_RACE_DEST:-}" && test "$last" = "$FIXTURE_RACE_DEST"; then' \
+    '  printf foreign > "$last"' \
+    '  chmod 0755 "$last"' \
+    '  exit 0' \
+    'fi' \
     'exec /usr/bin/mv.fixture-real "$@"' > /usr/bin/mv
   printf '%s\n' \
     '#!/bin/sh' \
@@ -154,6 +159,12 @@ setup_fixture() {
     '  -S) test "${2:-}" = /usr/bin/rbw || exit 1; printf "rbw: /usr/bin/rbw\\n" ;;' \
     '  *) exit 1 ;;' \
     'esac' > /usr/bin/dpkg-query
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'test "${1:-}" = --verify && test "${2:-}" = rbw || exit 1' \
+    'test ! -e /tmp/fixture-dpkg-verify-nonzero || exit 1' \
+    'test ! -e /tmp/fixture-dpkg-verify-fail || printf "??5?????? /usr/bin/rbw\\n"' \
+    > /usr/bin/dpkg
   printf '%s\n' '#!/bin/sh' 'printf "%s\n" "${FIXTURE_UNAME:-x86_64}"' > /usr/bin/uname
   printf '%s\n' \
     '#!/bin/sh' \
@@ -234,7 +245,7 @@ setup_fixture() {
     '#!/bin/sh' \
     'case "$*" in *node-v24.20.0-linux-x64*) printf "%s\n" stat >> /tmp/node-digest-processes ;; esac' \
     'exec /usr/bin/stat.fixture-real "$@"' > /usr/bin/stat
-  chmod 0755 /usr/bin/apt-get /usr/bin/curl /usr/bin/dpkg-query /usr/bin/find /usr/bin/mv /usr/bin/sha256sum /usr/bin/stat /usr/bin/tar /usr/bin/uname
+  chmod 0755 /usr/bin/apt-get /usr/bin/curl /usr/bin/dpkg /usr/bin/dpkg-query /usr/bin/find /usr/bin/mv /usr/bin/sha256sum /usr/bin/stat /usr/bin/tar /usr/bin/uname
 }
 
 run_container() {
@@ -1044,13 +1055,30 @@ run_container '
 
 run_container '
   export WSL_DISTRO_NAME=openhands-worker
-  touch /tmp/fixture-counterfeit-rbw
+  touch /tmp/fixture-dpkg-verify-fail
   printf "#!/bin/sh\ntouch /tmp/rbw-executed\n" > /usr/bin/rbw
   chmod 0755 /usr/bin/rbw
   if bash /src/runtimes/wsl/provision.sh; then
     exit 1
   fi
   test ! -e /tmp/rbw-executed
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  touch /tmp/fixture-dpkg-verify-nonzero
+  if bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  if FIXTURE_RACE_DEST=/usr/local/libexec/openhands-rbw-pinentry bash /src/runtimes/wsl/provision.sh; then
+    exit 1
+  fi
+  test "$(cat /usr/local/libexec/openhands-rbw-pinentry)" = foreign
+  ! compgen -G "/usr/local/libexec/.openhands-rbw-pinentry.*" >/dev/null
 '
 
 if [ "${RUN_WSL_REAL_TOOLCHAIN_TESTS:-0}" = 1 ]; then
