@@ -86,6 +86,30 @@ jobs:
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Fetch upstream release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/upstream-release.json"
+          notes="$RUNNER_TEMP/release-notes.md"
+          title=""
+          if gh api "repos/OpenHands/OpenHands/releases/tags/v$VERSION" > "$release_json"; then
+            title=$(jq -r '.name // empty' "$release_json" | tr -d '\r' | head -n 1)
+            jq -r '.body // empty' "$release_json" > "$notes"
+          else
+            echo "::warning::No upstream release found for v$VERSION; using fallback notes"
+            : > "$notes"
+          fi
+          [ -n "$title" ] || title="v$VERSION"
+          [ -s "$notes" ] || echo "Upstream release: https://github.com/OpenHands/OpenHands/releases/tag/v$VERSION" > "$notes"
+          {
+            echo "title=$title"
+            echo "file=$notes"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Authenticate to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -125,19 +149,22 @@ jobs:
               ;;
           esac
 
-      - name: Publish chart and tag
+      - name: Publish chart and release
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE: ${{ steps.package.outputs.package }}
           RELEASE_TAG: ${{ steps.package.outputs.release_tag }}
+          TITLE: ${{ steps.notes.outputs.title }}
+          NOTES_FILE: ${{ steps.notes.outputs.file }}
         run: |
           set -euo pipefail
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git tag -a "$RELEASE_TAG" -m "$RELEASE_TAG"
-          git push origin "$RELEASE_TAG"
-          rollback_tag() {
-            git push --delete origin "$RELEASE_TAG" || true
+          gh release create "$RELEASE_TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$TITLE" \
+            --notes-file "$NOTES_FILE"
+          rollback_release() {
+            gh release delete "$RELEASE_TAG" --yes --cleanup-tag || true
           }
-          trap rollback_tag ERR
+          trap rollback_release ERR
           helm push "$PACKAGE" oci://ghcr.io/lkshrk/charts
           trap - ERR
