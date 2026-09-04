@@ -138,6 +138,12 @@ distribution. The WSL target therefore adds
 `ConditionVirtualization=!wsl` to `systemd-modules-load.service`: module loading
 is skipped only when systemd detects WSL and remains enabled elsewhere.
 
+WSL init creates each login through `/bin/login -f` and then waits for
+`user@<uid>.service`; without `pam_systemd` and a D-Bus system bus that unit
+never starts and every command prints `Failed to start the systemd user
+session`. The WSL target therefore installs `libpam-systemd` and
+`dbus-user-session`. Neither adds a network listener.
+
 ## Docker and Kubernetes use
 
 Use OCI tag matching host architecture; Docker/Kubernetes select matching
