@@ -1,0 +1,17 @@
+**
+!.dockerignore
+!runtimes/
+!runtimes/wsl/
+!runtimes/wsl/Containerfile
+!runtimes/wsl/provision.sh
+!runtimes/wsl/wsl.conf
+!runtimes/wsl/wsl-distribution.conf
+!runtimes/wsl/omni/
+!runtimes/wsl/omni/settings.json
+!runtimes/wsl/runtime/
+!runtimes/wsl/runtime/agent-canvas.service
+!runtimes/wsl/runtime/container-entrypoint.sh
+!runtimes/wsl/runtime/nginx-site.conf
+!runtimes/wsl/runtime/patch-agent-canvas-automation.mjs
+!runtimes/wsl/tests/
+!runtimes/wsl/tests/agent-canvas-ingress-smoke.mjs

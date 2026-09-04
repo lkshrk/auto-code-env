@@ -8,16 +8,17 @@ build_script="$repo_root/runtimes/wsl/build-wsl.sh"
 validation_workflow="$repo_root/.github/workflows/validate-openhands-worker.yaml"
 release_workflow="$repo_root/.github/workflows/release-openhands-worker.yaml"
 readme="$repo_root/runtimes/wsl/README.md"
+dockerignore="$repo_root/.dockerignore"
 
 for file in "$bake_file" "$build_script"; do
   test -f "$file"
 done
 
-for file in "$validation_workflow" "$release_workflow" "$readme"; do
+for file in "$validation_workflow" "$release_workflow" "$readme" "$dockerignore"; do
   test -f "$file"
 done
 
-ruby -ryaml -rjson -ropen3 -rtmpdir - "$validation_workflow" "$release_workflow" "$readme" <<'RUBY'
+ruby -ryaml -rjson -ropen3 -rtmpdir - "$validation_workflow" "$release_workflow" "$readme" "$dockerignore" <<'RUBY'
 def assert(condition, message)
   abort(message) unless condition
 end
@@ -40,6 +41,27 @@ end
 
 validation, release = ARGV.first(2).map { |path| workflow(path) }
 readme = File.read(ARGV.fetch(2))
+dockerignore = File.readlines(ARGV.fetch(3), chomp: true)
+
+assert(dockerignore == [
+  '**',
+  '!.dockerignore',
+  '!runtimes/',
+  '!runtimes/wsl/',
+  '!runtimes/wsl/Containerfile',
+  '!runtimes/wsl/provision.sh',
+  '!runtimes/wsl/wsl.conf',
+  '!runtimes/wsl/wsl-distribution.conf',
+  '!runtimes/wsl/omni/',
+  '!runtimes/wsl/omni/settings.json',
+  '!runtimes/wsl/runtime/',
+  '!runtimes/wsl/runtime/agent-canvas.service',
+  '!runtimes/wsl/runtime/container-entrypoint.sh',
+  '!runtimes/wsl/runtime/nginx-site.conf',
+  '!runtimes/wsl/runtime/patch-agent-canvas-automation.mjs',
+  '!runtimes/wsl/tests/',
+  '!runtimes/wsl/tests/agent-canvas-ingress-smoke.mjs'
+], 'Docker context must contain only worker build inputs')
 
 [
   'multi-architecture OCI image',
