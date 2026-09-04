@@ -73,7 +73,7 @@ jobs:
           output="$RUNNER_TEMP/release"
           runtimes/wsl/build-wsl.sh "$VERSION" '${{ matrix.arch }}' "$output"
           artifact="$output/openhands-worker-${VERSION}-${{ matrix.arch }}.wsl"
-          tar -tf "$artifact" | grep -Eq '^\.?/?etc/wsl\.conf$'
+          tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
           {
             echo "version=$VERSION"
             echo "artifact=$artifact"
