@@ -144,7 +144,7 @@ jobs:
           (cd release && sha256sum -c checksums.txt)
           release_json="$RUNNER_TEMP/release.json"
           release_error="$RUNNER_TEMP/release-error.log"
-          if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json" 2> "$release_error"; then
+          if ! gh release view "$tag" --json isDraft,tagName,assets > "$release_json" 2> "$release_error"; then
             if ! grep -Eqi 'HTTP 404|not found' "$release_error"; then
               cat "$release_error" >&2
               exit 1
@@ -154,10 +154,10 @@ jobs:
               --draft \
               --title "OpenHands worker $VERSION" \
               --generate-notes
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json"
+            gh release view "$tag" --json isDraft,tagName,assets > "$release_json"
           fi
-          test "$(jq -r '.tag_name' "$release_json")" = "$tag"
-          release_draft=$(jq -r '.draft' "$release_json")
+          test "$(jq -r '.tagName' "$release_json")" = "$tag"
+          release_draft=$(jq -r '.isDraft' "$release_json")
           case "$release_draft" in
             true)
               gh release upload "$tag" --clobber \
