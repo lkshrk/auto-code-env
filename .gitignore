@@ -1,4 +1,4 @@
-# .gitignore for hermes-hq
+# .gitignore for auto-code-env
 # Never commit secrets. This repo stores only secret references.
 
 *.env
@@ -8,10 +8,11 @@
 *.key
 secrets/
 .DS_Store
+.agent-progress.md
+__pycache__/
+*.py[cod]
 
-# Terraform local state/provider cache - never commit; hermes-hq's Coder
-# templates are stateless push targets (coder templates push), not
-# terraform-managed infrastructure with a persisted backend.
+# Terraform local state/provider cache - never commit.
 **/.terraform/
 *.tfstate
 *.tfstate.*

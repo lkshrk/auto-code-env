@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # Literal workflow source patterns must not expand here.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -13,7 +14,7 @@ grep -F 'shellcheck .github/scripts/release-openhands-chart.sh .github/scripts/r
 test "$(grep -Fc 'git -C "$upstream" show -s --format=%ct HEAD' "$workflow")" = 1
 test "$(grep -Fc 'find "$build/openhands-agent-canvas" -exec touch -h -d "@$epoch" {} +' "$workflow")" = 1
 test "$(grep -Fc 'git -C "$upstream" show -s --format=%ct HEAD' "$validation")" = 1
-test "$(grep -Fc 'find "$build/openhands-agent-canvas" -exec touch -h -d "@$epoch" {} +' "$validation")" = 1
+test "$(grep -Fc 'find "$build/openhands-agent-canvas" -exec touch -h -d "@$epoch" {} +' "$validation")" = 2
 
 test_root=$(mktemp -d)
 trap 'rm -rf -- "$test_root"' EXIT
