@@ -14,3 +14,7 @@ installation, security, release, and verification details.
 ## Skills
 
 `skills/` holds OpenHands skills installed into the Agent Canvas from this repository, for example `skills/agent-sandbox-deploy` for deploying into the h-cloud `agent-sandbox` namespace.
+
+## Automations
+
+`automations/` holds OpenHands automation definitions applied to the Agent Canvas, for example [`automations/pr-review`](automations/pr-review) for central pull request review.

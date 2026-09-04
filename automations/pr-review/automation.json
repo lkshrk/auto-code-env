@@ -1,0 +1,19 @@
+{
+  "name": "pr-review",
+  "model": "litellm-gpt-5.6-sol",
+  "timeout": 900,
+  "keep_alive": false,
+  "enabled": true,
+  "trigger": {
+    "type": "event",
+    "source": "github",
+    "on": [
+      "pull_request.opened",
+      "pull_request.synchronize",
+      "pull_request.ready_for_review",
+      "pull_request.reopened",
+      "issue_comment.created"
+    ],
+    "filter": "(pull_request && !(pull_request.draft) && sender.type != 'Bot' && pull_request.labels[?name=='openhands-review']) || (comment && issue.pull_request && sender.type != 'Bot' && icontains(comment.body, '@openhands review') && issue.labels[?name=='openhands-review'])"
+  }
+}
