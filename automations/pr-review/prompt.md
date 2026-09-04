@@ -12,16 +12,19 @@ The GitHub MCP server is available too; any of the three is fine.
 
 ## 1. Read the event
 
-`AUTOMATION_EVENT_PAYLOAD` holds a JSON object. The raw GitHub webhook body is under
-its `event` key. The same payload is also pasted into this conversation. Never guess
-values, read them from the payload.
+`AUTOMATION_EVENT_PAYLOAD` holds a JSON object; the delivery is under its `event` key.
+That object is OpenHands' parsed event, not the raw GitHub webhook: it is trimmed to a
+few fields and carries `event_key`. Never guess values, read them from the payload, and
+fetch anything the payload lacks from the GitHub API.
 
-The webhook body carries no event-type header, so infer it:
-
-| Shape | Event | Act on |
+| `event_key` | Fields present | Act on |
 |---|---|---|
-| top-level `pull_request` object | `pull_request` | `action` in `opened`, `synchronize`, `ready_for_review`, `reopened` |
-| top-level `comment` and `issue` | `issue_comment` | `action` is `created`, `issue.pull_request` present, body contains `@openhands review` (case-insensitive) |
+| `pull_request.opened`, `.synchronize`, `.ready_for_review`, `.reopened` | `repository.full_name`, `sender.{login,type}`, `pull_request.{number,title,state,draft,merged,base,head,labels[].name,user.login}` | always, subject to section 2 |
+| `issue_comment.created` | `repository.full_name`, `sender.{login,type}`, `issue.{number,title,state,labels[].name,user.login}`, `comment.{id,body,user.login}` | only when `comment.body` contains `@openhands review` (case-insensitive) |
+
+The parsed comment event does not say whether the issue is a pull request. Resolve it:
+`GET /repos/{repo}/pulls/{issue.number}`. A 200 means it is a PR and gives you the PR
+object; a 404 means a plain issue, log one line and exit 0.
 
 Anything else: log one line saying what you saw and exit 0 without posting.
 
@@ -29,16 +32,15 @@ Extract:
 
 - `repo` — `repository.full_name`
 - `pr` — `pull_request.number` or `issue.number`
-- `base` — base branch name
-- `head_sha` — for `pull_request` events, `pull_request.head.sha`; for comments, fetch
-  the PR (`GET /repos/{repo}/pulls/{pr}`) and take `head.sha`. Always resolve the head
-  SHA from the API on a comment trigger; the comment payload does not carry it.
+- `head_sha`, `base`, `draft`, `state`, `merged`, `labels`, `author` — from
+  `GET /repos/{repo}/pulls/{pr}` in every case. The payload's `pull_request.head` may
+  carry a `sha`; the API is authoritative and required on comment triggers.
 
 ## 2. Skip rules
 
 Exit 0 without posting when any of these hold. Log which rule fired.
 
-- The PR is a draft, unless the trigger is a `@openhands review` comment.
+- The PR is a draft (`draft` from the API), unless the trigger is a `@openhands review` comment.
 - The PR carries the label `no-ai-review`.
 - The PR is closed or already merged.
 - The PR author login ends with `[bot]`, unless the trigger is a `@openhands review`
