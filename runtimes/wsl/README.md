@@ -67,8 +67,8 @@ runtimes/wsl/build-wsl.sh 1.2.3 amd64 dist
 
 Only `openhands-worker-v*` tags release artifacts. Native GitHub runners build
 amd64 and arm64 separately; no QEMU emulation is accepted. The release has the
-two `.wsl` files, the matching `install.ps1`, and a combined `checksums.txt`
-covering all three, and GHCR has immutable
+two `.wsl` files, the matching `install.ps1` and `firewall.ps1`, and a combined
+`checksums.txt` covering all four, and GHCR has immutable
 `ghcr.io/lkshrk/openhands-worker:<version>` manifest with both architectures,
 SBOM, and provenance.
 
@@ -117,7 +117,42 @@ choose explicit replacement/import plan, and test it first; rollback means
 importing previously verified artifact under explicit safe name. No automatic
 WSL state migration exists.
 
-After import, host-specific overlay remains operator-owned and out of image:
+After import, the host overlay is driven by two shipped tools. Values are
+host-specific; the tools are not.
+
+Firewall, elevated PowerShell. Take `firewall.ps1` from the same release,
+`https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/firewall.ps1`,
+verify it against `checksums.txt`, then pass the exact trusted sources.
+`-RemoteAddresses` is mandatory and accepts only IPv4 hosts or ranges of /24
+or narrower; `Any` is refused. The script sets the WSL Hyper-V default inbound
+action to block and allows TCP/443 from those sources only, so port 8000 and
+everything else stay unreachable:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\firewall.ps1 -RemoteAddresses 10.0.0.10,10.0.0.11
+```
+
+Secrets, inside the distribution as root. `openhands-overlay secrets` reads the
+Vaultwarden master password once with `systemd-ask-password`, keeps it only in
+a root-owned tmpfs file for the duration of one transient `systemd-run` unit
+that exposes it to the image's `rbw` pinentry as a credential, fetches the
+three items by immutable UUID, and writes them with the required ownership and
+modes. It then locks `rbw`, stops its agent, and purges the local vault copy.
+Vault items: certificate PEM and private-key PEM in the item notes, API key as
+the item password.
+
+```powershell
+wsl.exe -d openhands-worker -u root -- openhands-overlay secrets --vault-url https://vault.example --email worker@example --crt-id <uuid> --key-id <uuid> --api-id <uuid>
+wsl.exe -d openhands-worker -u root -- openhands-overlay enable
+```
+
+`openhands-overlay verify` checks files, ownership, modes, that the private
+key matches the certificate, and `nginx -t`. `openhands-overlay enable`
+refuses to start anything until `verify` passes, then enables nginx and
+`agent-canvas.service` and prints the listening sockets. Expected: nginx on
+`:443`, backend on `127.0.0.1:8000` only.
+
+Operator-owned facts the tools enforce:
 
 - Windows/Hyper-V firewall: only TCP/443, only explicitly trusted VLAN/source
   ranges. Existing target is `172.16.20.195` on VLAN10; do not create broad
