@@ -8,6 +8,7 @@ unit="$repo_root/runtimes/wsl/runtime/agent-canvas.service"
 modules_dropin="$repo_root/runtimes/wsl/runtime/systemd-modules-load-wsl.conf"
 overlay="$repo_root/runtimes/wsl/runtime/openhands-overlay.sh"
 firewall="$repo_root/runtimes/wsl/firewall.ps1"
+keepalive="$repo_root/runtimes/wsl/keepalive.ps1"
 nginx_site="$repo_root/runtimes/wsl/runtime/nginx-site.conf"
 distro_config="$repo_root/runtimes/wsl/wsl-distribution.conf"
 containerfile="$repo_root/runtimes/wsl/Containerfile"
@@ -15,7 +16,7 @@ canvas_patch="$repo_root/runtimes/wsl/runtime/patch-agent-canvas-automation.mjs"
 ingress_smoke="$repo_root/runtimes/wsl/tests/agent-canvas-ingress-smoke.mjs"
 omni_settings="$repo_root/runtimes/wsl/omni/settings.json"
 
-for file in "$entrypoint" "$unit" "$modules_dropin" "$overlay" "$firewall" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$ingress_smoke" "$omni_settings"; do
+for file in "$entrypoint" "$unit" "$modules_dropin" "$overlay" "$firewall" "$keepalive" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$ingress_smoke" "$omni_settings"; do
   test -f "$file"
 done
 test "$(cat "$modules_dropin")" = $'[Unit]\nConditionVirtualization=!wsl'
@@ -69,7 +70,9 @@ wsl_stage=$(sed -n '/^FROM provisioned AS wsl$/,$p' "$containerfile")
 pre_wsl=$(sed '/^FROM provisioned AS wsl$/,$d' "$containerfile")
 grep -F "$modules_copy" <<< "$wsl_stage"
 if grep -F "$modules_copy" <<< "$pre_wsl"; then exit 1; fi
-grep -F 'install -y --no-install-recommends systemd systemd-sysv libpam-systemd dbus-user-session' <<< "$wsl_stage"
+grep -F 'install -y --no-install-recommends systemd systemd-sysv libpam-systemd dbus-user-session locales' <<< "$wsl_stage"
+grep -F 'locale-gen en_US.UTF-8 C.UTF-8' <<< "$wsl_stage"
+if grep -F 'locale-gen' <<< "$pre_wsl"; then exit 1; fi
 overlay_copy='openhands-overlay.sh /usr/local/sbin/openhands-overlay'
 grep -F "$overlay_copy" <<< "$wsl_stage"
 if grep -F "$overlay_copy" <<< "$pre_wsl"; then exit 1; fi
@@ -78,6 +81,8 @@ grep -Fx 'MASTER_PASSWORD_FILE=/run/openhands-rbw-master' "$overlay"
 grep -F 'rbw config set pinentry "$PINENTRY"' "$overlay"
 grep -F 'systemctl enable --now nginx.service agent-canvas.service' "$overlay"
 if grep -E 'RemoteAddress(es)? (Any|\*)' "$firewall"; then exit 1; fi
+if grep -F 'Set-NetFirewallHyperVRule' "$firewall"; then exit 1; fi
+grep -F -- '--exec /bin/sleep infinity' "$keepalive"
 grep -F 'test -x /sbin/init' "$containerfile"
 grep -F 'test -x /usr/bin/systemctl' "$containerfile"
 grep -F 'test ! -e /etc/systemd/system/multi-user.target.wants/nginx.service' "$containerfile"

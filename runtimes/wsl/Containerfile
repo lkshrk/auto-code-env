@@ -60,7 +60,8 @@ COPY --chown=root:root runtimes/wsl/runtime/nginx-site.conf /etc/nginx/conf.d/op
 COPY --chown=root:root runtimes/wsl/runtime/openhands-overlay.sh /usr/local/sbin/openhands-overlay
 RUN /usr/bin/chmod 0755 /usr/local/sbin/openhands-overlay && \
     /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update && \
-    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends systemd systemd-sysv libpam-systemd dbus-user-session && \
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends systemd systemd-sysv libpam-systemd dbus-user-session locales && \
+    /usr/sbin/locale-gen en_US.UTF-8 C.UTF-8 && /usr/sbin/update-locale LANG=en_US.UTF-8 && \
     /usr/bin/rm -f /etc/systemd/system/multi-user.target.wants/nginx.service && \
     test -x /sbin/init && test -x /usr/bin/systemctl && \
     test ! -e /etc/systemd/system/multi-user.target.wants/nginx.service && \

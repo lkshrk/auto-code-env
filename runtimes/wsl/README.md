@@ -67,8 +67,9 @@ runtimes/wsl/build-wsl.sh 1.2.3 amd64 dist
 
 Only `openhands-worker-v*` tags release artifacts. Native GitHub runners build
 amd64 and arm64 separately; no QEMU emulation is accepted. The release has the
-two `.wsl` files, the matching `install.ps1` and `firewall.ps1`, and a combined
-`checksums.txt` covering all four, and GHCR has immutable
+two `.wsl` files, the matching `install.ps1`, `firewall.ps1`, and
+`keepalive.ps1`, and a combined `checksums.txt` covering all five, and GHCR has
+immutable
 `ghcr.io/lkshrk/openhands-worker:<version>` manifest with both architectures,
 SBOM, and provenance.
 
@@ -126,10 +127,25 @@ verify it against `checksums.txt`, then pass the exact trusted sources.
 `-RemoteAddresses` is mandatory and accepts only IPv4 hosts or ranges of /24
 or narrower; `Any` is refused. The script sets the WSL Hyper-V default inbound
 action to block and allows TCP/443 from those sources only, so port 8000 and
-everything else stay unreachable:
+everything else stay unreachable. An existing Hyper-V rule that already
+matches is left alone; a differing one is removed and recreated, because
+`Set-NetFirewallHyperVRule` is denied on current Windows builds:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\firewall.ps1 -RemoteAddresses 10.0.0.10,10.0.0.11
+```
+
+Keepalive, elevated PowerShell. WSL idle-stops a distribution about ten seconds
+after the last `wsl.exe` session ends, taking nginx and the backend with it.
+`keepalive.ps1` from the same release,
+`https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/keepalive.ps1`,
+registers a hidden scheduled task for the current user that runs
+`wsl.exe -d openhands-worker --user root --exec /bin/sleep infinity` at logon
+with no execution time limit and starts it immediately. The host must log the
+operator on (or auto-logon) for the worker to come back after a reboot.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\keepalive.ps1
 ```
 
 Secrets, inside the distribution as root. `openhands-overlay secrets` reads the

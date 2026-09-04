@@ -36,6 +36,10 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
             pwsh -NoProfile -File runtimes/wsl/tests/firewall.Tests.ps1
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File runtimes/wsl/tests/keepalive.Tests.ps1
           find runtimes/wsl -type f -name '*.sh' -print0 | xargs -0 shellcheck
 
   validate:
