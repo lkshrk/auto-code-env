@@ -812,8 +812,9 @@ assert_safe_omni_archive() {
     for member in "${members[@]}"; do
         case $member in LICENSE|README.md|omni) ;; *) fail "unsafe Omni archive member: $member" ;; esac
     done
-    [ "${members[0]}" = LICENSE ] && [ "${members[1]}" = README.md ] && [ "${members[2]}" = omni ] ||
+    if [ "${members[0]}" != LICENSE ] || [ "${members[1]}" != README.md ] || [ "${members[2]}" != omni ]; then
         fail 'invalid Omni archive contents'
+    fi
 }
 
 assert_omni_version() {

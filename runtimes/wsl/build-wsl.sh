@@ -54,7 +54,7 @@ rm -f -- "$temporary_artifact" "$temporary_checksum"
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 cd "$repo_root"
-docker buildx bake -f runtimes/wsl/docker-bake.hcl "wsl-${arch}" \
+docker buildx bake --allow="fs.write=$output_dir" -f runtimes/wsl/docker-bake.hcl "wsl-${arch}" \
   --set "wsl-${arch}.output=type=tar,dest=${temporary_artifact}"
 test -f "$temporary_artifact"
 

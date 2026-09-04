@@ -313,7 +313,8 @@ artifact="$test_root/output/openhands-worker-1.2.3-amd64.wsl"
 checksum="$artifact.sha256"
 test -f "$artifact"
 test -f "$checksum"
-grep -F 'buildx bake -f runtimes/wsl/docker-bake.hcl wsl-amd64 --set wsl-amd64.output=type=tar,dest=' "$test_root/docker.log"
+canonical_output=$(cd "$test_root/output" && pwd -P)
+grep -F "buildx bake --allow=fs.write=$canonical_output -f runtimes/wsl/docker-bake.hcl wsl-amd64 --set wsl-amd64.output=type=tar,dest=" "$test_root/docker.log"
 (cd "$test_root/output" && sha256sum -c "$(basename "$checksum")")
 test -f "$test_root/output/openhands-worker-1.2.3-amd64.wsl"
 DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.3 arm64 "$test_root/output"
