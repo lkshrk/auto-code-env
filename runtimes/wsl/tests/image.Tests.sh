@@ -141,9 +141,15 @@ assert(validation_export.include?(full_tar_check), 'validation must consume the 
 assert(build_run.include?(full_tar_check), 'release must consume the full WSL tar listing')
 assert(build_run.include?('push-by-digest=true'), 'release must push architecture images by digest')
 assert(build_run.include?('--sbom=true') && build_run.include?('--provenance=mode=max'), 'release must publish SBOM and provenance')
+assert(build_run.include?('> "$output/image-digest-${{ matrix.arch }}.txt"'), 'release inputs must share one upload root')
+assert(build_run.include?('artifact="$output/openhands-worker-${VERSION}-${{ matrix.arch }}.wsl"'), 'WSL artifact must use the shared upload root')
 upload = step(build, 'Upload architecture release inputs').fetch('with')
 assert(upload['name'] == 'worker-release-${{ matrix.arch }}', 'release artifact name must be architecture-scoped')
-assert(upload['path'].include?('${{ steps.build.outputs.artifact }}') && upload['path'].include?('image-digest-${{ matrix.arch }}.txt'), 'release must upload WSL files and digests')
+assert(upload.fetch('path').lines.map(&:strip).reject(&:empty?) == [
+  '${{ steps.build.outputs.artifact }}',
+  '${{ steps.build.outputs.artifact }}.sha256',
+  '${{ runner.temp }}/release/image-digest-${{ matrix.arch }}.txt'
+], 'release must upload exactly three files from one root')
 prepare = run(publish, 'Verify artifacts and prepare draft release')
 assert(prepare.include?('git ls-remote') && prepare.include?('GITHUB_SHA'), 'release must verify triggering tag target')
 assert(prepare.include?('gh release create "$tag"') && prepare.include?('--verify-tag') && prepare.include?('--draft'), 'release must create or reuse verified draft')
