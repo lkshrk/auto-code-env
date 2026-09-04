@@ -77,7 +77,7 @@ $parsed = Get-TrustedRemoteAddresses -Addresses @("10.254.0.10, 10.254.0.11", "1
 Assert-Equal 3 $parsed.Count "comma lists are split and deduplicated"
 Assert-Equal "10.254.0.99" $parsed[2] "order is preserved"
 Assert-Throws { Get-TrustedRemoteAddresses -Addresses @("172.16.20.0/16") } "not a single IPv4 host" "broad range throws"
-Assert-Throws { Get-TrustedRemoteAddresses -Addresses @(" ", "") } "At least one" "empty list throws"
+Assert-Throws { Get-TrustedRemoteAddresses -Addresses @(" ", ",") } "At least one" "blank list throws"
 Write-Host "PASS: remote address parsing"
 
 $calls = New-Object 'System.Collections.Generic.List[string]'
