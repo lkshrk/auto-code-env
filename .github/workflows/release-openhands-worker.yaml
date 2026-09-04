@@ -74,6 +74,7 @@ jobs:
           printf '%s\n' "$digest" > "$output/image-digest-${{ matrix.arch }}.txt"
           artifact="$output/openhands-worker-${VERSION}-${{ matrix.arch }}.wsl"
           tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
+          tar -tf "$artifact" | grep -E '^\.?/?etc/systemd/system/systemd-modules-load\.service\.d/10-wsl\.conf$' >/dev/null
           {
             echo "version=$VERSION"
             echo "artifact=$artifact"

@@ -133,6 +133,11 @@ and nginx only after certificate/key and `local_backend_api_key` are present;
 service fails closed when credential is missing or empty. `rbw` is present but
 not configured or logged in by image build.
 
+WSL owns its shared kernel and may not expose a loadable module context to a
+distribution. The WSL target therefore adds
+`ConditionVirtualization=!wsl` to `systemd-modules-load.service`: module loading
+is skipped only when systemd detects WSL and remains enabled elsewhere.
+
 ## Docker and Kubernetes use
 
 Use OCI tag matching host architecture; Docker/Kubernetes select matching

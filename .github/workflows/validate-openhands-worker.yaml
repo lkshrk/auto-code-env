@@ -76,3 +76,4 @@ jobs:
           runtimes/wsl/build-wsl.sh "$version" '${{ matrix.arch }}' "$output"
           artifact="$output/openhands-worker-$version-${{ matrix.arch }}.wsl"
           tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
+          tar -tf "$artifact" | grep -E '^\.?/?etc/systemd/system/systemd-modules-load\.service\.d/10-wsl\.conf$' >/dev/null

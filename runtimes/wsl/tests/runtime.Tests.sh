@@ -5,6 +5,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 entrypoint="$repo_root/runtimes/wsl/runtime/container-entrypoint.sh"
 unit="$repo_root/runtimes/wsl/runtime/agent-canvas.service"
+modules_dropin="$repo_root/runtimes/wsl/runtime/systemd-modules-load-wsl.conf"
 nginx_site="$repo_root/runtimes/wsl/runtime/nginx-site.conf"
 distro_config="$repo_root/runtimes/wsl/wsl-distribution.conf"
 containerfile="$repo_root/runtimes/wsl/Containerfile"
@@ -12,9 +13,10 @@ canvas_patch="$repo_root/runtimes/wsl/runtime/patch-agent-canvas-automation.mjs"
 ingress_smoke="$repo_root/runtimes/wsl/tests/agent-canvas-ingress-smoke.mjs"
 omni_settings="$repo_root/runtimes/wsl/omni/settings.json"
 
-for file in "$entrypoint" "$unit" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$ingress_smoke" "$omni_settings"; do
+for file in "$entrypoint" "$unit" "$modules_dropin" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$ingress_smoke" "$omni_settings"; do
   test -f "$file"
 done
+test "$(cat "$modules_dropin")" = $'[Unit]\nConditionVirtualization=!wsl'
 test "$(jq -r '.version' "$omni_settings")" = 24
 jq -e '
   .settings.auto_import == false and
@@ -60,6 +62,11 @@ grep -F 'node --check /home/agent/.local/lib/node_modules/@openhands/agent-canva
 grep -F 'agent-canvas-ingress-smoke.mjs /home/agent/.local/lib/node_modules/@openhands/agent-canvas/scripts/ingress.mjs' "$containerfile"
 grep -F 'uv run --no-project --with openhands-automation==1.9.0 python -m uvicorn openhands.automation.app:app' "$containerfile"
 grep -F 'systemd-sysv' "$containerfile"
+modules_copy='systemd-modules-load-wsl.conf /etc/systemd/system/systemd-modules-load.service.d/10-wsl.conf'
+wsl_stage=$(sed -n '/^FROM provisioned AS wsl$/,$p' "$containerfile")
+pre_wsl=$(sed '/^FROM provisioned AS wsl$/,$d' "$containerfile")
+grep -F "$modules_copy" <<< "$wsl_stage"
+if grep -F "$modules_copy" <<< "$pre_wsl"; then exit 1; fi
 grep -F 'test -x /sbin/init' "$containerfile"
 grep -F 'test -x /usr/bin/systemctl' "$containerfile"
 grep -F 'test ! -e /etc/systemd/system/multi-user.target.wants/nginx.service' "$containerfile"

@@ -59,6 +59,7 @@ assert(dockerignore == [
   '!runtimes/wsl/runtime/container-entrypoint.sh',
   '!runtimes/wsl/runtime/nginx-site.conf',
   '!runtimes/wsl/runtime/patch-agent-canvas-automation.mjs',
+  '!runtimes/wsl/runtime/systemd-modules-load-wsl.conf',
   '!runtimes/wsl/tests/',
   '!runtimes/wsl/tests/agent-canvas-ingress-smoke.mjs'
 ], 'Docker context must contain only worker build inputs')
@@ -89,6 +90,7 @@ assert(dockerignore == [
   '`tls.key`: `root:root`, mode `0600`',
   '/etc/credstore/local_backend_api_key',
   'LoadCredential=local_backend_api_key',
+  'ConditionVirtualization=!wsl',
   'Omni `0.10.4`',
   'Windows-on-Arm',
   'PR #16635',
@@ -138,8 +140,11 @@ assert(build.dig('strategy', 'matrix', 'include') == native_matrix, 'release mus
 assert(build.fetch('steps').none? { |item| item['uses'].to_s.include?('qemu') }, 'release must not enable emulation')
 build_run = run(build, 'Build architecture image and WSL artifact')
 full_tar_check = %q{tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null}
+modules_tar_check = %q{tar -tf "$artifact" | grep -E '^\.?/?etc/systemd/system/systemd-modules-load\.service\.d/10-wsl\.conf$' >/dev/null}
 assert(validation_export.include?(full_tar_check), 'validation must consume the full WSL tar listing')
 assert(build_run.include?(full_tar_check), 'release must consume the full WSL tar listing')
+assert(validation_export.include?(modules_tar_check), 'validation must inspect the WSL module-loader drop-in')
+assert(build_run.include?(modules_tar_check), 'release must inspect the WSL module-loader drop-in')
 assert(build_run.include?('push-by-digest=true'), 'release must push architecture images by digest')
 assert(build_run.include?('--sbom=true') && build_run.include?('--provenance=mode=max'), 'release must publish SBOM and provenance')
 assert(build_run.include?('> "$output/image-digest-${{ matrix.arch }}.txt"'), 'release inputs must share one upload root')
