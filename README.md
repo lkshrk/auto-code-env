@@ -10,3 +10,7 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
 
 See [`runtimes/wsl/README.md`](runtimes/wsl/README.md) for architecture,
 installation, security, release, and verification details.
+
+## Skills
+
+`skills/` holds OpenHands skills installed into the Agent Canvas from this repository, for example `skills/agent-sandbox-deploy` for deploying into the h-cloud `agent-sandbox` namespace.
