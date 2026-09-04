@@ -23,8 +23,10 @@ script=$(cat <<'INNER'
 set -euo pipefail
 umask 022
 shim=/tmp/shim
-mkdir -p "$shim" /tmp/log /usr/local/libexec /etc/nginx
+mkdir -p "$shim" /tmp/log /usr/local/libexec /etc/nginx && chmod 1777 /tmp/log
 install -m 0755 /src/runtimes/wsl/runtime/openhands-overlay.sh /usr/local/sbin/openhands-overlay
+userdel -r ubuntu 2>/dev/null || true; useradd -m -u 1000 -s /bin/bash agent
+mkdir -p /etc/openhands && printf 'openhands-worker 9.9.9-test\n' > /etc/openhands/release
 printf '#!/bin/sh\nexit 0\n' > /usr/local/libexec/openhands-rbw-pinentry
 chmod 0755 /usr/local/libexec/openhands-rbw-pinentry
 
@@ -39,7 +41,7 @@ cat > "$shim/rbw" <<'EOF'
 #!/bin/sh
 echo "rbw $*" >> /tmp/log/rbw
 case "$1" in
-  config) exit 0 ;;
+  config) mkdir -p /root/.config/rbw; touch /root/.config/rbw/config.json; exit 0 ;;
   login|sync|lock|stop-agent|purge)
     test -n "${CREDENTIALS_DIRECTORY:-}" || { echo 'no credentials directory' >&2; exit 1; }
     test "$(cat "$CREDENTIALS_DIRECTORY/rbw_master")" = "$(cat /tmp/fixture.master)" || { echo 'wrong master' >&2; exit 1; }
@@ -50,6 +52,7 @@ case "$1" in
       "get --field notes 22222222-2222-2222-2222-222222222222") cat /tmp/fixture.key ;;
       "get --field notes 33333333-3333-3333-3333-333333333333") cat /tmp/other.key ;;
       "get 44444444-4444-4444-4444-444444444444") cat /tmp/fixture.api; echo ;;
+      "get 55555555-5555-5555-5555-555555555555") printf 'ghp_FIXTURETOKEN0000000000000000000000\n' ;;
       *) echo "unknown item $*" >&2; exit 1 ;;
     esac ;;
   *) echo "unexpected rbw $*" >&2; exit 1 ;;
@@ -85,6 +88,11 @@ cat > "$shim/nginx" <<'EOF'
 #!/bin/sh
 test "$1" = -t || exit 1
 test -r /etc/nginx/tls/tls.crt && test -r /etc/nginx/tls/tls.key
+EOF
+
+cat > "$shim/git" <<'EOF'
+#!/bin/sh
+echo "git $*" >> /tmp/log/git
 EOF
 
 cat > "$shim/systemctl" <<'EOF'
@@ -145,6 +153,18 @@ grep -Fq 'systemctl try-restart agent-canvas.service' /tmp/log/systemctl
 run origin https://orc.example https://second.example >/dev/null
 grep -Fxq 'Environment=OH_ALLOW_CORS_ORIGINS_1=https://second.example' /etc/systemd/system/agent-canvas.service.d/10-overlay.conf
 test "$(grep -c '^Environment=OH_ALLOW_CORS_ORIGINS_' /etc/systemd/system/agent-canvas.service.d/10-overlay.conf)" = 2
+
+if run github >/dev/null 2>&1; then echo 'github requires --pat-id'; exit 1; fi
+if run github --pat-id nope >/dev/null 2>&1; then echo 'github must reject a non-UUID id'; exit 1; fi
+gh_out=$(run github --pat-id 55555555-5555-5555-5555-555555555555)
+printf '%s\n' "$gh_out" | grep -Fq 'github credential installed for agent'
+if printf '%s\n' "$gh_out" | grep -Fq 'ghp_'; then echo 'token leaked to stdout'; exit 1; fi
+test "$(stat -c '%U:%G %a' /home/agent/.git-credentials)" = 'agent:agent 600'
+grep -Fxq 'https://x-access-token:ghp_FIXTURETOKEN0000000000000000000000@github.com' /home/agent/.git-credentials
+grep -Fq 'git config --global credential.helper store' /tmp/log/git
+test "$(grep -c '^rbw login$' /tmp/log/rbw)" = 2
+test "$(tail -n 1 /tmp/log/rbw)" = 'rbw purge'
+run status | grep -Fq 'release openhands-worker 9.9.9-test'
 
 run secrets --vault-url https://vault.example --email a@b \
   --crt-id 11111111-1111-1111-1111-111111111111 \

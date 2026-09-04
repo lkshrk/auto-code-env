@@ -79,6 +79,8 @@ assert(dockerignore == [
   'openhands-overlay secrets',
   'openhands-overlay enable',
   'openhands-overlay origin',
+  'openhands-overlay github',
+  '/etc/openhands/release',
   'OH_ALLOW_CORS_ORIGINS_0',
   '-RemoteAddresses',
   'never from an older',
@@ -158,6 +160,11 @@ assert(build_run.include?(full_tar_check), 'release must consume the full WSL ta
 assert(validation_export.include?(modules_tar_check), 'validation must inspect the WSL module-loader drop-in')
 assert(build_run.include?(modules_tar_check), 'release must inspect the WSL module-loader drop-in')
 dbus_tar_check = %q{tar -tf "$artifact" | grep -E '^\.?/?usr/lib/systemd/system/dbus\.socket$' >/dev/null}
+release_tar_check = %q{tar -xOf "$artifact" --wildcards '*etc/openhands/release' | grep -Fx "openhands-worker $}
+assert(validation_export.include?(release_tar_check + 'version"'), 'validation must verify the release marker inside the WSL artifact')
+assert(build_run.include?(release_tar_check + 'VERSION"'), 'release must verify the release marker inside the WSL artifact')
+assert(build_run.include?('--build-arg "OPENHANDS_WORKER_VERSION=$VERSION"'), 'release OCI build must stamp the version')
+assert(run(validate, 'Smoke native image build').include?('--build-arg "OPENHANDS_WORKER_VERSION=ci-'), 'validation smoke build must stamp a CI version')
 pam_tar_check = %q{tar -xOf "$artifact" --wildcards '*etc/pam.d/common-session' | grep -E '^session[[:space:]]+optional[[:space:]]+pam_systemd\.so' >/dev/null}
 assert(validation_export.include?(dbus_tar_check), 'validation must inspect the D-Bus system bus socket unit')
 assert(build_run.include?(dbus_tar_check), 'release must inspect the D-Bus system bus socket unit')
