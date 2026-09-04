@@ -67,7 +67,8 @@ runtimes/wsl/build-wsl.sh 1.2.3 amd64 dist
 
 Only `openhands-worker-v*` tags release artifacts. Native GitHub runners build
 amd64 and arm64 separately; no QEMU emulation is accepted. The release has the
-two `.wsl` files and a combined `checksums.txt`, and GHCR has immutable
+two `.wsl` files, the matching `install.ps1`, and a combined `checksums.txt`
+covering all three, and GHCR has immutable
 `ghcr.io/lkshrk/openhands-worker:<version>` manifest with both architectures,
 SBOM, and provenance.
 
@@ -76,6 +77,11 @@ Windows-on-Arm WSL runtime proof. Publication gate: native amd64 CI and real Win
 must both pass before release. Windows-on-Arm remains a separate runtime gate.
 
 ## Windows import and host overlay
+
+Take the installer from the same release as the image, never from an older
+local copy:
+`https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/install.ps1`.
+Verify its SHA-256 against `checksums.txt` before running it.
 
 Run elevated PowerShell. Select exactly one artifact source plus its mandatory
 SHA-256 from release `checksums.txt`:
