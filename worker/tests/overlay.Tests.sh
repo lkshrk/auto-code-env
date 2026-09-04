@@ -140,7 +140,7 @@ first_get=$(grep -n '^rbw get ' /tmp/log/rbw | head -n 1 | cut -d: -f1)
 test "$login_line" -lt "$first_get"
 
 run enable | grep -Fq 'active'
-grep -Fq 'systemctl enable --now nginx.service agent-canvas.service' /tmp/log/systemctl
+grep -Fq 'systemctl enable --now nginx.service agent-canvas.service openhands-run-prune.timer' /tmp/log/systemctl
 
 if run origin http://orc.example >/dev/null 2>&1; then echo 'plain HTTP origin must be rejected'; exit 1; fi
 if run origin 'https://orc.example/path' >/dev/null 2>&1; then echo 'origin with a path must be rejected'; exit 1; fi

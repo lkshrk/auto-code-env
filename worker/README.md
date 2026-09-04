@@ -195,6 +195,14 @@ Every image carries `/etc/openhands/release` with `openhands-worker <version>`
 through the `OPENHANDS_WORKER_VERSION` build argument. `openhands-overlay
 status` prints it; the release workflow verifies it inside the `.wsl` artifact.
 
+Automation runs leave their workspace under
+`~/.openhands/agent-canvas/workspaces/automation-runs/<run>`; the shipped
+`openhands-automation` never deletes them in local mode (upstream issue
+OpenHands/automation#422). The WSL image ships `openhands-run-prune.timer`,
+enabled by `openhands-overlay enable`, which removes run directories older than
+24 hours every hour as `agent`. Drop it once the image carries an
+`openhands-automation` with `AUTOMATION_WORKSPACE_RETENTION_SECONDS`.
+
 `openhands-overlay verify` checks files, ownership, modes, that the private
 key matches the certificate, and `nginx -t`. `openhands-overlay enable`
 refuses to start anything until `verify` passes, then enables nginx and

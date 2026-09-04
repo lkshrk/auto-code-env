@@ -164,7 +164,7 @@ verify() {
 
 enable_services() {
     verify
-    systemctl enable --now nginx.service agent-canvas.service
+    systemctl enable --now nginx.service agent-canvas.service openhands-run-prune.timer
     status
 }
 

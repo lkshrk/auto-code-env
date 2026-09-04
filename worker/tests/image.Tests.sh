@@ -71,6 +71,8 @@ assert(dockerignore == [
   'openhands-overlay enable',
   'openhands-overlay origin',
   'openhands-overlay github',
+  'openhands-run-prune.timer',
+  'automation-runs',
   '/etc/openhands/release',
   'OH_ALLOW_CORS_ORIGINS_0',
   '-RemoteAddresses',
