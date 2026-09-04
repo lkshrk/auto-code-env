@@ -70,6 +70,7 @@ assert(dockerignore == [
   'openhands-worker-<version>-amd64.wsl',
   'openhands-worker-<version>-arm64.wsl',
   'checksums.txt',
+  'releases/download/openhands-worker-v<version>/install.ps1',
   '(cd dist && sha256sum -c openhands-worker-1.2.3-amd64.wsl.sha256)',
   'ImagePath',
   'ImageUri',
@@ -167,6 +168,9 @@ assert(prepare.include?('git ls-remote') && prepare.include?('GITHUB_SHA'), 'rel
 assert(prepare.include?('gh release create "$tag"') && prepare.include?('--verify-tag') && prepare.include?('--draft'), 'release must create or reuse verified draft')
 assert(prepare.include?('gh release view "$tag" --json isDraft,tagName,assets'), 'release lookup must include drafts')
 assert(prepare.include?('gh release upload "$tag" --clobber'), 'draft asset upload must be idempotent')
+assert(prepare.include?('cp runtimes/wsl/install.ps1 release/install.ps1'), 'release must stage the installer from the tagged tree')
+assert(prepare.include?('release/install.ps1') && prepare.include?('sha256sum install.ps1 >> checksums.txt'), 'release must publish the installer and include it in checksums')
+assert(prepare.scan(/"?install\.ps1"?/).length >= 4, 'installer must be uploaded and verified like every other asset')
 assert(prepare.include?('.tagName') && prepare.include?('.isDraft') && !prepare.include?('releases/tags') && !prepare.include?('targetCommitish'), 'remote tag is authority for release reuse')
 assert(prepare.include?('.state == "uploaded"') && prepare.include?('.digest == $digest'), 'published assets must be complete and match local digests')
 manifest = run(publish, 'Verify or create immutable manifest')
