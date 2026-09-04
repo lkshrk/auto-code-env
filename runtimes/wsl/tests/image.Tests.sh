@@ -74,9 +74,12 @@ assert(dockerignore == [
   'releases/download/openhands-worker-v<version>/install.ps1',
   'releases/download/openhands-worker-v<version>/firewall.ps1',
   'releases/download/openhands-worker-v<version>/keepalive.ps1',
+  'releases/download/openhands-worker-v<version>/openhands-overlay',
   'idle-stops',
   'openhands-overlay secrets',
   'openhands-overlay enable',
+  'openhands-overlay origin',
+  'OH_ALLOW_CORS_ORIGINS_0',
   '-RemoteAddresses',
   'never from an older',
   '(cd dist && sha256sum -c openhands-worker-1.2.3-amd64.wsl.sha256)',
@@ -179,7 +182,9 @@ assert(prepare.include?('gh release upload "$tag" --clobber'), 'draft asset uplo
 assert(prepare.include?('cp runtimes/wsl/install.ps1 release/install.ps1'), 'release must stage the installer from the tagged tree')
 assert(prepare.include?('cp runtimes/wsl/firewall.ps1 release/firewall.ps1'), 'release must stage the firewall script from the tagged tree')
 assert(prepare.include?('cp runtimes/wsl/keepalive.ps1 release/keepalive.ps1'), 'release must stage the keepalive script from the tagged tree')
-assert(prepare.include?('sha256sum install.ps1 firewall.ps1 keepalive.ps1 >> checksums.txt'), 'release checksums must cover every host script')
+assert(prepare.include?('cp runtimes/wsl/runtime/openhands-overlay.sh release/openhands-overlay'), 'release must stage the overlay tool from the tagged tree')
+assert(prepare.include?('sha256sum install.ps1 firewall.ps1 keepalive.ps1 openhands-overlay >> checksums.txt'), 'release checksums must cover every host script and the overlay tool')
+assert(prepare.scan(/"?openhands-overlay"?/).length >= 4, 'overlay tool must be uploaded and verified like every other asset')
 assert(prepare.scan(/"?keepalive\.ps1"?/).length >= 4, 'keepalive script must be uploaded and verified like every other asset')
 assert(prepare.scan(/"?firewall\.ps1"?/).length >= 4, 'firewall script must be uploaded and verified like every other asset')
 assert(prepare.include?('release/install.ps1'), 'release must publish the installer')

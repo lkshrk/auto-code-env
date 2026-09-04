@@ -8,12 +8,14 @@ TLS_KEY="$TLS_DIRECTORY/tls.key"
 CREDSTORE=/etc/credstore
 BACKEND_KEY="$CREDSTORE/local_backend_api_key"
 MASTER_PASSWORD_FILE=/run/openhands-rbw-master
+SERVICE_DROPIN=/etc/systemd/system/agent-canvas.service.d/10-overlay.conf
 
 usage() {
     cat >&2 <<'EOF'
 usage: openhands-overlay secrets --vault-url URL --email EMAIL --crt-id UUID --key-id UUID --api-id UUID
        openhands-overlay verify
        openhands-overlay enable
+       openhands-overlay origin https://canvas.example [https://other.example ...]
        openhands-overlay status
 EOF
     exit 2
@@ -117,6 +119,30 @@ enable_services() {
     status
 }
 
+origin() {
+    [ $# -ge 1 ] || usage
+    for value in "$@"; do
+        printf '%s' "$value" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?$' || fail "origin must be https://host[:port] without a path: $value"
+    done
+    umask 022
+    install -d -o root -g root -m 0755 "$(dirname "$SERVICE_DROPIN")"
+    {
+        echo '[Service]'
+        index=0
+        for value in "$@"; do
+            printf 'Environment=OH_ALLOW_CORS_ORIGINS_%s=%s\n' "$index" "$value"
+            index=$((index + 1))
+        done
+    } > "$SERVICE_DROPIN"
+    chown root:root "$SERVICE_DROPIN"
+    chmod 0644 "$SERVICE_DROPIN"
+    systemctl daemon-reload
+    systemctl try-restart agent-canvas.service
+    for value in "$@"; do
+        printf 'origin %s\n' "$value"
+    done
+}
+
 status() {
     systemctl is-active nginx.service agent-canvas.service || true
     cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | while read -r _ local _ state _; do
@@ -131,6 +157,7 @@ case $command in
     secrets) secrets "$@" ;;
     verify) [ $# -eq 0 ] || usage; verify ;;
     enable) [ $# -eq 0 ] || usage; enable_services ;;
+    origin) origin "$@" ;;
     status) [ $# -eq 0 ] || usage; status ;;
     *) usage ;;
 esac

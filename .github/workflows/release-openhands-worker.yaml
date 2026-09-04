@@ -145,9 +145,10 @@ jobs:
           cp runtimes/wsl/install.ps1 release/install.ps1
           cp runtimes/wsl/firewall.ps1 release/firewall.ps1
           cp runtimes/wsl/keepalive.ps1 release/keepalive.ps1
+          cp runtimes/wsl/runtime/openhands-overlay.sh release/openhands-overlay
           cat release/openhands-worker-"${VERSION}"-amd64.wsl.sha256 \
             release/openhands-worker-"${VERSION}"-arm64.wsl.sha256 > release/checksums.txt
-          (cd release && sha256sum install.ps1 firewall.ps1 keepalive.ps1 >> checksums.txt)
+          (cd release && sha256sum install.ps1 firewall.ps1 keepalive.ps1 openhands-overlay >> checksums.txt)
           (cd release && sha256sum -c checksums.txt)
           release_json="$RUNNER_TEMP/release.json"
           release_error="$RUNNER_TEMP/release-error.log"
@@ -173,6 +174,7 @@ jobs:
                 release/install.ps1 \
                 release/firewall.ps1 \
                 release/keepalive.ps1 \
+                release/openhands-overlay \
                 release/checksums.txt
               ;;
             false)
@@ -182,6 +184,7 @@ jobs:
                 install.ps1 \
                 firewall.ps1 \
                 keepalive.ps1 \
+                openhands-overlay \
                 checksums.txt; do
                 digest="sha256:$(sha256sum "release/$asset" | awk '{print $1}')"
                 jq -e --arg asset "$asset" --arg digest "$digest" \
