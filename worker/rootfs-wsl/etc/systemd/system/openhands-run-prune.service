@@ -1,0 +1,12 @@
+[Unit]
+Description=Prune finished OpenHands automation run workspaces
+After=agent-canvas.service
+
+[Service]
+Type=oneshot
+User=agent
+ExecStart=/bin/sh -c 'runs=/home/agent/.openhands/agent-canvas/workspaces/automation-runs; test -d "$runs" || exit 0; /usr/bin/find "$runs" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec /bin/rm -rf {} +'
+ProtectSystem=strict
+ReadWritePaths=-/home/agent/.openhands/agent-canvas/workspaces/automation-runs
+PrivateTmp=yes
+NoNewPrivileges=yes

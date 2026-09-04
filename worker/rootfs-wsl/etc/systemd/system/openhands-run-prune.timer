@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly prune of finished OpenHands automation run workspaces
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

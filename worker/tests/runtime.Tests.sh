@@ -6,6 +6,8 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 entrypoint="$repo_root/worker/rootfs-oci/usr/local/sbin/container-entrypoint"
 unit="$repo_root/worker/rootfs/etc/systemd/system/agent-canvas.service"
 modules_dropin="$repo_root/worker/rootfs-wsl/etc/systemd/system/systemd-modules-load.service.d/10-wsl.conf"
+prune_service="$repo_root/worker/rootfs-wsl/etc/systemd/system/openhands-run-prune.service"
+prune_timer="$repo_root/worker/rootfs-wsl/etc/systemd/system/openhands-run-prune.timer"
 overlay="$repo_root/worker/rootfs/usr/local/sbin/openhands-overlay"
 firewall="$repo_root/worker/windows/firewall.ps1"
 keepalive="$repo_root/worker/windows/keepalive.ps1"
@@ -16,7 +18,7 @@ canvas_patch="$repo_root/worker/patches/patch-agent-canvas-automation.mjs"
 ingress_smoke="$repo_root/worker/tests/agent-canvas-ingress-smoke.mjs"
 omni_settings="$repo_root/worker/omni/settings.json"
 
-for file in "$entrypoint" "$unit" "$modules_dropin" "$overlay" "$firewall" "$keepalive" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$ingress_smoke" "$omni_settings"; do
+for file in "$entrypoint" "$unit" "$modules_dropin" "$prune_service" "$prune_timer" "$overlay" "$firewall" "$keepalive" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$ingress_smoke" "$omni_settings"; do
   test -f "$file"
 done
 test "$(cat "$modules_dropin")" = $'[Unit]\nConditionVirtualization=!wsl'
@@ -33,6 +35,14 @@ grep -F 'OpenHands/OpenHands#16217' "$canvas_patch"
 grep -F 'Remove this patch when' "$canvas_patch"
 
 grep -Fx 'User=agent' "$unit"
+grep -Fx 'User=agent' "$prune_service"
+grep -Fx 'Type=oneshot' "$prune_service"
+grep -F -- '-mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec /bin/rm -rf {} +' "$prune_service"
+grep -F 'test -d "$runs" || exit 0' "$prune_service"
+grep -Fx 'ReadWritePaths=-/home/agent/.openhands/agent-canvas/workspaces/automation-runs' "$prune_service"
+grep -Fx 'OnUnitActiveSec=1h' "$prune_timer"
+grep -Fx 'WantedBy=timers.target' "$prune_timer"
+grep -F 'systemctl enable --now nginx.service agent-canvas.service openhands-run-prune.timer' "$overlay"
 grep -Fx 'LoadCredential=local_backend_api_key' "$unit"
 grep -F 'CREDENTIALS_DIRECTORY' "$unit"
 grep -F 'ExecStart=/bin/bash -eu -c' "$unit"
