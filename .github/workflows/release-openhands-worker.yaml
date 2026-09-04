@@ -75,6 +75,8 @@ jobs:
           artifact="$output/openhands-worker-${VERSION}-${{ matrix.arch }}.wsl"
           tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
           tar -tf "$artifact" | grep -E '^\.?/?etc/systemd/system/systemd-modules-load\.service\.d/10-wsl\.conf$' >/dev/null
+          tar -tf "$artifact" | grep -E '^\.?/?usr/lib/systemd/system/dbus\.socket$' >/dev/null
+          tar -xOf "$artifact" --wildcards '*etc/pam.d/common-session' | grep -E '^session[[:space:]]+optional[[:space:]]+pam_systemd\.so' >/dev/null
           {
             echo "version=$VERSION"
             echo "artifact=$artifact"

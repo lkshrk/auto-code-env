@@ -67,6 +67,7 @@ wsl_stage=$(sed -n '/^FROM provisioned AS wsl$/,$p' "$containerfile")
 pre_wsl=$(sed '/^FROM provisioned AS wsl$/,$d' "$containerfile")
 grep -F "$modules_copy" <<< "$wsl_stage"
 if grep -F "$modules_copy" <<< "$pre_wsl"; then exit 1; fi
+grep -F 'install -y --no-install-recommends systemd systemd-sysv libpam-systemd dbus-user-session' <<< "$wsl_stage"
 grep -F 'test -x /sbin/init' "$containerfile"
 grep -F 'test -x /usr/bin/systemctl' "$containerfile"
 grep -F 'test ! -e /etc/systemd/system/multi-user.target.wants/nginx.service' "$containerfile"

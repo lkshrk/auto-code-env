@@ -145,6 +145,12 @@ assert(validation_export.include?(full_tar_check), 'validation must consume the 
 assert(build_run.include?(full_tar_check), 'release must consume the full WSL tar listing')
 assert(validation_export.include?(modules_tar_check), 'validation must inspect the WSL module-loader drop-in')
 assert(build_run.include?(modules_tar_check), 'release must inspect the WSL module-loader drop-in')
+dbus_tar_check = %q{tar -tf "$artifact" | grep -E '^\.?/?usr/lib/systemd/system/dbus\.socket$' >/dev/null}
+pam_tar_check = %q{tar -xOf "$artifact" --wildcards '*etc/pam.d/common-session' | grep -E '^session[[:space:]]+optional[[:space:]]+pam_systemd\.so' >/dev/null}
+assert(validation_export.include?(dbus_tar_check), 'validation must inspect the D-Bus system bus socket unit')
+assert(build_run.include?(dbus_tar_check), 'release must inspect the D-Bus system bus socket unit')
+assert(validation_export.include?(pam_tar_check), 'validation must inspect the pam_systemd session hook')
+assert(build_run.include?(pam_tar_check), 'release must inspect the pam_systemd session hook')
 assert(build_run.include?('push-by-digest=true'), 'release must push architecture images by digest')
 assert(build_run.include?('--sbom=true') && build_run.include?('--provenance=mode=max'), 'release must publish SBOM and provenance')
 assert(build_run.include?('> "$output/image-digest-${{ matrix.arch }}.txt"'), 'release inputs must share one upload root')
