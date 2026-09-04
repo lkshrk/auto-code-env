@@ -197,15 +197,12 @@ esac
 **Consumes:** `openhands-worker-v0.1.3` amd64 asset and SHA-256 above.
 **Produces:** exact released worker registered as `openhands-worker` on `towerr`.
 
-- [ ] Terminate the provisional distro and export it with `wsl --export openhands-worker "$env:USERPROFILE\WSL-Backups\openhands-worker-before-v0.1.3.vhdx" --vhd`.
-- [ ] Verify backup exists, has nonzero length, and record its SHA-256 outside the distro.
-- [ ] Copy the VHDX to `openhands-worker-before-v0.1.3-smoke.vhdx`, register that copy with `wsl --import-in-place openhands-worker-backup-smoke "$env:USERPROFILE\WSL-Backups\openhands-worker-before-v0.1.3-smoke.vhdx"`, and verify it boots as root with the expected Ubuntu identity, `/home/agent`, and systemd.
-- [ ] Terminate and unregister only `openhands-worker-backup-smoke`, then verify the original backup still exists and retains its recorded SHA-256.
-- [ ] Obtain explicit operator confirmation before `wsl --unregister openhands-worker`; unregistering permanently deletes the registered instance.
+- [x] Operator confirmed the provisional `openhands-worker` is disposable and requires no backup or state migration.
+- [ ] Verify `wsl --list --verbose` still identifies the exact disposable target as `openhands-worker`, then terminate it.
+- [ ] Run `wsl --unregister openhands-worker` and verify only that distribution was removed. This permanently deletes its current files, configuration, and authentication state.
 - [ ] Download `runtimes/wsl/install.ps1` from main commit `41babcfc977f05f3827fc2a20dafd588a7711301` and verify SHA-256 `1bfcc8189d97bb30fccb8e6846c9879874570046759485d87de6069dfcc86980`.
 - [ ] Run installer with the v0.1.3 amd64 release URL and SHA-256 `f610c11e12f303602a492f262c04503f12c7cfc63f6ac9dc8cbc2df5973dd137`.
 - [ ] Verify distro is WSL2, default user is `agent`, PID 1 is `systemd`, system state is running, `/mnt/c` is not mounted, Windows interop is absent, and four agent directories remain `agent:agent 0700`.
-- [ ] Keep VHD backup until TLS, authentication, ACP execution, and workspace checks pass.
 
 ### Task 9: Apply host-specific DNS, TLS, secret, and firewall overlay
 
