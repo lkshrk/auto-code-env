@@ -312,6 +312,8 @@ chmod 0755 "$fake_bin/ln"
 if "$build_script" '' amd64 "$test_root/output"; then exit 1; fi
 if "$build_script" 1.2.3 armv7 "$test_root/output"; then exit 1; fi
 
+mkdir "$test_root/real-output"
+ln -s real-output "$test_root/output"
 DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.3 amd64 "$test_root/output"
 artifact="$test_root/output/openhands-worker-1.2.3-amd64.wsl"
 checksum="$artifact.sha256"
