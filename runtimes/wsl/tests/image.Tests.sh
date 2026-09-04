@@ -58,6 +58,7 @@ assert(dockerignore == [
   '!runtimes/wsl/runtime/agent-canvas.service',
   '!runtimes/wsl/runtime/container-entrypoint.sh',
   '!runtimes/wsl/runtime/nginx-site.conf',
+  '!runtimes/wsl/runtime/openhands-overlay.sh',
   '!runtimes/wsl/runtime/patch-agent-canvas-automation.mjs',
   '!runtimes/wsl/runtime/systemd-modules-load-wsl.conf',
   '!runtimes/wsl/tests/',
@@ -71,6 +72,11 @@ assert(dockerignore == [
   'openhands-worker-<version>-arm64.wsl',
   'checksums.txt',
   'releases/download/openhands-worker-v<version>/install.ps1',
+  'releases/download/openhands-worker-v<version>/firewall.ps1',
+  'openhands-overlay secrets',
+  'openhands-overlay enable',
+  '-RemoteAddresses',
+  'never from an older',
   '(cd dist && sha256sum -c openhands-worker-1.2.3-amd64.wsl.sha256)',
   'ImagePath',
   'ImageUri',
@@ -120,7 +126,7 @@ assert(validation_export.include?('build-wsl.sh'), 'validation must export WSL i
 checks = validation.fetch('jobs').fetch('checks-amd64')
 assert(checks['runs-on'] == 'ubuntu-24.04', 'deterministic checks must run on amd64')
 checks_run = run(checks, 'Run deterministic validation')
-%w[provision.Tests.sh runtime.Tests.sh image.Tests.sh install.Tests.ps1].each do |test|
+%w[provision.Tests.sh runtime.Tests.sh image.Tests.sh overlay.Tests.sh install.Tests.ps1 firewall.Tests.ps1].each do |test|
   assert(checks_run.include?(test), "deterministic checks must run #{test}")
 end
 assert(checks_run.match?(%r{mcr\.microsoft\.com/powershell@sha256:[0-9a-f]{64}}), 'PowerShell test image must be digest-pinned')
@@ -169,7 +175,10 @@ assert(prepare.include?('gh release create "$tag"') && prepare.include?('--verif
 assert(prepare.include?('gh release view "$tag" --json isDraft,tagName,assets'), 'release lookup must include drafts')
 assert(prepare.include?('gh release upload "$tag" --clobber'), 'draft asset upload must be idempotent')
 assert(prepare.include?('cp runtimes/wsl/install.ps1 release/install.ps1'), 'release must stage the installer from the tagged tree')
-assert(prepare.include?('release/install.ps1') && prepare.include?('sha256sum install.ps1 >> checksums.txt'), 'release must publish the installer and include it in checksums')
+assert(prepare.include?('cp runtimes/wsl/firewall.ps1 release/firewall.ps1'), 'release must stage the firewall script from the tagged tree')
+assert(prepare.include?('sha256sum install.ps1 firewall.ps1 >> checksums.txt'), 'release checksums must cover both host scripts')
+assert(prepare.scan(/"?firewall\.ps1"?/).length >= 4, 'firewall script must be uploaded and verified like every other asset')
+assert(prepare.include?('release/install.ps1'), 'release must publish the installer')
 assert(prepare.scan(/"?install\.ps1"?/).length >= 4, 'installer must be uploaded and verified like every other asset')
 assert(prepare.include?('.tagName') && prepare.include?('.isDraft') && !prepare.include?('releases/tags') && !prepare.include?('targetCommitish'), 'remote tag is authority for release reuse')
 assert(prepare.include?('.state == "uploaded"') && prepare.include?('.digest == $digest'), 'published assets must be complete and match local digests')

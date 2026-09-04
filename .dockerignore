@@ -12,6 +12,7 @@
 !runtimes/wsl/runtime/agent-canvas.service
 !runtimes/wsl/runtime/container-entrypoint.sh
 !runtimes/wsl/runtime/nginx-site.conf
+!runtimes/wsl/runtime/openhands-overlay.sh
 !runtimes/wsl/runtime/patch-agent-canvas-automation.mjs
 !runtimes/wsl/runtime/systemd-modules-load-wsl.conf
 !runtimes/wsl/tests/

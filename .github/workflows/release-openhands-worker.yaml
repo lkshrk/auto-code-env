@@ -143,9 +143,10 @@ jobs:
             test -f "release/image-digest-${arch}.txt"
           done
           cp runtimes/wsl/install.ps1 release/install.ps1
+          cp runtimes/wsl/firewall.ps1 release/firewall.ps1
           cat release/openhands-worker-"${VERSION}"-amd64.wsl.sha256 \
             release/openhands-worker-"${VERSION}"-arm64.wsl.sha256 > release/checksums.txt
-          (cd release && sha256sum install.ps1 >> checksums.txt)
+          (cd release && sha256sum install.ps1 firewall.ps1 >> checksums.txt)
           (cd release && sha256sum -c checksums.txt)
           release_json="$RUNNER_TEMP/release.json"
           release_error="$RUNNER_TEMP/release-error.log"
@@ -169,6 +170,7 @@ jobs:
                 release/openhands-worker-"$VERSION"-amd64.wsl \
                 release/openhands-worker-"$VERSION"-arm64.wsl \
                 release/install.ps1 \
+                release/firewall.ps1 \
                 release/checksums.txt
               ;;
             false)
@@ -176,6 +178,7 @@ jobs:
                 "openhands-worker-$VERSION-amd64.wsl" \
                 "openhands-worker-$VERSION-arm64.wsl" \
                 install.ps1 \
+                firewall.ps1 \
                 checksums.txt; do
                 digest="sha256:$(sha256sum "release/$asset" | awk '{print $1}')"
                 jq -e --arg asset "$asset" --arg digest "$digest" \
