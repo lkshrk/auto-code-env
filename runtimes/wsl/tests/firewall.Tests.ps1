@@ -56,7 +56,7 @@ if ($source -notmatch '40E0AC32-46A5-438A-A0B2-2B479E8F2E90') {
 if ($source -notmatch 'DefaultInboundAction Block') {
     throw "Hyper-V default inbound action must be Block."
 }
-foreach ($name in "Test-TrustedRemoteAddress", "Get-TrustedRemoteAddresses", "Set-WorkerFirewallRules") {
+foreach ($name in "Test-TrustedRemoteAddress", "Get-TrustedRemoteAddresses", "Set-WorkerFirewallRules", "Test-VmRuleMatches") {
     Invoke-Expression (Import-ScriptFunction -Path $scriptPath -Name $name)
 }
 $WslVmCreatorId = "{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}"
@@ -80,9 +80,18 @@ Assert-Throws { Get-TrustedRemoteAddresses -Addresses @("172.16.20.0/16") } "not
 Assert-Throws { Get-TrustedRemoteAddresses -Addresses @(" ", ",") } "At least one" "blank list throws"
 Write-Host "PASS: remote address parsing"
 
+$matching = [pscustomobject]@{ Enabled = "True"; Direction = "Inbound"; Action = "Allow"; Protocol = "TCP"; LocalPorts = @("443"); RemoteAddresses = @("10.254.0.11", "10.254.0.10") }
+Assert-Equal $true (Test-VmRuleMatches -Rule $matching -LocalPort 443 -Remote @("10.254.0.10", "10.254.0.11")) "order-insensitive match"
+Assert-Equal $false (Test-VmRuleMatches -Rule $matching -LocalPort 443 -Remote @("10.254.0.10")) "extra source does not match"
+Assert-Equal $false (Test-VmRuleMatches -Rule $matching -LocalPort 8000 -Remote @("10.254.0.10", "10.254.0.11")) "other port does not match"
+$disabled = [pscustomobject]@{ Enabled = "False"; Direction = "Inbound"; Action = "Allow"; Protocol = "TCP"; LocalPorts = @("443"); RemoteAddresses = @("10.254.0.10", "10.254.0.11") }
+Assert-Equal $false (Test-VmRuleMatches -Rule $disabled -LocalPort 443 -Remote @("10.254.0.10", "10.254.0.11")) "disabled rule does not match"
+Write-Host "PASS: Hyper-V rule comparison"
+
 $calls = New-Object 'System.Collections.Generic.List[string]'
 $hostExists = $false
 $vmExists = $false
+$vmMatches = $false
 $common = @{
     GetHostRule  = { param($name) $calls.Add("get-host $name"); if ($hostExists) { "rule" } }
     NewHostRule  = { param($name, $display, $port, $addresses) $calls.Add("new-host $name $display $port $($addresses -join ',')") }
@@ -90,7 +99,8 @@ $common = @{
     SetVmDefault = { param($creator) $calls.Add("vm-default $creator") }
     GetVmRule    = { param($name) $calls.Add("get-vm $name"); if ($vmExists) { "rule" } }
     NewVmRule    = { param($name, $display, $creator, $port, $addresses) $calls.Add("new-vm $name $creator $port $($addresses -join ',')") }
-    SetVmRule    = { param($name, $port, $addresses) $calls.Add("set-vm $name $port $($addresses -join ',')") }
+    TestVmRule   = { param($rule, $port, $addresses) $calls.Add("test-vm $port $($addresses -join ',')"); $vmMatches }
+    RemoveVmRule = { param($name) $calls.Add("remove-vm $name") }
 }
 
 Set-WorkerFirewallRules -Remote @("10.254.0.10", "10.254.0.11") -LocalPort 443 @common
@@ -104,9 +114,17 @@ Assert-Equal 5 $calls.Count "no extra firewall calls"
 $calls.Clear()
 $hostExists = $true
 $vmExists = $true
+$vmMatches = $true
 Set-WorkerFirewallRules -Remote @("10.254.0.99") -LocalPort 443 @common
 Assert-Equal "set-host openhands-worker-https 443 10.254.0.99" $calls[2] "existing host rule is updated in place"
-Assert-Equal "set-vm openhands-worker-https 443 10.254.0.99" $calls[4] "existing vm rule is updated in place"
+Assert-Equal "test-vm 443 10.254.0.99" $calls[4] "existing vm rule is compared"
+Assert-Equal 5 $calls.Count "matching vm rule is left untouched"
+
+$calls.Clear()
+$vmMatches = $false
+Set-WorkerFirewallRules -Remote @("10.254.0.99") -LocalPort 443 @common
+Assert-Equal "remove-vm openhands-worker-https" $calls[5] "differing vm rule is removed"
+Assert-Equal "new-vm openhands-worker-https {40E0AC32-46A5-438A-A0B2-2B479E8F2E90} 443 10.254.0.99" $calls[6] "differing vm rule is recreated"
 Write-Host "PASS: idempotent rule management"
 
 $calls.Clear()

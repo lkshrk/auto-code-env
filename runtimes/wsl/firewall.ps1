@@ -59,7 +59,8 @@ function Set-WorkerFirewallRules {
         [Parameter(Mandatory)][scriptblock]$SetVmDefault,
         [Parameter(Mandatory)][scriptblock]$GetVmRule,
         [Parameter(Mandatory)][scriptblock]$NewVmRule,
-        [Parameter(Mandatory)][scriptblock]$SetVmRule
+        [Parameter(Mandatory)][scriptblock]$TestVmRule,
+        [Parameter(Mandatory)][scriptblock]$RemoveVmRule
     )
 
     if ($LocalPort -ne 443) {
@@ -78,11 +79,21 @@ function Set-WorkerFirewallRules {
 
     $existingVm = & $GetVmRule $RuleName
     if ($existingVm) {
-        & $SetVmRule $RuleName $LocalPort $Remote
+        if (& $TestVmRule $existingVm $LocalPort $Remote) {
+            return
+        }
+        & $RemoveVmRule $RuleName
     }
-    else {
-        & $NewVmRule $RuleName $RuleDisplayName $WslVmCreatorId $LocalPort $Remote
-    }
+    & $NewVmRule $RuleName $RuleDisplayName $WslVmCreatorId $LocalPort $Remote
+}
+
+function Test-VmRuleMatches {
+    param($Rule, [int]$LocalPort, [string[]]$Remote)
+
+    $expectedRemote = ($Remote | Sort-Object) -join ","
+    $actualRemote = (@($Rule.RemoteAddresses) | Sort-Object) -join ","
+    return ("$($Rule.Enabled)" -eq "True") -and ("$($Rule.Direction)" -eq "Inbound") -and ("$($Rule.Action)" -eq "Allow") -and
+        ("$($Rule.Protocol)" -eq "TCP") -and ((@($Rule.LocalPorts) -join ",") -eq "$LocalPort") -and ($actualRemote -eq $expectedRemote)
 }
 
 if ($MyInvocation.InvocationName -ne ".") {
@@ -98,6 +109,7 @@ if ($MyInvocation.InvocationName -ne ".") {
         -SetVmDefault { param($creator) Set-NetFirewallHyperVVMSetting -Name $creator -DefaultInboundAction Block } `
         -GetVmRule { param($name) Get-NetFirewallHyperVRule -Name $name -ErrorAction SilentlyContinue } `
         -NewVmRule { param($name, $display, $creator, $port, $addresses) New-NetFirewallHyperVRule -Name $name -DisplayName $display -Direction Inbound -VMCreatorId $creator -Protocol TCP -LocalPorts $port -RemoteAddresses $addresses -Action Allow | Out-Null } `
-        -SetVmRule { param($name, $port, $addresses) Set-NetFirewallHyperVRule -Name $name -Direction Inbound -Protocol TCP -LocalPorts $port -RemoteAddresses $addresses -Action Allow -Enabled True }
+        -TestVmRule { param($rule, $port, $addresses) Test-VmRuleMatches -Rule $rule -LocalPort $port -Remote $addresses } `
+        -RemoveVmRule { param($name) Remove-NetFirewallHyperVRule -Name $name }
     Write-Host "Inbound TCP/$Port allowed from: $($remote -join ', '). All other inbound traffic to WSL is blocked."
 }

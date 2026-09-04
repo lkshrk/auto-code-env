@@ -73,6 +73,8 @@ assert(dockerignore == [
   'checksums.txt',
   'releases/download/openhands-worker-v<version>/install.ps1',
   'releases/download/openhands-worker-v<version>/firewall.ps1',
+  'releases/download/openhands-worker-v<version>/keepalive.ps1',
+  'idle-stops',
   'openhands-overlay secrets',
   'openhands-overlay enable',
   '-RemoteAddresses',
@@ -126,7 +128,7 @@ assert(validation_export.include?('build-wsl.sh'), 'validation must export WSL i
 checks = validation.fetch('jobs').fetch('checks-amd64')
 assert(checks['runs-on'] == 'ubuntu-24.04', 'deterministic checks must run on amd64')
 checks_run = run(checks, 'Run deterministic validation')
-%w[provision.Tests.sh runtime.Tests.sh image.Tests.sh overlay.Tests.sh install.Tests.ps1 firewall.Tests.ps1].each do |test|
+%w[provision.Tests.sh runtime.Tests.sh image.Tests.sh overlay.Tests.sh install.Tests.ps1 firewall.Tests.ps1 keepalive.Tests.ps1].each do |test|
   assert(checks_run.include?(test), "deterministic checks must run #{test}")
 end
 assert(checks_run.match?(%r{mcr\.microsoft\.com/powershell@sha256:[0-9a-f]{64}}), 'PowerShell test image must be digest-pinned')
@@ -176,7 +178,9 @@ assert(prepare.include?('gh release view "$tag" --json isDraft,tagName,assets'),
 assert(prepare.include?('gh release upload "$tag" --clobber'), 'draft asset upload must be idempotent')
 assert(prepare.include?('cp runtimes/wsl/install.ps1 release/install.ps1'), 'release must stage the installer from the tagged tree')
 assert(prepare.include?('cp runtimes/wsl/firewall.ps1 release/firewall.ps1'), 'release must stage the firewall script from the tagged tree')
-assert(prepare.include?('sha256sum install.ps1 firewall.ps1 >> checksums.txt'), 'release checksums must cover both host scripts')
+assert(prepare.include?('cp runtimes/wsl/keepalive.ps1 release/keepalive.ps1'), 'release must stage the keepalive script from the tagged tree')
+assert(prepare.include?('sha256sum install.ps1 firewall.ps1 keepalive.ps1 >> checksums.txt'), 'release checksums must cover every host script')
+assert(prepare.scan(/"?keepalive\.ps1"?/).length >= 4, 'keepalive script must be uploaded and verified like every other asset')
 assert(prepare.scan(/"?firewall\.ps1"?/).length >= 4, 'firewall script must be uploaded and verified like every other asset')
 assert(prepare.include?('release/install.ps1'), 'release must publish the installer')
 assert(prepare.scan(/"?install\.ps1"?/).length >= 4, 'installer must be uploaded and verified like every other asset')
