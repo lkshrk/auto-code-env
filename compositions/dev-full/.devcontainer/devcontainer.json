@@ -1,7 +1,0 @@
-{
-  "name": "auto-code-env dev-full",
-  "image": "ghcr.io/lkshrk/auto-code-env:dev-full-latest",
-  "containerUser": "dev",
-  "remoteUser": "dev",
-  "updateRemoteUserUID": false
-}

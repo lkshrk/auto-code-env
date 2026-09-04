@@ -1,6 +1,0 @@
-#!/bin/sh
-set -eu
-
-/usr/local/bin/auto-code-init
-export OMNI_CONFIG="$HOME/.config/omni/settings.json"
-exec "$@"

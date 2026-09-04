@@ -1,0 +1,78 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: validate OpenHands worker
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/validate-openhands-worker.yaml
+      - .github/workflows/release-openhands-worker.yaml
+      - runtimes/wsl/**
+
+permissions:
+  contents: read
+
+jobs:
+  checks-amd64:
+    name: deterministic checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Run deterministic validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash runtimes/wsl/tests/provision.Tests.sh
+          bash runtimes/wsl/tests/runtime.Tests.sh
+          bash runtimes/wsl/tests/image.Tests.sh
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File runtimes/wsl/tests/install.Tests.ps1
+          find runtimes/wsl -type f -name '*.sh' -print0 | xargs -0 shellcheck
+
+  validate:
+    name: ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+
+      - name: Validate build definition
+        run: bash runtimes/wsl/tests/image.Tests.sh
+
+      - name: Smoke native image build
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --file runtimes/wsl/Containerfile \
+            --platform '${{ matrix.platform }}' \
+            --target smoke \
+            --output type=cacheonly \
+            .
+
+      - name: Export and inspect native WSL image
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/worker-wsl"
+          version="ci-${GITHUB_SHA::12}"
+          runtimes/wsl/build-wsl.sh "$version" '${{ matrix.arch }}' "$output"
+          artifact="$output/openhands-worker-$version-${{ matrix.arch }}.wsl"
+          tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null

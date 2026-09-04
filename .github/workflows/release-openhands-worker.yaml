@@ -1,0 +1,287 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: release OpenHands worker
+
+on:
+  push:
+    tags:
+      - openhands-worker-v*
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-openhands-worker-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/lkshrk/openhands-worker
+
+jobs:
+  build:
+    name: build ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build architecture image and WSL artifact
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          [[ "$tag" == openhands-worker-v* ]]
+          VERSION=${tag#openhands-worker-v}
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          metadata="$RUNNER_TEMP/metadata.json"
+          docker buildx build \
+            --file runtimes/wsl/Containerfile \
+            --platform '${{ matrix.platform }}' \
+            --target oci \
+            --sbom=true \
+            --provenance=mode=max \
+            --metadata-file "$metadata" \
+            --output "type=image,name=$IMAGE,push=true,push-by-digest=true,name-canonical=true" \
+            .
+          digest=$(jq -r '."containerimage.digest"' "$metadata")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$digest" > "$RUNNER_TEMP/image-digest-${{ matrix.arch }}.txt"
+          output="$RUNNER_TEMP/release"
+          runtimes/wsl/build-wsl.sh "$VERSION" '${{ matrix.arch }}' "$output"
+          artifact="$output/openhands-worker-${VERSION}-${{ matrix.arch }}.wsl"
+          tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
+          {
+            echo "version=$VERSION"
+            echo "artifact=$artifact"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload architecture release inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: worker-release-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            ${{ steps.build.outputs.artifact }}
+            ${{ steps.build.outputs.artifact }}.sha256
+            ${{ runner.temp }}/image-digest-${{ matrix.arch }}.txt
+
+  publish:
+    name: publish immutable release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download architecture release inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: worker-release-*
+          merge-multiple: true
+          path: release
+
+      - name: Verify artifacts and prepare draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          [[ "$tag" == openhands-worker-v* ]]
+          VERSION=${tag#openhands-worker-v}
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          tag_commit=$(git ls-remote --tags origin "refs/tags/$tag" | awk -v direct="refs/tags/$tag" -v peeled="refs/tags/$tag^{}" '
+            $2 == direct { direct_oid = $1 }
+            $2 == peeled { peeled_oid = $1 }
+            END { print peeled_oid != "" ? peeled_oid : direct_oid }
+          ')
+          test -n "$tag_commit"
+          test "$tag_commit" = "$GITHUB_SHA"
+          for arch in amd64 arm64; do
+            test -f "release/openhands-worker-${VERSION}-${arch}.wsl"
+            test -f "release/openhands-worker-${VERSION}-${arch}.wsl.sha256"
+            test -f "release/image-digest-${arch}.txt"
+          done
+          cat release/openhands-worker-"${VERSION}"-amd64.wsl.sha256 \
+            release/openhands-worker-"${VERSION}"-arm64.wsl.sha256 > release/checksums.txt
+          (cd release && sha256sum -c checksums.txt)
+          release_json="$RUNNER_TEMP/release.json"
+          release_error="$RUNNER_TEMP/release-error.log"
+          if ! gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json" 2> "$release_error"; then
+            if ! grep -Eqi 'HTTP 404|not found' "$release_error"; then
+              cat "$release_error" >&2
+              exit 1
+            fi
+            gh release create "$tag" \
+              --verify-tag \
+              --draft \
+              --title "OpenHands worker $VERSION" \
+              --generate-notes
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json"
+          fi
+          test "$(jq -r '.tag_name' "$release_json")" = "$tag"
+          release_draft=$(jq -r '.draft' "$release_json")
+          case "$release_draft" in
+            true)
+              gh release upload "$tag" --clobber \
+                release/openhands-worker-"$VERSION"-amd64.wsl \
+                release/openhands-worker-"$VERSION"-arm64.wsl \
+                release/checksums.txt
+              ;;
+            false)
+              for asset in \
+                "openhands-worker-$VERSION-amd64.wsl" \
+                "openhands-worker-$VERSION-arm64.wsl" \
+                checksums.txt; do
+                digest="sha256:$(sha256sum "release/$asset" | awk '{print $1}')"
+                jq -e --arg asset "$asset" --arg digest "$digest" \
+                  '.assets[] | select(.name == $asset and .state == "uploaded" and .digest == $digest)' \
+                  "$release_json" >/dev/null
+              done
+              ;;
+            *)
+              echo "::error::Unexpected release draft state: $release_draft"
+              exit 1
+              ;;
+          esac
+          {
+            echo "VERSION=$VERSION"
+            echo "RELEASE_TAG=$tag"
+            echo "RELEASE_IS_DRAFT=$release_draft"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify or create immutable manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/manifest.json"
+          inspect_error="$RUNNER_TEMP/manifest-inspect-error.log"
+          reference="$IMAGE:$VERSION"
+          amd64_index_digest=$(< release/image-digest-amd64.txt)
+          arm64_index_digest=$(< release/image-digest-arm64.txt)
+          source_descriptors() {
+            arch=$1
+            source=$2
+            output=$3
+            jq -e --arg arch "$arch" '
+              def index:
+                .mediaType == "application/vnd.oci.image.index.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json";
+              def image_manifest:
+                .mediaType == "application/vnd.oci.image.manifest.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.v2+json";
+              def runtime:
+                image_manifest and
+                .platform.os == "linux" and .platform.architecture == $arch;
+              def attestation($runtime_digest):
+                image_manifest and
+                .platform.os == "unknown" and
+                .platform.architecture == "unknown" and
+                (.annotations // {})["vnd.docker.reference.type"] == "attestation-manifest" and
+                (.annotations // {})["vnd.docker.reference.digest"] == $runtime_digest;
+              def descriptor:
+                { digest, mediaType, platform, annotations: (.annotations // {}) };
+              if index and ((.manifests | type) == "array") then
+                [.manifests[]] as $all |
+                [$all[] | select(runtime)] as $runtime |
+                if ($runtime | length) != 1 then false else
+                  $runtime[0].digest as $runtime_digest |
+                  [$all[] | select(attestation($runtime_digest))] as $attestations |
+                  if ($attestations | length) < 1 or
+                     ($all | length) != (1 + ($attestations | length))
+                  then false
+                  else ([$runtime[0]] + $attestations | map(descriptor) | sort_by(.digest))
+                  end
+                end
+              else false end
+            ' "$source" > "$output"
+          }
+          source_amd64="$RUNNER_TEMP/source-amd64-index.json"
+          source_arm64="$RUNNER_TEMP/source-arm64-index.json"
+          docker buildx imagetools inspect --raw "$IMAGE@$amd64_index_digest" > "$source_amd64"
+          docker buildx imagetools inspect --raw "$IMAGE@$arm64_index_digest" > "$source_arm64"
+          source_descriptors amd64 "$source_amd64" "$RUNNER_TEMP/source-amd64-descriptors.json"
+          source_descriptors arm64 "$source_arm64" "$RUNNER_TEMP/source-arm64-descriptors.json"
+          expected="$RUNNER_TEMP/expected-descriptors.json"
+          jq -s 'add | sort_by(.digest)' \
+            "$RUNNER_TEMP/source-amd64-descriptors.json" \
+            "$RUNNER_TEMP/source-arm64-descriptors.json" > "$expected"
+          verify_manifest() {
+            jq -e --slurpfile expected "$expected" '
+              def index:
+                .mediaType == "application/vnd.oci.image.index.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json";
+              def descriptor:
+                { digest, mediaType, platform, annotations: (.annotations // {}) };
+              if index and ((.manifests | type) == "array") then
+                ([.manifests[] | descriptor] | sort_by(.digest)) == ($expected[0] | sort_by(.digest))
+              else false end
+            ' "$manifest" >/dev/null
+          }
+          is_exact_absence() {
+            test "$(wc -l < "$1")" -eq 1 &&
+              test "$(cat "$1")" = "ERROR: $2: not found"
+          }
+          if docker buildx imagetools inspect --raw "$reference" > "$manifest" 2> "$inspect_error"; then
+            verify_manifest
+            exit 0
+          fi
+          if ! is_exact_absence "$inspect_error" "$reference"; then
+            cat "$inspect_error" >&2
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "$IMAGE:$VERSION" \
+            "$IMAGE@$amd64_index_digest" \
+            "$IMAGE@$arm64_index_digest"
+          docker buildx imagetools inspect --raw "$reference" > "$manifest"
+          verify_manifest
+
+      - name: Publish verified draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=$RELEASE_TAG
+          if test "$RELEASE_IS_DRAFT" = true; then
+            gh release edit "$tag" --draft=false
+          elif test "$RELEASE_IS_DRAFT" != false; then
+            echo "::error::Unexpected release draft state: $RELEASE_IS_DRAFT"
+            exit 1
+          fi
