@@ -1,4 +1,6 @@
+ARG OPENHANDS_WORKER_VERSION=dev
 FROM ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b AS provisioned
+ARG OPENHANDS_WORKER_VERSION
 
 RUN test "$(/usr/bin/getent passwd ubuntu)" = 'ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash' && \
     test "$(/usr/bin/getent group ubuntu)" = 'ubuntu:x:1000:' && \
@@ -20,6 +22,9 @@ RUN OPENHANDS_IMAGE_BUILD=1 /bin/bash /opt/openhands-build/provision.sh && \
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin UV_CACHE_DIR=/home/agent/.cache/uv \
       /usr/local/bin/uv run --no-project --with openhands-automation==1.9.0 python -m uvicorn openhands.automation.app:app --help >/dev/null && \
     test "$(/usr/bin/id -u agent)" = 1000 && test "$(/usr/bin/id -g agent)" = 1000 && \
+    /usr/bin/install -d -o root -g root -m 0755 /etc/openhands && \
+    printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release && \
+    /usr/bin/chmod 0644 /etc/openhands/release && \
     /usr/bin/rm -rf /var/lib/apt/lists/*
 
 FROM provisioned AS oci

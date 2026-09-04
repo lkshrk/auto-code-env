@@ -62,6 +62,7 @@ jobs:
             --file runtimes/wsl/Containerfile \
             --platform '${{ matrix.platform }}' \
             --target oci \
+            --build-arg "OPENHANDS_WORKER_VERSION=$VERSION" \
             --sbom=true \
             --provenance=mode=max \
             --metadata-file "$metadata" \
@@ -77,6 +78,7 @@ jobs:
           tar -tf "$artifact" | grep -E '^\.?/?etc/systemd/system/systemd-modules-load\.service\.d/10-wsl\.conf$' >/dev/null
           tar -tf "$artifact" | grep -E '^\.?/?usr/lib/systemd/system/dbus\.socket$' >/dev/null
           tar -xOf "$artifact" --wildcards '*etc/pam.d/common-session' | grep -E '^session[[:space:]]+optional[[:space:]]+pam_systemd\.so' >/dev/null
+          tar -xOf "$artifact" --wildcards '*etc/openhands/release' | grep -Fx "openhands-worker $VERSION"
           {
             echo "version=$VERSION"
             echo "artifact=$artifact"

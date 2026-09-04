@@ -178,6 +178,23 @@ service if it is running. Origins are `https://host[:port]` only.
 wsl.exe -d openhands-worker -u root -- openhands-overlay origin https://canvas.example
 ```
 
+GitHub access for the agent uses a dedicated token stored in the same vault.
+`openhands-overlay github --pat-id <uuid>` fetches it in the same transient
+vault session, writes `/home/agent/.git-credentials` as `agent:agent 0600` in
+`https://x-access-token:<token>@github.com` form, and sets
+`credential.helper store` for `agent`. Git, `gh`, Claude Code, and Codex use it;
+no token reaches the environment or the image. `--vault-url` and `--email` are
+only needed if `secrets` has not configured `rbw` yet.
+
+```powershell
+wsl.exe -d openhands-worker -u root -- openhands-overlay github --pat-id <uuid>
+```
+
+Every image carries `/etc/openhands/release` with `openhands-worker <version>`
+(`ci-<sha>` for validation builds, `dev` for untagged local builds), stamped
+through the `OPENHANDS_WORKER_VERSION` build argument. `openhands-overlay
+status` prints it; the release workflow verifies it inside the `.wsl` artifact.
+
 `openhands-overlay verify` checks files, ownership, modes, that the private
 key matches the certificate, and `nginx -t`. `openhands-overlay enable`
 refuses to start anything until `verify` passes, then enables nginx and

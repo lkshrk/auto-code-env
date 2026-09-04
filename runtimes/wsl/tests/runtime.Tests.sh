@@ -81,6 +81,13 @@ grep -Fx 'MASTER_PASSWORD_FILE=/run/openhands-rbw-master' "$overlay"
 grep -F 'rbw config set pinentry "$PINENTRY"' "$overlay"
 grep -F 'systemctl enable --now nginx.service agent-canvas.service' "$overlay"
 grep -F 'OH_ALLOW_CORS_ORIGINS_' "$overlay"
+grep -F 'x-access-token' "$overlay"
+grep -F '/home/agent/.git-credentials' "$overlay"
+grep -Fx 'ARG OPENHANDS_WORKER_VERSION=dev' "$containerfile"
+grep -F 'printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release' "$containerfile"
+grep -F 'RELEASE_MARKER=/etc/openhands/release' "$overlay"
+grep -F 'VERSION="$version" docker buildx bake' "$repo_root/runtimes/wsl/build-wsl.sh"
+test "$(grep -c 'OPENHANDS_WORKER_VERSION = "${VERSION}"' "$repo_root/runtimes/wsl/docker-bake.hcl")" = 3
 grep -F '/etc/systemd/system/agent-canvas.service.d/10-overlay.conf' "$overlay"
 if grep -E 'RemoteAddress(es)? (Any|\*)' "$firewall"; then exit 1; fi
 if grep -F 'Set-NetFirewallHyperVRule' "$firewall"; then exit 1; fi
