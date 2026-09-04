@@ -67,9 +67,9 @@ runtimes/wsl/build-wsl.sh 1.2.3 amd64 dist
 
 Only `openhands-worker-v*` tags release artifacts. Native GitHub runners build
 amd64 and arm64 separately; no QEMU emulation is accepted. The release has the
-two `.wsl` files, the matching `install.ps1`, `firewall.ps1`, and
-`keepalive.ps1`, and a combined `checksums.txt` covering all five, and GHCR has
-immutable
+two `.wsl` files, the matching `install.ps1`, `firewall.ps1`, `keepalive.ps1`,
+the in-distro `openhands-overlay` tool, and a combined `checksums.txt` covering
+all six, and GHCR has immutable
 `ghcr.io/lkshrk/openhands-worker:<version>` manifest with both architectures,
 SBOM, and provenance.
 
@@ -160,6 +160,22 @@ the item password.
 ```powershell
 wsl.exe -d openhands-worker -u root -- openhands-overlay secrets --vault-url https://vault.example --email worker@example --crt-id <uuid> --key-id <uuid> --api-id <uuid>
 wsl.exe -d openhands-worker -u root -- openhands-overlay enable
+```
+
+`openhands-overlay` ships inside the image and as a release asset,
+`https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/openhands-overlay`,
+so an installed distro can take a newer tool without re-import: download as
+root, compare with `checksums.txt`, then `install -o root -g root -m 0755` to
+`/usr/local/sbin/openhands-overlay`.
+
+Agent Canvas connects to a remote backend from the browser, so the worker must
+allow the Canvas page origin for CORS. `openhands-overlay origin
+https://canvas.example` writes `OH_ALLOW_CORS_ORIGINS_0` (and `_1`, `_2`, ...
+for additional origins) into a persistent service drop-in and restarts the
+service if it is running. Origins are `https://host[:port]` only.
+
+```powershell
+wsl.exe -d openhands-worker -u root -- openhands-overlay origin https://canvas.example
 ```
 
 `openhands-overlay verify` checks files, ownership, modes, that the private

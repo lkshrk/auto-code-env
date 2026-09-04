@@ -91,7 +91,7 @@ cat > "$shim/systemctl" <<'EOF'
 #!/bin/sh
 echo "systemctl $*" >> /tmp/log/systemctl
 case "$1" in
-  enable) exit 0 ;;
+  enable|daemon-reload|try-restart) exit 0 ;;
   is-active) printf 'active\nactive\n' ;;
   *) exit 1 ;;
 esac
@@ -133,6 +133,18 @@ test "$login_line" -lt "$first_get"
 
 run enable | grep -Fq 'active'
 grep -Fq 'systemctl enable --now nginx.service agent-canvas.service' /tmp/log/systemctl
+
+if run origin http://orc.example >/dev/null 2>&1; then echo 'plain HTTP origin must be rejected'; exit 1; fi
+if run origin 'https://orc.example/path' >/dev/null 2>&1; then echo 'origin with a path must be rejected'; exit 1; fi
+test ! -e /etc/systemd/system/agent-canvas.service.d/10-overlay.conf
+run origin https://orc.example | grep -Fq 'origin https://orc.example'
+test "$(stat -c '%U:%G %a' /etc/systemd/system/agent-canvas.service.d/10-overlay.conf)" = 'root:root 644'
+grep -Fxq 'Environment=OH_ALLOW_CORS_ORIGINS_0=https://orc.example' /etc/systemd/system/agent-canvas.service.d/10-overlay.conf
+grep -Fq 'systemctl daemon-reload' /tmp/log/systemctl
+grep -Fq 'systemctl try-restart agent-canvas.service' /tmp/log/systemctl
+run origin https://orc.example https://second.example >/dev/null
+grep -Fxq 'Environment=OH_ALLOW_CORS_ORIGINS_1=https://second.example' /etc/systemd/system/agent-canvas.service.d/10-overlay.conf
+test "$(grep -c '^Environment=OH_ALLOW_CORS_ORIGINS_' /etc/systemd/system/agent-canvas.service.d/10-overlay.conf)" = 2
 
 run secrets --vault-url https://vault.example --email a@b \
   --crt-id 11111111-1111-1111-1111-111111111111 \

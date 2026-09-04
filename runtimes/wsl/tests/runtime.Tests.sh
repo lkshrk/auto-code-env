@@ -80,6 +80,8 @@ grep -F 'chmod 0755 /usr/local/sbin/openhands-overlay' <<< "$wsl_stage"
 grep -Fx 'MASTER_PASSWORD_FILE=/run/openhands-rbw-master' "$overlay"
 grep -F 'rbw config set pinentry "$PINENTRY"' "$overlay"
 grep -F 'systemctl enable --now nginx.service agent-canvas.service' "$overlay"
+grep -F 'OH_ALLOW_CORS_ORIGINS_' "$overlay"
+grep -F '/etc/systemd/system/agent-canvas.service.d/10-overlay.conf' "$overlay"
 if grep -E 'RemoteAddress(es)? (Any|\*)' "$firewall"; then exit 1; fi
 if grep -F 'Set-NetFirewallHyperVRule' "$firewall"; then exit 1; fi
 grep -F -- '--exec /bin/sleep infinity' "$keepalive"
