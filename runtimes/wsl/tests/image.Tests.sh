@@ -65,6 +65,7 @@ assert(dockerignore == [
 
 [
   'multi-architecture OCI image',
+  'gzip-compressed tar',
   'openhands-worker-<version>-amd64.wsl',
   'openhands-worker-<version>-arm64.wsl',
   'checksums.txt',
@@ -291,17 +292,32 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$DOCKER_LOG"
 for argument; do
   case $argument in
-    *type=tar,dest=*) printf artifact > "${argument#*type=tar,dest=}" ;;
+    *type=tar,dest=*)
+      destination=${argument#*type=tar,dest=}
+      root=$(mktemp -d)
+      mkdir -p "$root/etc"
+      printf '[boot]\nsystemd=true\n' > "$root/etc/wsl.conf"
+      TZ=UTC touch -t 200001010000 "$root/etc/wsl.conf"
+      tar -cf "$destination" -C "$root" etc/wsl.conf
+      rm -rf -- "$root"
+      ;;
   esac
 done
 if test -n "${CHECKSUM_COLLISION:-}"; then
-  destination=${argument#*type=tar,dest=}
-  artifact_name=${destination##*/.}
-  artifact_name=${artifact_name%.*}
-  printf collision > "${destination%/*}/${artifact_name}.sha256"
+  printf collision > "$CHECKSUM_COLLISION"
 fi
 EOF
 chmod 0755 "$fake_bin/docker"
+cat > "$fake_bin/wc" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if test -n "${OVERSIZE:-}"; then
+  printf '2147483648\n'
+else
+  /usr/bin/wc "$@"
+fi
+EOF
+chmod 0755 "$fake_bin/wc"
 cat > "$fake_bin/ln" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -326,12 +342,17 @@ artifact="$test_root/output/openhands-worker-1.2.3-amd64.wsl"
 checksum="$artifact.sha256"
 test -f "$artifact"
 test -f "$checksum"
+gzip -t "$artifact"
+tar -tf "$artifact" | grep -Fx 'etc/wsl.conf' >/dev/null
 canonical_output=$(cd "$test_root/output" && pwd -P)
 grep -F "buildx bake --allow=fs.write=$canonical_output -f runtimes/wsl/docker-bake.hcl wsl-amd64 --set wsl-amd64.output=type=tar,dest=" "$test_root/docker.log"
 (cd "$test_root/output" && sha256sum -c "$(basename "$checksum")")
 test -f "$test_root/output/openhands-worker-1.2.3-amd64.wsl"
 DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.3 arm64 "$test_root/output"
+arm64_artifact="$test_root/output/openhands-worker-1.2.3-arm64.wsl"
 (cd "$test_root/output" && sha256sum -c openhands-worker-1.2.3-arm64.wsl.sha256)
+cmp -s "$artifact" "$arm64_artifact"
+test -z "$(find -L "$test_root/output" -maxdepth 1 -name '.openhands-worker-*.tar.*' -print -quit)"
 
 before_artifact=$(sha256sum "$artifact")
 before_checksum=$(sha256sum "$checksum")
@@ -341,7 +362,7 @@ test "$before_checksum" = "$(sha256sum "$checksum")"
 
 collision_artifact="$test_root/output/openhands-worker-1.2.4-amd64.wsl"
 collision_checksum="$collision_artifact.sha256"
-if CHECKSUM_COLLISION=1 DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.4 amd64 "$test_root/output"; then exit 1; fi
+if CHECKSUM_COLLISION="$collision_checksum" DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.4 amd64 "$test_root/output"; then exit 1; fi
 test ! -e "$collision_artifact"
 test "$(cat "$collision_checksum")" = collision
 
@@ -350,3 +371,10 @@ interrupted_checksum="$interrupted_artifact.sha256"
 if CHECKSUM_INTERRUPT=1 LN_CALLS="$test_root/ln-calls" DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.5 amd64 "$test_root/output"; then exit 1; fi
 test ! -e "$interrupted_artifact"
 test ! -e "$interrupted_checksum"
+
+oversize_artifact="$test_root/output/openhands-worker-1.2.6-amd64.wsl"
+oversize_checksum="$oversize_artifact.sha256"
+if OVERSIZE=1 DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.6 amd64 "$test_root/output"; then exit 1; fi
+test ! -e "$oversize_artifact"
+test ! -e "$oversize_checksum"
+test -z "$(find -L "$test_root/output" -maxdepth 1 -name '.openhands-worker-1.2.6-amd64.wsl*' -print -quit)"

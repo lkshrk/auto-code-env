@@ -14,8 +14,10 @@ source tree + pinned tool definitions
                      openhands-worker-<version>-arm64.wsl
 ```
 
-The OCI image is for Docker and Kubernetes. The `.wsl` files are separate,
-architecture-specific WSL root filesystems; they are not OCI images.
+The OCI image is for Docker and Kubernetes. Each `.wsl` file is a
+gzip-compressed tar root filesystem, following
+[Microsoft's custom distribution format](https://learn.microsoft.com/windows/wsl/build-custom-distro);
+it is not an OCI image.
 
 ## Runtime contract
 
