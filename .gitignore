@@ -28,3 +28,5 @@ __pycache__/
 .superpowers/
 .taskless/
 .agent-progress.md
+docs/superpowers/
+docs/handover/
