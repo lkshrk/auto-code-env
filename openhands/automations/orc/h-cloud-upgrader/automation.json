@@ -14,5 +14,6 @@
     "MAX_UPGRADES_PER_RUN": "0",
     "HEALTH_TIMEOUT_MINUTES": "10",
     "DRY_RUN": "false"
-  }
+  },
+  "bootstrap": true
 }

@@ -71,8 +71,25 @@ step. The automation `timeout` (12 h) is the platform's hard stop, not a pacing 
 - Egress: the `ai` namespace must be able to reach `webhook-receiver.flux-system` and,
   for the functional checks, service DNS names of other namespaces or the
   `*.h-cloud.lan` gateway.
-- Tools: the agent installs `yq`, `crane`, `flux` and `helm` into `~/.openhands/bin`
-  on first run; `kubectl` is already there.
+- Base image: Linux x86_64, Python 3.11+, bash, git, curl and uv. No sudo, Docker,
+  Talos credentials or cluster writes are needed for setup.
+- Tools: `bootstrap/setup.py` runs before the agent on every scheduled/manual run.
+  `bootstrap/tools.lock.json` pins kubectl, gh, Mike Farah yq v4, crane, flux, Helm,
+  jq, just and Flate (v0.6.1, matching the GitOps repo's Mise and CI pins).
+  Download and executable SHA-256 values are checked before execution; the source
+  of each official checksum is recorded in the lock. No runtime `latest` lookup.
+  Cache location: `~/.openhands/toolchains/h-cloud-upgrader/<lock-sha256>/bin`.
+  Matching binaries are reused after hash and version checks; replacements are
+  atomically installed under a file lock. Existing `~/.openhands/bin` is untouched.
+  Unsupported platforms, failed downloads, checksums or version checks stop setup.
+  The standard preset SDK setup is then run unchanged and its Python environment
+  checked for YAML aliases and version parsing support.
+- Validation: the prompt permits the repository's `scripts/flate-test.sh` with the
+  same arguments/exclusions as `just flux validate` when unrelated Talos expressions
+  break Just evaluation. No dummy commands or fabricated Talos config. Flate pin
+  drift or a failing validator baseline blocks pushes. Registry authorization,
+  resource read permissions and functional-check coverage are separate checks,
+  not problems that the installer can fix.
 
 Pod-scoped instead of run-scoped: automation runs share the pod (and service account)
 with interactive Agent Canvas sessions, so every conversation on the pod has the same
@@ -90,6 +107,25 @@ existing automation named `h-cloud-upgrader` via `GET /api/automation/v1`, and u
 it (`PATCH`) or creates it (`POST /api/automation/v1/preset/prompt`). `--dry-run`
 prints the body. `OPENHANDS_URL` overrides the base URL, default
 `http://openhands.ai.svc.cluster.local:8000`.
+
+With `bootstrap: true`, apply packages the two reviewed bootstrap files alongside
+(not instead of) the generated SDK files. It wraps the actual `setup.sh` entry point with `python3 bootstrap/setup.py`,
+preserves the original SDK setup as `bootstrap/sdk-setup.sh`, and renders the
+immutable toolchain PATH into the prompt. New automations stay disabled until packaging succeeds; existing ones are
+switched with one PATCH. Reapplying unchanged files reuses the package. Prompt
+edits preserve the bootstrap files. The smoke harness uses this same deployment
+path and applies dry-run overrides before rendering.
+
+To check only tool installation without starting an agent:
+
+```bash
+python3 openhands/automations/orc/h-cloud-upgrader/bootstrap/setup.py --tools-only
+```
+
+To update tool versions, review the upstream release, update both artifact and
+executable hashes in the lock, run the tests and tools-only check, then reapply.
+A lock change selects a new cache directory without changing in-flight runs.
+Changing setup does not retrofit an agent that has already started.
 
 Trigger a run by hand:
 
