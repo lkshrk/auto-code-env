@@ -1,0 +1,143 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Coder Templates
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - coder/templates/*.tf
+      - coder/templates/**/*.tf
+  pull_request:
+    paths:
+      - coder/templates/*.tf
+      - coder/templates/**/*.tf
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  push-templates:
+    name: Push Templates
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Determine templates to push
+        id: changed
+        run: |
+          set -euo pipefail
+          TEMPLATE_DIR="coder/templates"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch origin "$GITHUB_BASE_REF" --depth=1
+            changed=$(git diff --name-only "origin/$GITHUB_BASE_REF"...HEAD -- "$TEMPLATE_DIR" || true)
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            # Manual runs validate and push everything.
+            changed="$TEMPLATE_DIR/common.tf"
+          else
+            # Diff the whole push, not just the head commit — a multi-commit
+            # push can have the template changes buried behind its head.
+            BEFORE="${{ github.event.before }}"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+              && git fetch origin "$BEFORE" --depth=1 2>/dev/null; then
+              changed=$(git diff --name-only "$BEFORE"..HEAD -- "$TEMPLATE_DIR" || true)
+            else
+              changed=$(git diff --name-only HEAD~1 HEAD -- "$TEMPLATE_DIR" || true)
+            fi
+          fi
+
+          # If shared Coder bootstrap changed, validate/push every template.
+          if echo "$changed" | grep -Eq "^$TEMPLATE_DIR/(common\.tf|shared/|tests/)"; then
+            dirs=$(find "$TEMPLATE_DIR" -mindepth 2 -maxdepth 2 -name main.tf -exec dirname {} \; | sort)
+          else
+            dirs=$(
+              echo "$changed" | while IFS= read -r file; do
+                case "$file" in
+                  "$TEMPLATE_DIR"/*/*.tf) dirname "$file" ;;
+                esac
+              done | sort -u
+            )
+          fi
+
+          echo "dirs<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$dirs" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Install validation tools
+        if: steps.changed.outputs.dirs != ''
+        run: |
+          set -euo pipefail
+          TERRAFORM_VERSION="1.15.5"
+          TERRAFORM_ASSET="terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/${TERRAFORM_ASSET}" -o /tmp/terraform.zip
+          curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS" -o /tmp/terraform.SHA256SUMS
+          TERRAFORM_SHA256=$(awk -v f="$TERRAFORM_ASSET" '$2 == f { print $1; exit }' /tmp/terraform.SHA256SUMS)
+          echo "$TERRAFORM_SHA256  /tmp/terraform.zip" | sha256sum -c -
+          unzip -q /tmp/terraform.zip -d /tmp/terraform
+          sudo install /tmp/terraform/terraform /usr/local/bin/terraform
+
+      - name: Validate templates
+        if: steps.changed.outputs.dirs != ''
+        run: |
+          set -euo pipefail
+          TEMPLATE_DIR="coder/templates"
+
+          bash "$TEMPLATE_DIR/tests/prepare-dotfiles.sh"
+
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            name=$(basename "$dir")
+            echo "Validating template: $name"
+            tmpdir=$(mktemp -d)
+            cp "$TEMPLATE_DIR/common.tf" "$tmpdir/common.tf"
+            cp -R "$TEMPLATE_DIR/shared" "$tmpdir/shared"
+            cp "$dir"/*.tf "$tmpdir/"
+            terraform -chdir="$tmpdir" fmt -check -diff
+            terraform -chdir="$tmpdir" init -backend=false -input=false
+            terraform -chdir="$tmpdir" validate
+            rm -rf "$tmpdir"
+          done <<< "${{ steps.changed.outputs.dirs }}"
+
+      - name: Install Coder CLI
+        if: github.event_name != 'pull_request' && steps.changed.outputs.dirs != ''
+        run: |
+          set -euo pipefail
+          # Match the server version to avoid version-mismatch failures.
+          CODER_VERSION=$(curl -fsSL "$CODER_URL/api/v2/buildinfo" | jq -r '.version' | sed 's/^v//; s/+.*//')
+          curl -fsSL "https://github.com/coder/coder/releases/download/v${CODER_VERSION}/coder_${CODER_VERSION}_linux_amd64.deb" -o /tmp/coder.deb
+          sudo dpkg -i /tmp/coder.deb
+          rm /tmp/coder.deb
+        env:
+          CODER_URL: https://coder.h-cloud.io
+          CODER_SESSION_TOKEN: ${{ secrets.CODER_SESSION_TOKEN }}
+
+      - name: Push templates to Coder
+        if: github.event_name != 'pull_request' && steps.changed.outputs.dirs != ''
+        env:
+          CODER_URL: https://coder.h-cloud.io
+          CODER_SESSION_TOKEN: ${{ secrets.CODER_SESSION_TOKEN }}
+        run: |-
+          set -euo pipefail
+          TEMPLATE_DIR="coder/templates"
+
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            name=$(basename "$dir")
+            echo "→ Pushing template: $name"
+            tmpdir=$(mktemp -d)
+            cp "$TEMPLATE_DIR/common.tf" "$tmpdir/common.tf"
+            cp -R "$TEMPLATE_DIR/shared" "$tmpdir/shared"
+            cp "$dir"/*.tf "$tmpdir/"
+            coder templates push "$name" --directory "$tmpdir" --yes
+            rm -rf "$tmpdir"
+            echo "✓ $name pushed"
+          done <<< "${{ steps.changed.outputs.dirs }}"
