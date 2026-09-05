@@ -451,6 +451,22 @@ if run state export >/dev/null 2>&1; then echo 'export must fail without state';
 mv /tmp/kept.credentials /home/agent/.git-credentials
 mv /tmp/kept.gitconfig /home/agent/.gitconfig
 
+cat > /tmp/tcp-fixture <<'EOF'
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:1F40 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 100 0 0 10 0
+   1: C314A8C0:D431 08080808:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+   2: C314A8C0:D432 08080808:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+   3: C314A8C0:D433 0100007F:1F40 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+   4: C314A8C0:D434 0200A8C0:0035 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+   5: 0000000000000000FFFF0000C314A8C0:D435 0000000000000000FFFF00008C52768D:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+EOF
+egress_out=$(run egress --from /tmp/tcp-fixture)
+printf '%s\n' "$egress_out" | grep -Eq '^internet 8\.8\.8\.8 443 2 ' || { echo "expected 8.8.8.8:443 sampled twice"; printf '%s\n' "$egress_out"; exit 1; }
+printf '%s\n' "$egress_out" | grep -Eq '^lan 192\.168\.0\.2 53 1 '
+printf '%s\n' "$egress_out" | grep -Eq '^internet 141\.118\.82\.140 443 1 '
+if printf '%s\n' "$egress_out" | grep -q '127\.0\.0\.1'; then echo 'loopback must be excluded'; exit 1; fi
+test "$(printf '%s\n' "$egress_out" | grep -c '^\(lan\|internet\) ')" = 3
+if run egress --minutes x >/dev/null 2>&1; then echo 'non-integer minutes must be rejected'; exit 1; fi
 echo 'overlay tests passed'
 INNER
 )

@@ -34,6 +34,7 @@ usage: openhands-overlay secrets --vault-url URL --email EMAIL --crt-id UUID --k
        openhands-overlay verify
        openhands-overlay enable
        openhands-overlay status
+       openhands-overlay egress [--minutes N] [--interval SECONDS] [--from FILE]
 
 --password-stdin reads the Vaultwarden master password from stdin instead of
 asking for it interactively.
@@ -686,6 +687,79 @@ origin() {
     done
 }
 
+egress() {
+    minutes=10 interval=5 source=''
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --minutes) minutes=${2:-}; shift 2 ;;
+            --interval) interval=${2:-}; shift 2 ;;
+            --from) source=${2:-}; shift 2 ;;
+            *) usage ;;
+        esac
+    done
+    printf '%s' "$minutes$interval" | grep -Eq '^[0-9]+$' || fail 'minutes and interval must be integers'
+    /usr/bin/python3 - "$minutes" "$interval" "$source" <<'PYTHON'
+import ipaddress, socket, sys, time
+from collections import Counter
+
+minutes, interval, source = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+ESTABLISHED = "01"
+
+def decode(addr, family):
+    host, port = addr.split(":")
+    if family == 4:
+        ip = ipaddress.ip_address(bytes.fromhex(host)[::-1])
+    else:
+        raw = bytes.fromhex(host)
+        ip = ipaddress.ip_address(b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4)))
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+    return ip, int(port, 16)
+
+def sample(lines):
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 4 or fields[3] != ESTABLISHED:
+            continue
+        family = 6 if len(fields[2].split(":")[0]) == 32 else 4
+        remote, port = decode(fields[2], family)
+        if remote.is_loopback or remote.is_link_local or remote.is_unspecified:
+            continue
+        yield str(remote), port
+
+seen = Counter()
+if source:
+    with open(source) as handle:
+        seen.update(sample(handle.read().splitlines()))
+else:
+    deadline = time.time() + minutes * 60
+    while True:
+        for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+            try:
+                with open(path) as handle:
+                    seen.update(sample(handle.read().splitlines()[1:]))
+            except OSError:
+                pass
+        if time.time() >= deadline:
+            break
+        time.sleep(interval)
+
+def scope(ip):
+    address = ipaddress.ip_address(ip)
+    return "lan" if address.is_private else "internet"
+
+def name(ip):
+    try:
+        return socket.gethostbyaddr(ip)[0]
+    except OSError:
+        return "-"
+
+print("scope destination port samples name")
+for (ip, port), count in sorted(seen.items(), key=lambda item: (scope(item[0][0]), item[0])):
+    print(f"{scope(ip)} {ip} {port} {count} {name(ip)}")
+PYTHON
+}
+
 status() {
     if [ -r "$RELEASE_MARKER" ]; then
         printf 'release %s\n' "$(cat "$RELEASE_MARKER")"
@@ -712,5 +786,6 @@ case $command in
     enable) [ $# -eq 0 ] || usage; enable_services ;;
     origin) origin "$@" ;;
     status) [ $# -eq 0 ] || usage; status ;;
+    egress) egress "$@" ;;
     *) usage ;;
 esac
