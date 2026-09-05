@@ -56,12 +56,23 @@ if ($source -notmatch '40E0AC32-46A5-438A-A0B2-2B479E8F2E90') {
 if ($source -notmatch 'DefaultInboundAction Block') {
     throw "Hyper-V default inbound action must be Block."
 }
+if ($source -notmatch '\[int\[\]\]\$AllowedPorts = @\(443, 2376\)') {
+    throw "The exposable port allowlist must be exactly 443 and 2376."
+}
+if ($source -notmatch '\$RuleName = "openhands-worker-https"') {
+    throw "RuleName must default to the released worker rule name."
+}
+if ($source -notmatch '\$RuleDisplayName = "OpenHands worker HTTPS"') {
+    throw "RuleDisplayName must default to the released worker rule display name."
+}
 foreach ($name in "Test-TrustedRemoteAddress", "Get-TrustedRemoteAddresses", "Set-WorkerFirewallRules", "Test-VmRuleMatches") {
     Invoke-Expression (Import-ScriptFunction -Path $scriptPath -Name $name)
 }
 $WslVmCreatorId = "{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}"
 $RuleName = "openhands-worker-https"
 $RuleDisplayName = "OpenHands worker HTTPS"
+$CoderRuleName = "coder-worker-docker"
+$CoderRuleDisplayName = "Coder worker Docker"
 
 Assert-Equal $true (Test-TrustedRemoteAddress -Address "10.254.0.10") "single IPv4 host"
 Assert-Equal $true (Test-TrustedRemoteAddress -Address "10.254.0.0/24") "/24 range"
@@ -103,7 +114,7 @@ $common = @{
     RemoveVmRule = { param($name) $calls.Add("remove-vm $name") }
 }
 
-Set-WorkerFirewallRules -Remote @("10.254.0.10", "10.254.0.11") -LocalPort 443 @common
+Set-WorkerFirewallRules -Name $RuleName -DisplayName $RuleDisplayName -Remote @("10.254.0.10", "10.254.0.11") -LocalPort 443 @common
 Assert-Equal "vm-default {40E0AC32-46A5-438A-A0B2-2B479E8F2E90}" $calls[0] "Hyper-V default block is applied first"
 Assert-Equal "get-host openhands-worker-https" $calls[1] "host rule lookup"
 Assert-Equal "new-host openhands-worker-https OpenHands worker HTTPS 443 10.254.0.10,10.254.0.11" $calls[2] "host rule created with exact sources"
@@ -115,19 +126,66 @@ $calls.Clear()
 $hostExists = $true
 $vmExists = $true
 $vmMatches = $true
-Set-WorkerFirewallRules -Remote @("10.254.0.99") -LocalPort 443 @common
+Set-WorkerFirewallRules -Name $RuleName -DisplayName $RuleDisplayName -Remote @("10.254.0.99") -LocalPort 443 @common
 Assert-Equal "set-host openhands-worker-https 443 10.254.0.99" $calls[2] "existing host rule is updated in place"
 Assert-Equal "test-vm 443 10.254.0.99" $calls[4] "existing vm rule is compared"
 Assert-Equal 5 $calls.Count "matching vm rule is left untouched"
 
 $calls.Clear()
 $vmMatches = $false
-Set-WorkerFirewallRules -Remote @("10.254.0.99") -LocalPort 443 @common
+Set-WorkerFirewallRules -Name $RuleName -DisplayName $RuleDisplayName -Remote @("10.254.0.99") -LocalPort 443 @common
 Assert-Equal "remove-vm openhands-worker-https" $calls[5] "differing vm rule is removed"
 Assert-Equal "new-vm openhands-worker-https {40E0AC32-46A5-438A-A0B2-2B479E8F2E90} 443 10.254.0.99" $calls[6] "differing vm rule is recreated"
 Write-Host "PASS: idempotent rule management"
 
 $calls.Clear()
-Assert-Throws { Set-WorkerFirewallRules -Remote @("10.254.0.99") -LocalPort 8000 @common } "Only TCP/443" "port 8000 is refused"
-Assert-Equal 0 $calls.Count "refused port makes no firewall call"
-Write-Host "PASS: only 443 is exposable"
+$hostExists = $false
+$vmExists = $false
+Set-WorkerFirewallRules -Name $CoderRuleName -DisplayName $CoderRuleDisplayName -Remote @("10.254.0.20") -LocalPort 2376 @common
+Assert-Equal "new-host coder-worker-docker Coder worker Docker 2376 10.254.0.20" $calls[2] "the docker rule is created under its own name"
+Assert-Equal "new-vm coder-worker-docker {40E0AC32-46A5-438A-A0B2-2B479E8F2E90} 2376 10.254.0.20" $calls[4] "the docker vm rule is created under its own name"
+foreach ($call in $calls) {
+    if ($call -match [regex]::Escape($RuleName)) {
+        throw "Creating the docker rule touched '$RuleName': $call"
+    }
+}
+Write-Host "PASS: the docker rule never names the worker rule"
+
+$calls.Clear()
+Assert-Throws { Set-WorkerFirewallRules -Name $CoderRuleName -DisplayName $CoderRuleDisplayName -Remote @("10.254.0.20") -LocalPort 8000 @common } "Only TCP/443 and TCP/2376" "port 8000 is refused"
+Assert-Throws { Set-WorkerFirewallRules -Name $CoderRuleName -DisplayName $CoderRuleDisplayName -Remote @("10.254.0.20") -LocalPort 22 @common } "Only TCP/443 and TCP/2376" "port 22 is refused"
+Assert-Throws { Set-WorkerFirewallRules -Name $CoderRuleName -DisplayName $CoderRuleDisplayName -Remote @("10.254.0.20") -LocalPort 2375 @common } "Only TCP/443 and TCP/2376" "the plaintext docker port is refused"
+Assert-Throws { Set-WorkerFirewallRules -Name "coder worker docker" -DisplayName $CoderRuleDisplayName -Remote @("10.254.0.20") -LocalPort 2376 @common } "is not valid" "an invalid rule name is refused"
+Assert-Equal 0 $calls.Count "a refused rule makes no firewall call"
+Write-Host "PASS: only the allowlisted ports are exposable"
+
+$hostRules = @{}
+$vmRules = @{}
+$removals = New-Object 'System.Collections.Generic.List[string]'
+$store = @{
+    GetHostRule  = { param($name) if ($hostRules.ContainsKey($name)) { $hostRules[$name] } }
+    NewHostRule  = { param($name, $display, $port, $addresses) $hostRules[$name] = [pscustomobject]@{ DisplayName = $display; LocalPorts = @("$port"); RemoteAddresses = @($addresses) } }
+    SetHostRule  = { param($name, $port, $addresses) $hostRules[$name].LocalPorts = @("$port"); $hostRules[$name].RemoteAddresses = @($addresses) }
+    SetVmDefault = { param($creator) }
+    GetVmRule    = { param($name) if ($vmRules.ContainsKey($name)) { $vmRules[$name] } }
+    NewVmRule    = { param($name, $display, $creator, $port, $addresses) $vmRules[$name] = [pscustomobject]@{ Enabled = "True"; Direction = "Inbound"; Action = "Allow"; Protocol = "TCP"; DisplayName = $display; LocalPorts = @("$port"); RemoteAddresses = @($addresses) } }
+    TestVmRule   = { param($rule, $port, $addresses) Test-VmRuleMatches -Rule $rule -LocalPort $port -Remote $addresses }
+    RemoveVmRule = { param($name) $removals.Add($name); $vmRules.Remove($name) }
+}
+
+Set-WorkerFirewallRules -Name $RuleName -DisplayName $RuleDisplayName -Remote @("10.254.0.10", "10.254.0.11") -LocalPort 443 @store
+Set-WorkerFirewallRules -Name $CoderRuleName -DisplayName $CoderRuleDisplayName -Remote @("10.254.0.20") -LocalPort 2376 @store
+Assert-Equal 2 $vmRules.Count "both Hyper-V rules coexist"
+Assert-Equal 2 $hostRules.Count "both host rules coexist"
+Assert-Equal "443" ($vmRules[$RuleName].LocalPorts -join ",") "the worker rule keeps TCP/443"
+Assert-Equal "10.254.0.10,10.254.0.11" ($vmRules[$RuleName].RemoteAddresses -join ",") "the worker rule keeps its sources"
+Assert-Equal "OpenHands worker HTTPS" $vmRules[$RuleName].DisplayName "the worker rule keeps its display name"
+Assert-Equal "2376" ($vmRules[$CoderRuleName].LocalPorts -join ",") "the docker rule owns TCP/2376"
+Assert-Equal "10.254.0.20" ($vmRules[$CoderRuleName].RemoteAddresses -join ",") "the docker rule owns its sources"
+Assert-Equal 0 $removals.Count "adding the docker rule removed nothing"
+
+Set-WorkerFirewallRules -Name $RuleName -DisplayName $RuleDisplayName -Remote @("10.254.0.10", "10.254.0.11") -LocalPort 443 @store
+Assert-Equal 0 $removals.Count "re-running the worker rule removed nothing"
+Assert-Equal "2376" ($vmRules[$CoderRuleName].LocalPorts -join ",") "re-running the worker rule left the docker rule alone"
+Assert-Equal "10.254.0.20" ($vmRules[$CoderRuleName].RemoteAddresses -join ",") "re-running the worker rule left the docker sources alone"
+Write-Host "PASS: two products own two independent rules"

@@ -1,0 +1,306 @@
+#!/bin/sh
+# shellcheck disable=SC2016
+set -eu
+
+PINENTRY=/usr/local/libexec/coder-worker-rbw-pinentry
+TLS_DIRECTORY=/etc/docker/tls
+CA_CERTIFICATE="$TLS_DIRECTORY/ca.pem"
+SERVER_CERTIFICATE="$TLS_DIRECTORY/server-cert.pem"
+SERVER_KEY="$TLS_DIRECTORY/server-key.pem"
+LAN_CA_DIRECTORY=/etc/ssl/lan
+LAN_CA="$LAN_CA_DIRECTORY/lan-ca.pem"
+DAEMON_CONFIG=/etc/docker/daemon.json
+CONFIG_DIRECTORY=/etc/coder-worker
+IMAGE_LIST="$CONFIG_DIRECTORY/images"
+RELEASE_MARKER="$CONFIG_DIRECTORY/release"
+WORKSPACE_ENV="$CONFIG_DIRECTORY/workspace.env"
+WORKSPACE_ENV_OWNER=1000:1000
+MASTER_PASSWORD_FILE=/run/coder-worker-rbw-master
+RBW_CONFIG=/root/.config/rbw/config.json
+TLS_PORT=2376
+PLAINTEXT_PORT=2375
+
+usage() {
+    cat >&2 <<'EOF'
+usage: coder-worker-overlay secrets --vault-url URL --email EMAIL --ca-id UUID --crt-id UUID --key-id UUID --lan-ca-id UUID [--env-id UUID]
+       coder-worker-overlay verify
+       coder-worker-overlay enable
+       coder-worker-overlay status
+EOF
+    exit 2
+}
+
+fail() {
+    printf 'coder-worker-overlay: %s\n' "$1" >&2
+    exit 1
+}
+
+require_root() {
+    [ "$(id -u)" = 0 ] || fail 'must run as root'
+}
+
+is_uuid() {
+    printf '%s' "$1" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+}
+
+configure_rbw() {
+    vault_url=$1 email=$2
+    if [ -z "$vault_url" ] && [ -z "$email" ]; then
+        [ -f "$RBW_CONFIG" ] || fail 'rbw is not configured yet; pass --vault-url and --email'
+        return
+    fi
+    case $vault_url in https://*) ;; *) fail 'vault URL must be absolute HTTPS' ;; esac
+    [ -n "$email" ] || fail 'email is required'
+    [ -x "$PINENTRY" ] || fail 'pinentry helper missing; run setup.sh first'
+    umask 077
+    mkdir -p "$(dirname "$RBW_CONFIG")"
+    rbw config set base_url "$vault_url"
+    rbw config set email "$email"
+    rbw config set pinentry "$PINENTRY"
+    rbw config set lock_timeout 300
+}
+
+# vault_run ENV... -- SCRIPT: runs SCRIPT as root in one transient unit with rbw unlocked.
+vault_run() {
+    set -- "$@"
+    env_args=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --) shift; break ;;
+            *) env_args="$env_args -E $1"; shift ;;
+        esac
+    done
+    [ $# -eq 1 ] || fail 'vault_run needs exactly one script'
+    umask 077
+    trap 'rm -f "$MASTER_PASSWORD_FILE"' EXIT INT TERM
+    systemd-ask-password --echo=no 'Vaultwarden master password:' | tr -d '\n' > "$MASTER_PASSWORD_FILE"
+    [ -s "$MASTER_PASSWORD_FILE" ] || fail 'empty master password'
+    # shellcheck disable=SC2086
+    systemd-run --quiet --pipe --wait --collect \
+        -E HOME=/root -E USER=root $env_args \
+        -E OVERLAY_SCRIPT="$1" \
+        -p "LoadCredential=rbw_master:$MASTER_PASSWORD_FILE" \
+        /bin/sh -u -c 'umask 077; rbw login && rbw sync && sh -eu -c "$OVERLAY_SCRIPT"; rc=$?; rbw lock; rbw stop-agent; rbw purge; exit $rc'
+    rm -f "$MASTER_PASSWORD_FILE"
+    trap - EXIT INT TERM
+}
+
+secrets() {
+    vault_url='' email='' ca_id='' crt_id='' key_id='' lan_ca_id='' env_id=''
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --vault-url) vault_url=${2:-}; shift 2 ;;
+            --email) email=${2:-}; shift 2 ;;
+            --ca-id) ca_id=${2:-}; shift 2 ;;
+            --crt-id) crt_id=${2:-}; shift 2 ;;
+            --key-id) key_id=${2:-}; shift 2 ;;
+            --lan-ca-id) lan_ca_id=${2:-}; shift 2 ;;
+            --env-id) env_id=${2:-}; shift 2 ;;
+            *) usage ;;
+        esac
+    done
+    for id in "$ca_id" "$crt_id" "$key_id" "$lan_ca_id"; do
+        is_uuid "$id" || fail 'item ids must be lowercase UUIDs'
+    done
+    [ -z "$env_id" ] || is_uuid "$env_id" || fail 'item ids must be lowercase UUIDs'
+    configure_rbw "$vault_url" "$email"
+    vault_run \
+        "OVERLAY_CA_ID=$ca_id" "OVERLAY_CRT_ID=$crt_id" "OVERLAY_KEY_ID=$key_id" "OVERLAY_LAN_CA_ID=$lan_ca_id" \
+        "OVERLAY_ENV_ID=$env_id" \
+        "OVERLAY_TLS_DIRECTORY=$TLS_DIRECTORY" "OVERLAY_LAN_CA_DIRECTORY=$LAN_CA_DIRECTORY" \
+        "OVERLAY_CONFIG_DIRECTORY=$CONFIG_DIRECTORY" \
+        "OVERLAY_CA_CERTIFICATE=$CA_CERTIFICATE" "OVERLAY_SERVER_CERTIFICATE=$SERVER_CERTIFICATE" \
+        "OVERLAY_SERVER_KEY=$SERVER_KEY" "OVERLAY_LAN_CA=$LAN_CA" \
+        "OVERLAY_WORKSPACE_ENV=$WORKSPACE_ENV" "OVERLAY_WORKSPACE_ENV_OWNER=$WORKSPACE_ENV_OWNER" -- '
+        umask 077
+        install -d -o root -g root -m 0700 "$OVERLAY_TLS_DIRECTORY"
+        install -d -o root -g root -m 0755 "$OVERLAY_LAN_CA_DIRECTORY"
+        install -d -o root -g root -m 0755 "$OVERLAY_CONFIG_DIRECTORY"
+        trap '"'"'rm -f "$OVERLAY_TLS_DIRECTORY"/*.tmp "$OVERLAY_LAN_CA_DIRECTORY"/*.tmp "$OVERLAY_CONFIG_DIRECTORY"/*.tmp'"'"' EXIT
+        guard_regular_file() {
+            if [ -e "$1" ] && { [ ! -f "$1" ] || [ -L "$1" ]; }; then
+                echo "refusing to replace non-regular file $1" >&2
+                exit 1
+            fi
+        }
+        stage_item() {
+            guard_regular_file "$2"
+            rbw get --field notes "$1" > "$2.tmp"
+            grep -q "^-----BEGIN " "$2.tmp" || { echo "vault item $1 is not PEM" >&2; exit 1; }
+            chown root:root "$2.tmp"
+            chmod "$3" "$2.tmp"
+        }
+        stage_env() {
+            guard_regular_file "$2"
+            if [ -n "$1" ]; then
+                rbw get --field notes "$1" > "$2.raw.tmp"
+                sed "s/\r$//" "$2.raw.tmp" > "$2.tmp"
+                rm -f "$2.raw.tmp"
+                line=$(grep -nvE "^([A-Za-z_][A-Za-z0-9_]*=|#|$)" "$2.tmp" | head -n 1 | cut -d: -f1)
+                [ -z "$line" ] || { echo "vault item $1 line $line is not NAME=value" >&2; exit 1; }
+            else
+                : > "$2.tmp"
+            fi
+            chown "$3" "$2.tmp"
+            chmod 0600 "$2.tmp"
+        }
+        stage_item "$OVERLAY_CA_ID" "$OVERLAY_CA_CERTIFICATE" 0644
+        stage_item "$OVERLAY_CRT_ID" "$OVERLAY_SERVER_CERTIFICATE" 0644
+        stage_item "$OVERLAY_KEY_ID" "$OVERLAY_SERVER_KEY" 0600
+        stage_item "$OVERLAY_LAN_CA_ID" "$OVERLAY_LAN_CA" 0644
+        stage_env "$OVERLAY_ENV_ID" "$OVERLAY_WORKSPACE_ENV" "$OVERLAY_WORKSPACE_ENV_OWNER"
+        for path in "$OVERLAY_CA_CERTIFICATE" "$OVERLAY_SERVER_CERTIFICATE" "$OVERLAY_SERVER_KEY" \
+            "$OVERLAY_LAN_CA" "$OVERLAY_WORKSPACE_ENV"; do
+            mv -f "$path.tmp" "$path"
+        done
+    '
+    verify
+}
+
+assert_owned_file() {
+    path=$1 owner=$2 mode=$3
+    [ -f "$path" ] || fail "missing $path"
+    [ ! -L "$path" ] || fail "$path is a symbolic link"
+    [ "$(stat -c '%u:%g %a' "$path")" = "$owner $mode" ] || fail "wrong owner or mode on $path"
+}
+
+assert_regular_file() {
+    assert_owned_file "$1" 0:0 "$2"
+}
+
+workspace_env_names() {
+    sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$WORKSPACE_ENV"
+}
+
+assert_workspace_env() {
+    assert_owned_file "$WORKSPACE_ENV" "$WORKSPACE_ENV_OWNER" 600
+    line=$(grep -nvE '^([A-Za-z_][A-Za-z0-9_]*=|#|$)' "$WORKSPACE_ENV" | head -n 1 | cut -d: -f1)
+    [ -z "$line" ] || fail "$WORKSPACE_ENV line $line is not NAME=value"
+}
+
+assert_directory() {
+    path=$1 mode=$2
+    [ -d "$path" ] || fail "missing directory $path"
+    [ ! -L "$path" ] || fail "$path is a symbolic link"
+    [ "$(stat -c '%U:%G %a' "$path")" = "root:root $mode" ] || fail "wrong owner or mode on $path"
+}
+
+listening_ports() {
+    cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | while read -r _ local _ state _; do
+        [ "$state" = 0A ] || continue
+        printf '%d\n' "0x${local#*:}"
+    done | sort -un
+}
+
+verify_daemon_config() {
+    assert_regular_file "$DAEMON_CONFIG" 644
+    if grep -Fq "$PLAINTEXT_PORT" "$DAEMON_CONFIG"; then
+        fail "$DAEMON_CONFIG mentions the plaintext port $PLAINTEXT_PORT"
+    fi
+    for setting in '"tls"[[:space:]]*:[[:space:]]*true' '"tlsverify"[[:space:]]*:[[:space:]]*true' \
+        "\"tlscacert\"[[:space:]]*:[[:space:]]*\"$CA_CERTIFICATE\"" \
+        "\"tlscert\"[[:space:]]*:[[:space:]]*\"$SERVER_CERTIFICATE\"" \
+        "\"tlskey\"[[:space:]]*:[[:space:]]*\"$SERVER_KEY\"" \
+        "tcp://0\.0\.0\.0:$TLS_PORT"; do
+        grep -Eq "$setting" "$DAEMON_CONFIG" || fail "$DAEMON_CONFIG is missing $setting"
+    done
+    dockerd --validate >/dev/null || fail "$DAEMON_CONFIG failed dockerd --validate"
+}
+
+verify() {
+    assert_directory "$TLS_DIRECTORY" 700
+    assert_directory "$LAN_CA_DIRECTORY" 755
+    assert_regular_file "$CA_CERTIFICATE" 644
+    assert_regular_file "$SERVER_CERTIFICATE" 644
+    assert_regular_file "$SERVER_KEY" 600
+    assert_regular_file "$LAN_CA" 644
+    assert_workspace_env
+
+    subject=$(openssl x509 -in "$SERVER_CERTIFICATE" -noout -subject) || fail 'unreadable server certificate'
+    certificate_key=$(openssl x509 -in "$SERVER_CERTIFICATE" -noout -pubkey) || fail 'unreadable server public key'
+    private_key=$(openssl pkey -in "$SERVER_KEY" -pubout) || fail 'unreadable server private key'
+    [ "$certificate_key" = "$private_key" ] || fail 'the server key does not match the server certificate'
+    openssl verify -CAfile "$CA_CERTIFICATE" "$SERVER_CERTIFICATE" >/dev/null ||
+        fail 'the server certificate was not issued by ca.pem'
+    openssl x509 -in "$LAN_CA" -noout -subject >/dev/null || fail 'unreadable LAN root CA'
+    verify_daemon_config
+
+    printf 'server: %s\n' "$subject"
+    openssl x509 -in "$SERVER_CERTIFICATE" -noout -enddate
+    openssl x509 -in "$SERVER_CERTIFICATE" -noout -ext subjectAltName | tail -n +2
+    echo 'overlay verified'
+}
+
+wait_for_docker() {
+    attempt=0
+    while [ "$attempt" -lt 60 ]; do
+        if docker info >/dev/null 2>&1; then
+            return
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    fail 'docker did not become ready'
+}
+
+pull_images() {
+    [ -f "$IMAGE_LIST" ] || fail "missing $IMAGE_LIST"
+    while IFS= read -r image; do
+        [ -n "$image" ] || continue
+        docker image pull -- "$image"
+    done < "$IMAGE_LIST"
+}
+
+enable_docker() {
+    verify
+    systemctl enable --now docker.socket docker.service
+    wait_for_docker
+    pull_images
+    listening_ports | sed 's/^/listen /'
+    if listening_ports | grep -qx "$PLAINTEXT_PORT"; then
+        fail "a plaintext docker listener is present on $PLAINTEXT_PORT"
+    fi
+    listening_ports | grep -qx "$TLS_PORT" || fail "docker is not listening on $TLS_PORT"
+    printf 'docker %s listening on %s with mutual TLS\n' \
+        "$(docker version --format '{{.Server.Version}}')" "$TLS_PORT"
+}
+
+status() {
+    if [ -r "$RELEASE_MARKER" ]; then
+        printf 'release %s\n' "$(cat "$RELEASE_MARKER")"
+    else
+        echo 'release unknown (no marker)'
+    fi
+    systemctl is-active docker.socket docker.service || true
+    for path in "$CA_CERTIFICATE" "$SERVER_CERTIFICATE" "$SERVER_KEY" "$LAN_CA" "$WORKSPACE_ENV"; do
+        if [ -f "$path" ]; then
+            printf '%s %s\n' "$path" "$(stat -c '%U:%G %a' "$path")"
+        else
+            printf '%s missing\n' "$path"
+        fi
+    done
+    if [ -f "$WORKSPACE_ENV" ]; then
+        names=$(workspace_env_names | sort)
+        if [ -n "$names" ]; then
+            printf 'workspace env defines %s variables: %s\n' \
+                "$(printf '%s\n' "$names" | wc -l)" "$(printf '%s' "$names" | tr '\n' ' ')"
+        else
+            echo 'workspace env is empty'
+        fi
+    fi
+    if [ -f "$SERVER_CERTIFICATE" ]; then
+        openssl x509 -in "$SERVER_CERTIFICATE" -noout -enddate
+    fi
+    listening_ports | sed 's/^/listen /'
+}
+
+require_root
+command=${1:-}
+[ $# -gt 0 ] && shift
+case $command in
+    secrets) secrets "$@" ;;
+    verify) [ $# -eq 0 ] || usage; verify ;;
+    enable) [ $# -eq 0 ] || usage; enable_docker ;;
+    status) [ $# -eq 0 ] || usage; status ;;
+    *) usage ;;
+esac
