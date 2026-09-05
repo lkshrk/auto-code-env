@@ -89,7 +89,6 @@ assert(dockerignore == [
   'profile-orc.json',
   '/usr/local/lib/openhands/apply-profile.py',
   '--secrets-dir',
-  '--skip agents',
   'vault.cred',
   '-Schedule',
   '-Replace',
@@ -133,8 +132,6 @@ assert(dockerignore == [
   'profile-common.json',
   'profileCommon',
   'mcp_servers',
-  'omni agents sync',
-  'apm.yml',
   'is-system-running'
 ].each do |phrase|
   assert(readme.include?(phrase), "README must document #{phrase.inspect}")

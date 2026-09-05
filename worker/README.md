@@ -347,7 +347,6 @@ host, and `openhands/profiles/orc.json` is the non-worker orc backend. Every sec
 | `skills` | `POST /api/skills/install` for a skill that is not installed yet |
 | `mcp_servers` | `POST /api/settings/mcp/<key>` for a new server, `PATCH /api/settings/mcp/<key>` for one that drifted |
 | `git_sync` | `PUT /api/automation/v1/git-sync/config` |
-| `agents` | a root `apm.yml` for omni plus `omni agents sync` |
 
 ### Profile layering
 
@@ -432,83 +431,33 @@ url, transport, headers, command, or args drifted is corrected with a sparse
 `PATCH /api/settings/mcp/<key>`, and one that already matches is left alone.
 Servers the backend holds but the profile does not name are never touched.
 
-### agents
+### MCP servers and the ACP harnesses
 
-The `agents` section names the APM package that owns the agent's plugins, and
-which harnesses they deploy to:
+Canvas forwards `agent_settings.mcp_config` to the ACP subprocess at session
+creation, so a server declared in `mcp_servers` reaches Claude Code and Codex
+with its secrets already resolved. The profile is the only place a worker
+declares MCP.
 
-```json
-{
-  "agents": {
-    "repo": "lkshrk/dotfiles",
-    "ref": "main",
-    "path": "apm/ai-plugins",
-    "targets": ["claude", "codex"]
-  }
-}
-```
-
-`repo` is an `owner/name` shorthand or an absolute HTTPS git URL, `path` a
-relative path inside it, and `targets` a non-empty list of harness names. The
-overlay renders those four values into the omni root manifest at
-`/home/agent/.config/omni/apm.yml`, which depends on the shared package and
-declares the targets:
-
-```yaml
-name: openhands-worker
-version: 1.0.0
-dependencies:
-  apm:
-  - git: lkshrk/dotfiles
-    path: apm/ai-plugins
-    ref: main
-targets:
-- claude
-- codex
-```
-
-This is the same layout the user's Macs run, so the worker and the workstations
-converge on one shared package. The shared `ai-plugins` package declares no
-targets of its own; the root manifest owns that choice.
-
-The overlay then runs `omni agents sync` in `/home/agent`. Both steps run as the
-`agent` user through `runuser`, with `HOME=/home/agent` and
-`/home/agent/.local/bin` on `PATH`, so nothing the agent later runs is
-root-owned. The manifest is rewritten only when its content differs, and the
-apply prints `agents applied: synced` or `agents unchanged` plus the number of
-targets. `omni agents sync` is the reconciliation and runs either way; it is
-idempotent through omni's own lock and needs no confirmation flag.
-
-`omni agents sync` shells out to `apm`, so it fails with
-`apm executable not found` unless `apm` is on the agent's `PATH`. The image
-therefore pins `apm-cli` to `0.29.0`, installed with `uv tool install` into
-`/home/agent/.local/share/uv/tools` with its entry point at
-`/home/agent/.local/bin/apm`; the smoke stage asserts that version. Without the
-pin omni would resolve some other version through its own provider.
-
-`omni agents sync` installs the global APM workspace under `/home/agent/.apm`
-(`apm.yml`, `apm_modules/`, `apm.lock.yaml`), records its template state under
-`/home/agent/.local/state/omni`, and deploys the resolved primitives into
-`/home/agent/.claude` (skills, agents, commands, hooks, `settings.json`) and
-`/home/agent/.codex` (agents, hooks, `config.toml`). Those two directories are
-already part of `state export`, so a distribution swap carries them across and
-the next sync reconciles whatever changed upstream.
+Releases before v0.5.0 also deployed MCP servers into `/home/agent/.claude.json`
+and `/home/agent/.codex/config.toml` through `omni agents sync`. Those entries
+carried apm's `${env:NAME}` placeholder, which neither harness expands, so the
+literal text was sent as the credential and the entry shadowed the working
+server Canvas forwards. Applying a profile now prunes any MCP server in those
+two files whose definition still contains that placeholder, and prints
+`apm mcp pruned:` with what it removed. `state export` carries both files
+across a distribution swap, so the prune is what converges an existing host.
 
 ### How the pieces connect
 
-`apm/ai-plugins/apm.yml` in the dotfiles repository is the single source of truth
-for agent plugins, MCP servers, and LSP servers. `omni agents sync` deploys them
-into `/home/agent/.claude` and `/home/agent/.codex`, where the ACP subprocesses
-(Claude Code and Codex) read them. Its remote MCP entries reference credentials
-by environment variable, for example `${env:LITELLM_API}`.
+`openhands/profiles/common.json` is the single source of truth for the MCP
+servers a worker gets. The applier writes them to Canvas, and Canvas forwards
+`mcp_config` to the ACP subprocess at session creation, so Claude Code and Codex
+see the same servers the OpenHands agent does.
 
-`LITELLM_API` is declared once in `openhands/profiles/common.json` and applied as
-a Canvas secret. Canvas secrets are exported into the environment of the ACP
-subprocesses, which is what resolves `${env:LITELLM_API}` for the plugins omni
-deployed. The same secret is resolved a second time, in the overlay, into the
-`x-litellm-api-key` header of the `litellm-tools` entry in `mcp_servers`, which
-is what gives the OpenHands agent itself the same LiteLLM tools. One vault item
-therefore reaches both consumers, and neither the profile nor the dotfiles
+`LITELLM_API` is declared once in that profile and applied as a Canvas secret.
+The overlay resolves it into the `x-litellm-api-key` header of the
+`litellm-tools` entry, with the `Bearer ` prefix the gateway requires. One vault
+item therefore serves every consumer, and neither the profile nor the dotfiles
 repository ever holds the key.
 
 `GH_TOKEN` follows the same route for a different purpose. It is declared in the
@@ -535,8 +484,8 @@ item's notes, installs it as
 `openhands-overlay state export` writes a gzip tar of `/home/agent/.openhands`,
 `.claude`, `.codex`, `.git-credentials`, `.gitconfig`, and
 `/var/lib/openhands/overlay` to stdout with `--numeric-owner` and nothing else;
-progress goes to stderr. `/home/agent/.claude` and `.codex` carry what
-`omni agents sync` deployed, and `/var/lib/openhands/overlay` carries the
+progress goes to stderr. `/home/agent/.claude` and `.codex` carry each
+harness's own state, and `/var/lib/openhands/overlay` carries the
 git-sync token digest, so a replacement distribution does not rewrite a token
 that has not changed.
 `openhands-overlay state import` reads that tar from stdin, extracts it under

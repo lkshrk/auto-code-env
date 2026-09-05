@@ -21,7 +21,6 @@ STATE_DIRECTORY=/var/lib/openhands/overlay
 GIT_SYNC_TOKEN_STATE="$STATE_DIRECTORY/git-sync-token.sha256"
 APPLIER=/usr/local/lib/openhands/apply-profile.py
 STATE_PATHS='home/agent/.openhands home/agent/.claude home/agent/.codex home/agent/.git-credentials home/agent/.gitconfig var/lib/openhands/overlay'
-OMNI_MANIFEST=/home/agent/.config/omni/apm.yml
 PASSWORD_STDIN=0
 
 usage() {
@@ -211,29 +210,72 @@ agent_run() {
         sh -eu -c 'cd "$1"; shift; exec "$@"' sh "$directory" "$@"
 }
 
-agents_sync() {
-    manifest=$1
-    id agent >/dev/null 2>&1 || fail 'agent user missing'
-    command -v omni >/dev/null 2>&1 || fail 'omni is required for the agents section'
-    install -d -o agent -g agent -m 0755 "$AGENT_HOME/.config" "$(dirname "$OMNI_MANIFEST")"
-    changed=1
-    if [ -f "$OMNI_MANIFEST" ] && [ "$(cat "$OMNI_MANIFEST")" = "$manifest" ]; then
-        changed=0
-    fi
-    if [ "$changed" = 1 ]; then
-        printf '%s\n' "$manifest" > "$OMNI_MANIFEST.tmp"
-        chown agent:agent "$OMNI_MANIFEST.tmp"
-        chmod 0644 "$OMNI_MANIFEST.tmp"
-        mv -f "$OMNI_MANIFEST.tmp" "$OMNI_MANIFEST"
-    fi
-    agent_run "$AGENT_HOME" omni agents sync
-    if [ "$changed" = 1 ]; then
-        echo 'agents applied: synced'
-    else
-        echo 'agents unchanged'
-    fi
-    printf 'agents targets: %s\n' \
-        "$(printf '%s\n' "$manifest" | awk '/^targets:$/ { collect = 1; next } collect && /^- / { count++ } END { print count + 0 }')"
+# prune_apm_mcp - removes MCP servers a previous apm-managed release deployed
+# into the harness configs. Their ${env:NAME} placeholders are not expanded by
+# either harness, so the literal text was sent as the credential and shadowed
+# the servers Canvas forwards to the ACP subprocess.
+prune_apm_mcp() {
+    [ -d "$AGENT_HOME" ] || return 0
+    agent_run "$AGENT_HOME" python3 - "$AGENT_HOME" <<'PYTHON'
+import json, os, re, sys
+
+home = sys.argv[1]
+placeholder = "${env:"
+removed = []
+
+claude = os.path.join(home, ".claude.json")
+try:
+    with open(claude) as handle:
+        data = json.load(handle)
+except (OSError, ValueError):
+    data = None
+if isinstance(data, dict):
+    servers = data.get("mcpServers")
+    if isinstance(servers, dict):
+        stale = [
+            name for name, spec in servers.items()
+            if placeholder in json.dumps(spec)
+        ]
+        for name in stale:
+            del servers[name]
+            removed.append("claude:%s" % name)
+        if stale:
+            with open(claude, "w") as handle:
+                json.dump(data, handle, indent=2)
+
+codex = os.path.join(home, ".codex", "config.toml")
+try:
+    with open(codex) as handle:
+        text = handle.read()
+except OSError:
+    text = None
+if text is not None and placeholder in text:
+    blocks, current = [], []
+    for line in text.splitlines(True):
+        if line.startswith("[") and current:
+            blocks.append(current)
+            current = []
+        current.append(line)
+    if current:
+        blocks.append(current)
+
+    def server_of(block):
+        match = re.match(r"^\[mcp_servers\.([A-Za-z0-9._-]+?)(?:\.[A-Za-z0-9._-]+)*\]", block[0])
+        return match.group(1) if match else None
+
+    poisoned = {
+        server_of(block)
+        for block in blocks
+        if server_of(block) and placeholder in "".join(block)
+    }
+    if poisoned:
+        kept = [b for b in blocks if server_of(b) not in poisoned]
+        with open(codex, "w") as handle:
+            handle.write("".join("".join(b) for b in kept))
+        removed.extend("codex:%s" % name for name in sorted(poisoned))
+
+print("apm mcp pruned: %s" % (", ".join(removed) if removed else "none"))
+PYTHON
 }
 
 settings() {
@@ -258,8 +300,6 @@ settings() {
 
     # shellcheck disable=SC2086
     items=$("$APPLIER" --print secret-items $files)
-    # shellcheck disable=SC2086
-    agents_manifest=$("$APPLIER" --print agents-manifest $files)
     umask 077
     rm -rf "$WORK_DIRECTORY"
     install -d -o root -g root -m 0700 "$WORK_DIRECTORY"
@@ -279,9 +319,7 @@ settings() {
     "$APPLIER" --api "$INGRESS" --api-key-file "$BACKEND_KEY" \
         --secrets-dir "$WORK_DIRECTORY" --state-dir "$STATE_DIRECTORY" $files
     rm -rf "$WORK_DIRECTORY"
-    if [ -n "$agents_manifest" ]; then
-        agents_sync "$agents_manifest"
-    fi
+    prune_apm_mcp
 }
 
 state() {
