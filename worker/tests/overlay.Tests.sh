@@ -26,6 +26,7 @@ umask 022
 shim=/tmp/shim
 mkdir -p "$shim" /tmp/log /usr/local/libexec /etc/nginx && chmod 1777 /tmp/log && touch /tmp/log/omni /tmp/log/git && chmod 666 /tmp/log/omni /tmp/log/git
 install -m 0755 /src/worker/rootfs/usr/local/sbin/openhands-overlay /usr/local/sbin/openhands-overlay
+install -D -m 0755 /src/worker/rootfs/usr/local/lib/openhands/apply-profile.py /usr/local/lib/openhands/apply-profile.py
 userdel -r ubuntu 2>/dev/null || true; useradd -m -u 1000 -s /bin/bash agent
 mkdir -p /etc/openhands && printf 'openhands-worker 9.9.9-test\n' > /etc/openhands/release
 printf '#!/bin/sh\nexit 0\n' > /usr/local/libexec/openhands-rbw-pinentry
@@ -119,152 +120,6 @@ cat > "$shim/update-ca-certificates" <<'EOF'
 #!/bin/sh
 echo "update-ca-certificates $*" >> /tmp/log/update-ca-certificates
 test -r /usr/local/share/ca-certificates/openhands-lan-ca.crt
-EOF
-
-cat > "$shim/curl" <<'EOF'
-#!/usr/bin/python3
-import json
-import os
-import sys
-
-STATE = "/tmp/api/state.json"
-LOG = "/tmp/log/curl"
-BODIES = "/tmp/log/curl-bodies"
-
-arguments = sys.argv[1:]
-config = method = url = output = None
-headers = []
-body = None
-index = 0
-while index < len(arguments):
-    flag = arguments[index]
-    if flag == "--config":
-        config = arguments[index + 1]
-    elif flag == "--request":
-        method = arguments[index + 1]
-    elif flag == "--url":
-        url = arguments[index + 1]
-    elif flag == "--output":
-        output = arguments[index + 1]
-    elif flag == "--header":
-        headers.append(arguments[index + 1])
-    elif flag == "--data-binary":
-        body = json.load(open(arguments[index + 1][1:]))
-    elif flag == "--write-out":
-        pass
-    else:
-        sys.stderr.write("unexpected curl argument %s\n" % flag)
-        raise SystemExit(2)
-    index += 2
-
-expected = open("/etc/credstore/local_backend_api_key").read().strip()
-if 'header = "X-Session-API-Key: %s"' % expected not in open(config).read():
-    sys.stderr.write("curl config is missing the session API key header\n")
-    raise SystemExit(3)
-for argument in arguments:
-    if expected in argument:
-        sys.stderr.write("session API key reached the curl argv\n")
-        raise SystemExit(4)
-
-prefix = "http://127.0.0.1:8000"
-if not url.startswith(prefix):
-    sys.stderr.write("unexpected url %s\n" % url)
-    raise SystemExit(5)
-path = url[len(prefix):]
-
-with open(LOG, "a") as handle:
-    handle.write("%s %s\n" % (method, path))
-if body is not None:
-    with open(BODIES, "a") as handle:
-        handle.write("%s %s %s\n" % (method, path, json.dumps(body, sort_keys=True)))
-
-state = json.load(open(STATE))
-
-
-def merge(destination, source):
-    for key, value in source.items():
-        if isinstance(value, dict) and isinstance(destination.get(key), dict):
-            merge(destination[key], value)
-        else:
-            destination[key] = value
-
-
-def settings_response(expose):
-    agent = json.loads(json.dumps(state["agent_settings"]))
-    if expose != "plaintext" and "llm" in agent and "api_key" in agent["llm"]:
-        agent["llm"]["api_key"] = "**********"
-    return {"agent_settings": agent, "llm_api_key_is_set": True}
-
-
-expose = None
-for header in headers:
-    if header.lower().startswith("x-expose-secrets:"):
-        expose = header.split(":", 1)[1].strip()
-
-code = "200"
-payload = ""
-if method == "GET" and path == "/api/settings":
-    payload = json.dumps(settings_response(expose))
-elif method == "PATCH" and path == "/api/settings":
-    merge(state["agent_settings"], body["agent_settings_diff"])
-    payload = json.dumps(settings_response(None))
-elif method == "GET" and path.startswith("/api/settings/secrets/"):
-    name = path.rsplit("/", 1)[1]
-    if name in state["secrets"]:
-        payload = state["secrets"][name]
-    else:
-        code = "404"
-        payload = json.dumps({"detail": "Secret not found"})
-elif method == "PUT" and path == "/api/settings/secrets":
-    state["secrets"][body["name"]] = body["value"]
-    payload = json.dumps({"name": body["name"]})
-elif method == "POST" and path.startswith("/api/settings/mcp/"):
-    name = path.rsplit("/", 1)[1]
-    servers = state["agent_settings"].setdefault("mcp_config", {})
-    if name in servers:
-        code = "409"
-        payload = json.dumps({"detail": "MCP server '%s' already exists" % name})
-    else:
-        entry = dict(body)
-        entry.setdefault("enabled", True)
-        servers[name] = entry
-        code = "201"
-        payload = json.dumps(settings_response(None))
-elif method == "PATCH" and path.startswith("/api/settings/mcp/"):
-    name = path.rsplit("/", 1)[1]
-    servers = state["agent_settings"].setdefault("mcp_config", {})
-    if name not in servers:
-        code = "404"
-        payload = json.dumps({"detail": "MCP server '%s' was not found" % name})
-    else:
-        merge(servers[name], body)
-        payload = json.dumps(settings_response(None))
-elif method == "GET" and path == "/api/skills/installed":
-    payload = json.dumps({"skills": state["skills"]})
-elif method == "POST" and path == "/api/skills/install":
-    entry = {
-        "name": (body.get("repo_path") or body["source"]).rsplit("/", 1)[-1],
-        "source": body["source"],
-        "repo_path": body.get("repo_path"),
-        "ref": body.get("ref"),
-    }
-    state["skills"].append(entry)
-    payload = json.dumps(entry)
-elif method == "GET" and path == "/api/automation/v1/git-sync/status":
-    payload = json.dumps(state["git_sync"])
-elif method == "PUT" and path == "/api/automation/v1/git-sync/config":
-    if "token" in body:
-        state["git_sync_token"] = body["token"]
-    merge(state["git_sync"], {k: v for k, v in body.items() if k != "token"})
-    payload = json.dumps(state["git_sync"])
-else:
-    sys.stderr.write("unexpected request %s %s\n" % (method, path))
-    raise SystemExit(6)
-
-json.dump(state, open(STATE, "w"))
-with open(output, "w") as handle:
-    handle.write(payload)
-sys.stdout.write(code)
 EOF
 
 chmod 0755 "$shim"/*
@@ -367,6 +222,14 @@ cat > /tmp/api/state.json <<'EOF'
 }
 EOF
 
+python3 /src/worker/tests/fake-agent-server.py --port 8000 --state /tmp/api/state.json \
+  --log /tmp/log/api --bodies /tmp/log/api-bodies --api-key-file /etc/credstore/local_backend_api_key &
+for _ in $(seq 1 100); do
+  if python3 -c 'import socket,sys; sys.exit(socket.socket().connect_ex(("127.0.0.1", 8000)))'; then break; fi
+  sleep 0.1
+done
+python3 -c 'import socket,sys; sys.exit(socket.socket().connect_ex(("127.0.0.1", 8000)))'
+
 cat > /tmp/common.json <<'EOF'
 {
   "llm": {
@@ -462,7 +325,7 @@ if printf 'hunter2' | run settings --file /tmp/bad-agents-targets.json --passwor
 printf '{"agents": {"repo": "lkshrk/dotfiles", "targets": ["Claude Code"]}}' > /tmp/bad-agents-target.json
 if printf 'hunter2' | run settings --file /tmp/bad-agents-target.json --password-stdin >/dev/null 2>&1; then echo 'a non-harness agents.targets entry must be rejected'; exit 1; fi
 if run settings --password-stdin >/dev/null 2>&1; then echo 'settings requires at least one --file'; exit 1; fi
-test ! -e /tmp/log/curl
+test ! -e /tmp/log/api
 
 applied=$(printf 'hunter2' | run settings --file /tmp/common.json --file /tmp/profile.json --password-stdin)
 printf '%s\n' "$applied" | grep -Fq 'settings applied: acp_command, acp_server, agent_kind, llm'
@@ -475,14 +338,14 @@ printf '%s\n' "$applied" | grep -Fxq 'agents targets: 2'
 if printf '%s\n' "$applied" | grep -Eq 'sk-llm|sk-ant|ghs_'; then echo 'secret leaked to stdout'; exit 1; fi
 test ! -e /run/openhands-overlay
 test ! -e /run/openhands-rbw-master
-grep -Fxq 'PATCH /api/settings' /tmp/log/curl
-grep -Fxq 'PUT /api/settings/secrets' /tmp/log/curl
-grep -Fxq 'POST /api/settings/mcp/litellm-tools' /tmp/log/curl
-grep -Fxq 'POST /api/settings/mcp/openaiDeveloperDocs' /tmp/log/curl
-grep -Fxq 'POST /api/settings/mcp/local-notes' /tmp/log/curl
-grep -Fxq 'POST /api/skills/install' /tmp/log/curl
-grep -Fxq 'PUT /api/automation/v1/git-sync/config' /tmp/log/curl
-test "$(grep -c '^GET /api/settings$' /tmp/log/curl)" = 1
+grep -Fxq 'PATCH /api/settings' /tmp/log/api
+grep -Fxq 'PUT /api/settings/secrets' /tmp/log/api
+grep -Fxq 'POST /api/settings/mcp/litellm-tools' /tmp/log/api
+grep -Fxq 'POST /api/settings/mcp/openaiDeveloperDocs' /tmp/log/api
+grep -Fxq 'POST /api/settings/mcp/local-notes' /tmp/log/api
+grep -Fxq 'POST /api/skills/install' /tmp/log/api
+grep -Fxq 'PUT /api/automation/v1/git-sync/config' /tmp/log/api
+test "$(grep -c '^GET /api/settings$' /tmp/log/api)" = 1
 test "$(stat -c '%U:%G %a' /var/lib/openhands/overlay/git-sync-token.sha256)" = 'root:root 600'
 grep -Fq 'omni agents sync user=agent dir=/home/agent home=/home/agent' /tmp/log/omni
 grep -Fq 'path=/home/agent/.local/bin:' /tmp/log/omni
@@ -545,7 +408,7 @@ assert refs['openhands/skills/agent-sandbox-deploy'] == 'main', refs
 assert refs['openhands/skills/common-only'] == 'main', refs
 PY
 
-: > /tmp/log/curl
+: > /tmp/log/api
 : > /tmp/log/omni
 repeated=$(printf 'hunter2' | run settings --file /tmp/common.json --file /tmp/profile.json --password-stdin)
 printf '%s\n' "$repeated" | grep -Fq 'settings unchanged'
@@ -553,8 +416,8 @@ printf '%s\n' "$repeated" | grep -Fq 'secrets applied: none changed'
 printf '%s\n' "$repeated" | grep -Fq 'mcp_servers applied: none changed'
 printf '%s\n' "$repeated" | grep -Fq 'skills applied: none changed'
 printf '%s\n' "$repeated" | grep -Fq 'git_sync unchanged'
-if grep -Eq '^(PATCH|PUT|POST) ' /tmp/log/curl; then echo 'second run must not write'; exit 1; fi
-grep -Fxq 'GET /api/settings' /tmp/log/curl
+if grep -Eq '^(PATCH|PUT|POST) ' /tmp/log/api; then echo 'second run must not write'; exit 1; fi
+grep -Fxq 'GET /api/settings' /tmp/log/api
 printf '%s\n' "$repeated" | grep -Fxq 'agents unchanged'
 printf '%s\n' "$repeated" | grep -Fxq 'agents targets: 2'
 grep -Fq 'omni agents sync user=agent dir=/home/agent' /tmp/log/omni
@@ -574,12 +437,12 @@ state = json.load(open('/tmp/api/state.json'))
 state['agent_settings']['mcp_config']['litellm-tools']['headers']['x-litellm-api-key'] = 'stale'
 json.dump(state, open('/tmp/api/state.json', 'w'))
 PY
-: > /tmp/log/curl
+: > /tmp/log/api
 rotated=$(printf 'hunter2' | run settings --file /tmp/common.json --file /tmp/profile.json --password-stdin)
 printf '%s\n' "$rotated" | grep -Fq 'mcp_servers applied: litellm-tools'
-grep -Fxq 'PATCH /api/settings/mcp/litellm-tools' /tmp/log/curl
-if grep -Fq 'POST /api/settings/mcp/' /tmp/log/curl; then echo 'an existing MCP server must be patched, not recreated'; exit 1; fi
-grep -Fq '"headers": {"x-litellm-api-key": "sk-llm-FIXTUREKEY111111111111"}' /tmp/log/curl-bodies
+grep -Fxq 'PATCH /api/settings/mcp/litellm-tools' /tmp/log/api
+if grep -Fq 'POST /api/settings/mcp/' /tmp/log/api; then echo 'an existing MCP server must be patched, not recreated'; exit 1; fi
+grep -Fq '"headers": {"x-litellm-api-key": "sk-llm-FIXTUREKEY111111111111"}' /tmp/log/api-bodies
 
 ca_output=$(printf 'hunter2' | run ca --item 99999999-9999-9999-9999-999999999999 --password-stdin)
 printf '%s\n' "$ca_output" | grep -Fq 'ca installed /usr/local/share/ca-certificates/openhands-lan-ca.crt'

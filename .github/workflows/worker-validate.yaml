@@ -29,6 +29,7 @@ jobs:
           bash worker/tests/runtime.Tests.sh
           bash worker/tests/image.Tests.sh
           bash worker/tests/overlay.Tests.sh
+          bash worker/tests/applier.Tests.sh
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
@@ -102,5 +103,6 @@ jobs:
           tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
           tar -tf "$artifact" | grep -E '^\.?/?etc/systemd/system/systemd-modules-load\.service\.d/10-wsl\.conf$' >/dev/null
           tar -tf "$artifact" | grep -E '^\.?/?usr/lib/systemd/system/dbus\.socket$' >/dev/null
+          tar -tf "$artifact" | grep -E '^\.?/?usr/local/lib/openhands/apply-profile\.py$' >/dev/null
           tar -xOf "$artifact" --wildcards '*etc/pam.d/common-session' | grep -E '^session[[:space:]]+optional[[:space:]]+pam_systemd\.so' >/dev/null
           tar -xOf "$artifact" --wildcards '*etc/openhands/release' | grep -Fx "openhands-worker $version"

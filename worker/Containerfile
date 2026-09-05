@@ -63,7 +63,7 @@ RUN /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/loc
 FROM provisioned AS wsl
 
 COPY --chown=root:root worker/rootfs-wsl/ /
-RUN /usr/bin/chmod 0755 /usr/local/sbin/openhands-overlay && \
+RUN /usr/bin/chmod 0755 /usr/local/sbin/openhands-overlay /usr/local/lib/openhands/apply-profile.py && \
     /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update && \
     /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends systemd systemd-sysv libpam-systemd dbus-user-session locales && \
     /usr/sbin/locale-gen en_US.UTF-8 C.UTF-8 && /usr/sbin/update-locale LANG=en_US.UTF-8 && \

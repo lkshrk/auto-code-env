@@ -8,6 +8,11 @@ every credential is named by its Vaultwarden item UUID and fetched at apply time
 Each file in this directory is published as a release asset named
 `profile-<name>.json`, so `common.json` ships as `profile-common.json`.
 
+The merging, validation, and backend calls live in `../scripts/apply-profile.py`,
+a python3 standard library script that the overlay runs and that any other
+backend can run directly. See [Backends without a
+worker](#backends-without-a-worker).
+
 ## Layering
 
 `--file` may be repeated and the files are layered left to right:
@@ -27,6 +32,36 @@ openhands-overlay settings --file /etc/openhands/profile-common.json --file /etc
 `towerr.json` holds only what is specific to that host, which today is `llm`,
 `agent`, and `git_sync`. Each file is validated on its own, then the merged
 result is checked for cross-section references.
+
+## Backends without a worker
+
+`orc` is an Agent Canvas backend that runs as a Kubernetes deployment in
+h-cloud, not as a WSL worker. It has no Vaultwarden and no overlay, so it runs
+the applier directly:
+
+```sh
+apply-profile.py --api http://openhands:8000 --api-key-file /secrets/sessionApiKey \
+  --secrets-dir /secrets/profile --state-dir /tmp/state --skip agents \
+  profile-common.json profile-orc.json
+```
+
+An hourly CronJob downloads `apply-profile.py`, `profile-common.json`,
+`profile-orc.json`, and `checksums.txt` from one pinned `openhands-worker-v*`
+release, verifies the checksums, and runs the command above. `--skip agents`
+drops the worker-only `agents` section, because omni deploys agent primitives
+into the worker's home directory and runs outside the applier.
+
+`--secrets-dir` holds one file per referenced secret name, and on orc it is a
+projection of the `openhands-secret` Kubernetes Secret: key `LITE_LLM` is
+projected to the path `LITELLM_API`, matching the secret name `common.json`
+declares. The `item` UUIDs stay in the profile and are simply unused there. A
+name the directory does not provide fails the run before the first backend call.
+`llm.api_key_item` is read from the file `LLM_API_KEY` and `git_sync.token_item`
+from `GIT_SYNC_TOKEN`; every `secrets` entry is read from its own name.
+
+`orc.json` sets only `agent.kind`. Its model, base URL, and API key come from the
+HelmRelease environment, and it has no git sync, so `common.json` supplies
+everything else it needs: `secrets`, `skills`, and `mcp_servers`.
 
 ## Schema
 

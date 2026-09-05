@@ -77,6 +77,7 @@ jobs:
           tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
           tar -tf "$artifact" | grep -E '^\.?/?etc/systemd/system/systemd-modules-load\.service\.d/10-wsl\.conf$' >/dev/null
           tar -tf "$artifact" | grep -E '^\.?/?usr/lib/systemd/system/dbus\.socket$' >/dev/null
+          tar -tf "$artifact" | grep -E '^\.?/?usr/local/lib/openhands/apply-profile\.py$' >/dev/null
           tar -xOf "$artifact" --wildcards '*etc/pam.d/common-session' | grep -E '^session[[:space:]]+optional[[:space:]]+pam_systemd\.so' >/dev/null
           tar -xOf "$artifact" --wildcards '*etc/openhands/release' | grep -Fx "openhands-worker $VERSION"
           {
@@ -151,6 +152,7 @@ jobs:
           cp worker/windows/setup.ps1 release/setup.ps1
           cp worker/windows/update.ps1 release/update.ps1
           cp worker/rootfs/usr/local/sbin/openhands-overlay release/openhands-overlay
+          cp worker/rootfs/usr/local/lib/openhands/apply-profile.py release/apply-profile.py
           profiles=()
           for source in openhands/profiles/*.json; do
             test -f "$source"
@@ -161,7 +163,7 @@ jobs:
           test "${#profiles[@]}" -gt 0
           cat release/openhands-worker-"${VERSION}"-amd64.wsl.sha256 \
             release/openhands-worker-"${VERSION}"-arm64.wsl.sha256 > release/checksums.txt
-          (cd release && sha256sum install.ps1 firewall.ps1 keepalive.ps1 common.ps1 setup.ps1 update.ps1 openhands-overlay "${profiles[@]}" >> checksums.txt)
+          (cd release && sha256sum install.ps1 firewall.ps1 keepalive.ps1 common.ps1 setup.ps1 update.ps1 openhands-overlay apply-profile.py "${profiles[@]}" >> checksums.txt)
           (cd release && sha256sum -c checksums.txt)
           release_json="$RUNNER_TEMP/release.json"
           release_error="$RUNNER_TEMP/release-error.log"
@@ -191,6 +193,7 @@ jobs:
                 release/setup.ps1 \
                 release/update.ps1 \
                 release/openhands-overlay \
+                release/apply-profile.py \
                 "${profiles[@]/#/release/}" \
                 release/checksums.txt
               ;;
@@ -205,6 +208,7 @@ jobs:
                 setup.ps1 \
                 update.ps1 \
                 openhands-overlay \
+                apply-profile.py \
                 "${profiles[@]}" \
                 checksums.txt; do
                 digest="sha256:$(sha256sum "release/$asset" | awk '{print $1}')"

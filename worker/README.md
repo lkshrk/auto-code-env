@@ -69,7 +69,8 @@ Only `openhands-worker-v*` tags release artifacts. Native GitHub runners build
 amd64 and arm64 separately; no QEMU emulation is accepted. The release has the
 two `.wsl` files, the matching `install.ps1`, `firewall.ps1`, `keepalive.ps1`,
 `setup.ps1`, `update.ps1`, the shared `common.ps1` helpers, the in-distro
-`openhands-overlay` tool, every settings profile as `profile-<name>.json`, and a
+`openhands-overlay` tool, the standalone `apply-profile.py` applier, every
+settings profile as `profile-<name>.json`, and a
 combined `checksums.txt` covering all of them, and GHCR has immutable
 `ghcr.io/lkshrk/openhands-worker:<version>` manifest with both architectures,
 SBOM, and provenance.
@@ -291,7 +292,9 @@ program in both places.
 `https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/openhands-overlay`,
 so an installed distro can take a newer tool without re-import: download as
 root, compare with `checksums.txt`, then `install -o root -g root -m 0755` to
-`/usr/local/sbin/openhands-overlay`.
+`/usr/local/sbin/openhands-overlay`. `settings` runs the applier from the image,
+so take `apply-profile.py` from the same release into
+`/usr/local/lib/openhands/apply-profile.py` whenever the distro predates it.
 
 Agent Canvas connects to a remote backend from the browser, so the worker must
 allow the Canvas page origin for CORS. `openhands-overlay origin
@@ -331,8 +334,8 @@ per-backend profile to the local Agent Canvas backend through the ingress at
 `/etc/credstore/local_backend_api_key` value in the `X-Session-API-Key` header.
 Repository profiles live in `openhands/profiles/`, documented by
 `openhands/profiles/README.md`. `openhands/profiles/common.json` holds what every
-host shares and `openhands/profiles/towerr.json` holds what is specific to one
-host. Every section is optional:
+host shares, `openhands/profiles/towerr.json` holds what is specific to one
+host, and `openhands/profiles/orc.json` is the non-worker orc backend. Every section is optional:
 
 | Section | Effect |
 |---|---|
@@ -364,6 +367,39 @@ refused.
 The release publishes each `openhands/profiles/*.json` as `profile-<name>.json`,
 so `common.json` ships as `profile-common.json` and `towerr.json` as
 `profile-towerr.json`.
+
+### Standalone applier
+
+`openhands-overlay settings` owns only the vault side of a profile apply. It
+resolves each referenced secret into a root-owned tmpfs directory, then runs
+`/usr/local/lib/openhands/apply-profile.py`, which does the merging, validation,
+and every backend call. The applier is python3 standard library only and holds no
+worker assumptions, so a backend that is not a worker can run the same code
+against the same repository profiles:
+
+```sh
+apply-profile.py --api http://openhands:8000 --api-key-file /run/secrets/session-api-key \
+  --secrets-dir /run/secrets/profile --state-dir /tmp/state --skip agents \
+  profile-common.json profile-orc.json
+```
+
+`--secrets-dir` holds one file per referenced secret name, so the source of the
+material is pluggable: the worker fills it from Vaultwarden, another deployment
+projects it from its own secret store. The vault item UUID in a profile is
+meaningful only to the worker. `llm.api_key_item` resolves to `LLM_API_KEY` and
+`git_sync.token_item` to `GIT_SYNC_TOKEN`; every `secrets` entry resolves to its
+own name. A missing file fails before the first backend call, so a half-applied
+profile is not possible. `--state-dir` holds the git-sync token digest and
+defaults to `/var/lib/openhands/overlay`. `--skip <section>` drops a section from
+the merged profile and is repeatable; `agents` is the worker-only section, since
+omni runs outside the applier. `--print secret-items` and
+`--print agents-manifest` report what the overlay needs without contacting the
+backend.
+
+`apply-profile.py` ships inside the image at
+`/usr/local/lib/openhands/apply-profile.py` and as a release asset,
+`https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/apply-profile.py`,
+checksummed in `checksums.txt` like every other asset.
 
 ### mcp_servers
 

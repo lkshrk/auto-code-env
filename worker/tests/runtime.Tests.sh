@@ -9,6 +9,7 @@ modules_dropin="$repo_root/worker/rootfs-wsl/etc/systemd/system/systemd-modules-
 prune_service="$repo_root/worker/rootfs-wsl/etc/systemd/system/openhands-run-prune.service"
 prune_timer="$repo_root/worker/rootfs-wsl/etc/systemd/system/openhands-run-prune.timer"
 overlay="$repo_root/worker/rootfs/usr/local/sbin/openhands-overlay"
+applier="$repo_root/worker/rootfs/usr/local/lib/openhands/apply-profile.py"
 firewall="$repo_root/worker/windows/firewall.ps1"
 keepalive="$repo_root/worker/windows/keepalive.ps1"
 nginx_site="$repo_root/worker/rootfs/etc/nginx/conf.d/openhands.conf"
@@ -105,20 +106,25 @@ grep -F -- '--password-stdin) PASSWORD_STDIN=1' "$overlay"
 grep -Fx 'INGRESS=http://127.0.0.1:8000' "$overlay"
 grep -Fx 'CA_CERTIFICATE=/usr/local/share/ca-certificates/openhands-lan-ca.crt' "$overlay"
 grep -Fx 'WORK_DIRECTORY=/run/openhands-overlay' "$overlay"
-grep -F 'X-Session-API-Key' "$overlay"
-grep -F 'PATCH", "/api/settings"' "$overlay"
-grep -F 'PUT", "/api/settings/secrets"' "$overlay"
-grep -F 'POST", "/api/skills/install"' "$overlay"
-grep -F 'PUT", "/api/automation/v1/git-sync/config"' "$overlay"
-grep -F 'POST", "/api/settings/mcp/%s"' "$overlay"
-grep -F 'PATCH", "/api/settings/mcp/%s"' "$overlay"
-grep -F 'X-Expose-Secrets: plaintext' "$overlay"
+test -x "$applier"
+grep -Fx 'APPLIER=/usr/local/lib/openhands/apply-profile.py' "$overlay"
+grep -F -- '--secrets-dir "$WORK_DIRECTORY" --state-dir "$STATE_DIRECTORY"' "$overlay"
+grep -F -- '--print secret-items' "$overlay"
+grep -F -- '--print agents-manifest' "$overlay"
+grep -F 'X-Session-API-Key' "$applier"
+grep -F 'PATCH", "/api/settings"' "$applier"
+grep -F 'PUT", "/api/settings/secrets"' "$applier"
+grep -F 'POST", "/api/skills/install"' "$applier"
+grep -F 'PUT", "/api/automation/v1/git-sync/config"' "$applier"
+grep -F 'POST", "/api/settings/mcp/%s"' "$applier"
+grep -F 'PATCH", "/api/settings/mcp/%s"' "$applier"
+grep -F 'X-Expose-Secrets' "$applier"
 grep -Fx 'OMNI_MANIFEST=/home/agent/.config/omni/apm.yml' "$overlay"
 grep -F 'agent_run "$AGENT_HOME" omni agents sync' "$overlay"
 grep -F 'PATH="$AGENT_HOME/.local/bin:$PATH"' "$overlay"
 grep -F 'runuser -u agent -- env HOME="$AGENT_HOME"' "$overlay"
 grep -F 'var/lib/openhands/overlay' "$overlay"
-grep -F 'GET", "/api/automation/v1/git-sync/status"' "$overlay"
+grep -F 'GET", "/api/automation/v1/git-sync/status"' "$applier"
 grep -F 'update-ca-certificates' "$overlay"
 grep -F 'tar --numeric-owner --create --gzip --file - --directory /' "$overlay"
 grep -F 'tar --numeric-owner --extract --gzip --file - --directory /' "$overlay"
@@ -165,6 +171,11 @@ assert profile["agents"] == {
     "path": "apm/ai-plugins",
     "targets": ["claude", "codex"],
 }, profile["agents"]
+PY
+python3 - "$repo_root/openhands/profiles/orc.json" <<'PY'
+import json, sys
+profile = json.load(open(sys.argv[1]))
+assert profile == {"agent": {"kind": "openhands"}}, profile
 PY
 grep -Fx 'ARG OPENHANDS_WORKER_VERSION=dev' "$containerfile"
 grep -F 'printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release' "$containerfile"
