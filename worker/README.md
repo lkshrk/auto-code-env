@@ -126,13 +126,28 @@ Firewall, elevated PowerShell. Take `firewall.ps1` from the same release,
 verify it against `checksums.txt`, then pass the exact trusted sources.
 `-RemoteAddresses` is mandatory and accepts only IPv4 hosts or ranges of /24
 or narrower; `Any` is refused. The script sets the WSL Hyper-V default inbound
-action to block and allows TCP/443 from those sources only, so port 8000 and
-everything else stay unreachable. An existing Hyper-V rule that already
+action to block and allows the requested port from those sources only, so port
+8000 and everything else stay unreachable. An existing Hyper-V rule that already
 matches is left alone; a differing one is removed and recreated, because
 `Set-NetFirewallHyperVRule` is denied on current Windows builds:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\firewall.ps1 -RemoteAddresses 10.0.0.10,10.0.0.11
+```
+
+`-Port` accepts only 443 or 2376; any other port throws before a single
+firewall call is made. `-RuleName` and `-RuleDisplayName` default to
+`openhands-worker-https` and `OpenHands worker HTTPS`, so the invocation above
+is unchanged. The WSL Hyper-V firewall is shared by every distribution on the
+host, so a second product on the same host passes its own rule name and never
+reuses the worker's. Create, update, and delete touch only the rule with the
+given name; setting the Hyper-V default inbound action to block is idempotent
+and safe to repeat. `coder-worker` uses this to own TCP/2376:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\firewall.ps1 `
+  -RuleName coder-worker-docker -RuleDisplayName "Coder worker Docker" `
+  -Port 2376 -RemoteAddresses 10.0.0.10,10.0.0.11
 ```
 
 Keepalive, elevated PowerShell. WSL idle-stops a distribution about ten seconds
@@ -211,9 +226,9 @@ refuses to start anything until `verify` passes, then enables nginx and
 
 Operator-owned facts the tools enforce:
 
-- Windows/Hyper-V firewall: only TCP/443, only explicitly trusted VLAN/source
-  ranges. Existing target is `172.16.20.195` on VLAN10; do not create broad
-  rule or expose port 8000.
+- Windows/Hyper-V firewall: only TCP/443 for this worker, only explicitly
+  trusted VLAN/source ranges. Existing target is `172.16.20.195` on VLAN10; do
+  not create broad rule or expose port 8000.
 - DNS/domain: `worker.local-domain` must resolve to host address.
 - TLS: install existing-local-CA certificate and private key as `/etc/nginx/tls/tls.crt`
   and `/etc/nginx/tls/tls.key`; `tls.crt`: `root:root`, mode `0644`; `tls.key`: `root:root`, mode `0600`. Never commit either.

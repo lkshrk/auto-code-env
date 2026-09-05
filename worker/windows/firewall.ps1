@@ -1,14 +1,14 @@
 param(
     [Parameter(Mandatory)][string[]]$RemoteAddresses,
-    [int]$Port = 443
+    [int]$Port = 443,
+    [string]$RuleName = "openhands-worker-https",
+    [string]$RuleDisplayName = "OpenHands worker HTTPS"
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $WslVmCreatorId = "{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}"
-$RuleName = "openhands-worker-https"
-$RuleDisplayName = "OpenHands worker HTTPS"
 
 function Test-TrustedRemoteAddress {
     param([Parameter(Mandatory)][string]$Address)
@@ -51,8 +51,11 @@ function Get-TrustedRemoteAddresses {
 
 function Set-WorkerFirewallRules {
     param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$DisplayName,
         [Parameter(Mandatory)][string[]]$Remote,
         [Parameter(Mandatory)][int]$LocalPort,
+        [int[]]$AllowedPorts = @(443, 2376),
         [Parameter(Mandatory)][scriptblock]$GetHostRule,
         [Parameter(Mandatory)][scriptblock]$NewHostRule,
         [Parameter(Mandatory)][scriptblock]$SetHostRule,
@@ -63,28 +66,31 @@ function Set-WorkerFirewallRules {
         [Parameter(Mandatory)][scriptblock]$RemoveVmRule
     )
 
-    if ($LocalPort -ne 443) {
-        throw "Only TCP/443 may be exposed."
+    if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+        throw "Firewall rule name '$Name' is not valid."
+    }
+    if ($AllowedPorts -notcontains $LocalPort) {
+        throw "Only $(($AllowedPorts | ForEach-Object { "TCP/$_" }) -join ' and ') may be exposed."
     }
 
     & $SetVmDefault $WslVmCreatorId
 
-    $existingHost = & $GetHostRule $RuleName
+    $existingHost = & $GetHostRule $Name
     if ($existingHost) {
-        & $SetHostRule $RuleName $LocalPort $Remote
+        & $SetHostRule $Name $LocalPort $Remote
     }
     else {
-        & $NewHostRule $RuleName $RuleDisplayName $LocalPort $Remote
+        & $NewHostRule $Name $DisplayName $LocalPort $Remote
     }
 
-    $existingVm = & $GetVmRule $RuleName
+    $existingVm = & $GetVmRule $Name
     if ($existingVm) {
         if (& $TestVmRule $existingVm $LocalPort $Remote) {
             return
         }
-        & $RemoveVmRule $RuleName
+        & $RemoveVmRule $Name
     }
-    & $NewVmRule $RuleName $RuleDisplayName $WslVmCreatorId $LocalPort $Remote
+    & $NewVmRule $Name $DisplayName $WslVmCreatorId $LocalPort $Remote
 }
 
 function Test-VmRuleMatches {
@@ -102,7 +108,7 @@ if ($MyInvocation.InvocationName -ne ".") {
         throw "Elevated PowerShell is required."
     }
     $remote = Get-TrustedRemoteAddresses -Addresses $RemoteAddresses
-    Set-WorkerFirewallRules -Remote $remote -LocalPort $Port `
+    Set-WorkerFirewallRules -Name $RuleName -DisplayName $RuleDisplayName -Remote $remote -LocalPort $Port `
         -GetHostRule { param($name) Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue } `
         -NewHostRule { param($name, $display, $port, $addresses) New-NetFirewallRule -Name $name -DisplayName $display -Direction Inbound -Protocol TCP -LocalPort $port -RemoteAddress $addresses -Action Allow -Profile Any | Out-Null } `
         -SetHostRule { param($name, $port, $addresses) Set-NetFirewallRule -Name $name -Direction Inbound -Protocol TCP -LocalPort $port -RemoteAddress $addresses -Action Allow -Profile Any -Enabled True } `
@@ -111,5 +117,5 @@ if ($MyInvocation.InvocationName -ne ".") {
         -NewVmRule { param($name, $display, $creator, $port, $addresses) New-NetFirewallHyperVRule -Name $name -DisplayName $display -Direction Inbound -VMCreatorId $creator -Protocol TCP -LocalPorts $port -RemoteAddresses $addresses -Action Allow | Out-Null } `
         -TestVmRule { param($rule, $port, $addresses) Test-VmRuleMatches -Rule $rule -LocalPort $port -Remote $addresses } `
         -RemoveVmRule { param($name) Remove-NetFirewallHyperVRule -Name $name }
-    Write-Host "Inbound TCP/$Port allowed from: $($remote -join ', '). All other inbound traffic to WSL is blocked."
+    Write-Host "Rule '$RuleName' allows inbound TCP/$Port from: $($remote -join ', '). All other inbound traffic to WSL is blocked."
 }
