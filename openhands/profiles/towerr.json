@@ -10,13 +10,11 @@
     "acp_command": "/home/agent/.local/bin/claude-agent-acp",
     "acp_model": null
   },
-  "skills": [
-    {
-      "source": "https://github.com/lkshrk/auto-code-env.git",
-      "ref": "main",
-      "repo_path": "openhands/skills/agent-sandbox-deploy"
+  "secrets": {
+    "GH_TOKEN": {
+      "item": "28226043-0a70-4d54-bfb8-592086a319c0"
     }
-  ],
+  },
   "git_sync": {
     "repo_url": "https://github.com/lkshrk/auto-code-env.git",
     "branch": "main",

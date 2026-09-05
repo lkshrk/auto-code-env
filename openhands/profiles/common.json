@@ -1,0 +1,33 @@
+{
+  "secrets": {
+    "LITELLM_API": {
+      "item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57"
+    }
+  },
+  "skills": [
+    {
+      "source": "https://github.com/lkshrk/auto-code-env.git",
+      "ref": "main",
+      "repo_path": "openhands/skills/agent-sandbox-deploy"
+    }
+  ],
+  "mcp_servers": {
+    "litellm-tools": {
+      "url": "https://api.ai.h-cloud.lan/mcp/",
+      "headers": {
+        "x-litellm-api-key": {
+          "secret": "LITELLM_API"
+        }
+      }
+    },
+    "openaiDeveloperDocs": {
+      "url": "https://developers.openai.com/mcp"
+    }
+  },
+  "agents": {
+    "repo": "lkshrk/dotfiles",
+    "ref": "main",
+    "path": "apm/ai-plugins",
+    "targets": ["claude", "codex"]
+  }
+}

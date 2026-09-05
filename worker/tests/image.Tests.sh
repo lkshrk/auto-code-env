@@ -124,7 +124,13 @@ assert(dockerignore == [
   'Windows-on-Arm',
   'PR #16635',
   'OpenHands issue #16217',
-  'Publication gate: native amd64 CI and real Windows import'
+  'Publication gate: native amd64 CI and real Windows import',
+  'profile-common.json',
+  'profileCommon',
+  'mcp_servers',
+  'omni agents sync',
+  'apm.yml',
+  'is-system-running'
 ].each do |phrase|
   assert(readme.include?(phrase), "README must document #{phrase.inspect}")
 end

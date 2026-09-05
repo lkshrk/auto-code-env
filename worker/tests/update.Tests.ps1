@@ -82,7 +82,8 @@ $WorkerVersionPattern = '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
 $WorkerDistroPattern = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 
 foreach ($name in "Get-WorkerInstalledVersion", "Compare-WorkerVersion", "Get-WorkerPasswordBytes",
-    "Get-WorkerOverlayArguments", "Get-WslDistributionRegistryKey", "Rename-WslDistribution") {
+    "Get-WorkerOverlayArguments", "Get-WslDistributionRegistryKey", "Rename-WslDistribution",
+    "Wait-WorkerSystemReady") {
     Invoke-Expression (Import-ScriptFunction -Path $commonPath -Name $name)
 }
 foreach ($name in "Get-WorkerStagingDistroName", "Get-WorkerUpdateTaskArguments", "Register-WorkerUpdateTask",
@@ -93,7 +94,8 @@ foreach ($name in "Get-WorkerStagingDistroName", "Get-WorkerUpdateTaskArguments"
 $updateSource = Get-Content -Raw $updatePath
 foreach ($required in 'Assert-WorkerElevated', 'Update-WorkerDistribution', 'Compare-WorkerVersion', '--terminate',
     '--unregister', 'DistributionName', 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss|\$WorkerLxssKey',
-    '\$Force', '\$Schedule', '-Weekly', '-Hidden', 'state", "export', 'Invoke-WorkerProvision', 'Invoke-WorkerActivation') {
+    '\$Force', '\$Schedule', '-Weekly', '-Hidden', 'state", "export', 'Invoke-WorkerProvision', 'Invoke-WorkerActivation',
+    'Wait-WorkerSystemReady', 'CommonProfilePath', 'Get-WorkerGuestProfilePaths') {
     if ($updateSource -notmatch $required) {
         throw "update.ps1 must use $required."
     }
@@ -225,9 +227,48 @@ Assert-Equal "unregister openhands-worker-update" $taskCalls[1] "an existing tas
 Assert-Throws { Get-WorkerUpdateTaskArguments -ScriptPath 'C:\a"b\update.ps1' -ConfigPath "C:\worker.json" } "cannot be used" "a quotable path is refused"
 Write-Host "PASS: scheduled update task"
 
+$readyIndex = $updateSource.IndexOf("Wait-WorkerSystemReady -WslPath `$wslPath -Distro `$name", [StringComparison]::Ordinal)
+$provisionIndex = $updateSource.IndexOf("Invoke-WorkerProvision -Configuration", [StringComparison]::Ordinal)
+Assert-True ($readyIndex -ge 0) "update.ps1 waits for the staging distribution to finish booting"
+Assert-True ($readyIndex -lt $provisionIndex) "the readiness wait runs before the first overlay call on the staging distribution"
+Write-Host "PASS: readiness wait is wired into staging provisioning"
+
 $root = Join-Path ([IO.Path]::GetTempPath()) ("worker-update-tests-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $root | Out-Null
 try {
+    $fakeWsl = Join-Path $root "fake-wsl"
+    $counter = Join-Path $root "boot-count"
+    [IO.File]::WriteAllText($fakeWsl, @'
+#!/bin/sh
+count=0
+if [ -f "$FAKE_WSL_BOOT_COUNT" ]; then count=$(cat "$FAKE_WSL_BOOT_COUNT"); fi
+count=$((count + 1))
+printf '%s' "$count" > "$FAKE_WSL_BOOT_COUNT"
+printf '%s\n' "$@" >> "$FAKE_WSL_BOOT_ARGV"
+if [ "$count" -lt 2 ]; then printf 'starting\n'; exit 1; fi
+printf 'running\n'
+'@)
+    & chmod +x $fakeWsl
+    $env:FAKE_WSL_BOOT_COUNT = $counter
+    $env:FAKE_WSL_BOOT_ARGV = Join-Path $root "boot-argv"
+    $sleeps = New-Object 'System.Collections.Generic.List[int]'
+    Assert-Equal "running" (Wait-WorkerSystemReady -WslPath $fakeWsl -Distro "openhands-worker-next" -Wait { param($seconds) $sleeps.Add($seconds) }) "a distribution that reports starting then running is waited out"
+    Assert-Equal 1 $sleeps.Count "the poll sleeps once between the two probes"
+    $bootArgv = [IO.File]::ReadAllText($env:FAKE_WSL_BOOT_ARGV)
+    Assert-True ($bootArgv -match '(?m)^is-system-running$') "the probe asks systemd whether the system finished booting"
+    Assert-True ($bootArgv -match '(?m)^/usr/bin/systemctl$') "the probe runs systemctl by absolute path"
+    Assert-True ($bootArgv -match '(?m)^openhands-worker-next$') "the probe targets the staging distribution"
+
+    Assert-Equal "degraded" (Wait-WorkerSystemReady -WslPath $fakeWsl -Distro "openhands-worker-next" -Probe { param($path, $name) "degraded" } -Wait { param($seconds) }) "a degraded system counts as booted"
+    $probes = 0
+    Assert-Throws {
+        Wait-WorkerSystemReady -WslPath $fakeWsl -Distro "openhands-worker-next" -TimeoutSeconds 120 -IntervalSeconds 2 `
+            -Probe { param($path, $name) $script:probes++; "starting" } -Wait { param($seconds) }
+    } "did not finish booting within 120 seconds" "a distribution that never boots is refused"
+    Assert-Equal 61 $probes "the poll runs for the whole 120 second budget at a 2 second interval"
+    Assert-Throws { Wait-WorkerSystemReady -WslPath $fakeWsl -Distro "bad name; rm" } "is not valid" "a distro name with shell characters is refused"
+    Write-Host "PASS: staging readiness wait"
+
     $archive = Join-Path $root "state-20260905120000.tar.gz"
     Assert-Throws { Test-WorkerStateArchive -Path $archive -ListArchive { param($path) @("home/agent/.openhands") } } "was not written" "a missing state archive is refused"
     [IO.File]::WriteAllBytes($archive, [byte[]]@())
@@ -244,6 +285,7 @@ try {
     Write-Host "PASS: state archive handling"
 }
 finally {
+    Remove-Item -Path Env:FAKE_WSL_BOOT_COUNT, Env:FAKE_WSL_BOOT_ARGV -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 

@@ -19,7 +19,8 @@ INGRESS=http://127.0.0.1:8000
 CA_CERTIFICATE=/usr/local/share/ca-certificates/openhands-lan-ca.crt
 STATE_DIRECTORY=/var/lib/openhands/overlay
 GIT_SYNC_TOKEN_STATE="$STATE_DIRECTORY/git-sync-token.sha256"
-STATE_PATHS='home/agent/.openhands home/agent/.claude home/agent/.codex home/agent/.git-credentials home/agent/.gitconfig'
+STATE_PATHS='home/agent/.openhands home/agent/.claude home/agent/.codex home/agent/.git-credentials home/agent/.gitconfig var/lib/openhands/overlay'
+OMNI_MANIFEST=/home/agent/.config/omni/apm.yml
 PASSWORD_STDIN=0
 
 usage() {
@@ -27,7 +28,7 @@ usage() {
 usage: openhands-overlay secrets --vault-url URL --email EMAIL --crt-id UUID --key-id UUID --api-id UUID [--password-stdin]
        openhands-overlay github --pat-id UUID [--vault-url URL --email EMAIL] [--password-stdin]
        openhands-overlay ca --item UUID [--vault-url URL --email EMAIL] [--password-stdin]
-       openhands-overlay settings --file PATH [--password-stdin]
+       openhands-overlay settings --file PATH [--file PATH ...] [--password-stdin]
        openhands-overlay state export > state.tar.gz
        openhands-overlay state import < state.tar.gz
        openhands-overlay origin https://canvas.example [https://other.example ...]
@@ -35,6 +36,10 @@ usage: openhands-overlay secrets --vault-url URL --email EMAIL --crt-id UUID --k
        openhands-overlay enable
        openhands-overlay status
        openhands-overlay egress [--minutes N] [--interval SECONDS] [--from FILE]
+
+Repeating --file layers profiles left to right: later files win per key, and
+map-shaped sections (skills, secrets, mcp_servers) are merged rather than
+replaced.
 
 --password-stdin reads the Vaultwarden master password from stdin instead of
 asking for it interactively.
@@ -205,11 +210,18 @@ import re
 import subprocess
 import sys
 
-SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync")
+SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync", "mcp_servers", "agents")
+MERGED_OBJECTS = ("llm", "agent", "git_sync", "agents")
+MERGED_MAPS = ("secrets", "mcp_servers")
 ACP_SERVERS = ("claude-code", "codex", "gemini-cli", "custom")
 AGENT_KINDS = ("openhands", "acp")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 SECRET_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+MCP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+REPO_SHORTHAND = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+TARGET_NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+AGENTS_MANIFEST_NAME = "openhands-worker"
 
 
 def fail(message):
@@ -294,6 +306,86 @@ def validate_skills(skills):
                 as_text("%s.%s" % (label, key), skill[key])
 
 
+def validate_mcp_servers(servers):
+    if not isinstance(servers, dict):
+        fail("mcp_servers must be an object")
+    for name in servers:
+        label = "mcp_servers.%s" % name
+        if not MCP_NAME.match(name):
+            fail("mcp_servers key %r must be a server name" % name)
+        server = servers[name]
+        object_keys(label, server, ("url", "headers", "command", "args"))
+        if "url" in server:
+            if "command" in server or "args" in server:
+                fail("%s must set either url or command, not both" % label)
+            url = as_text("%s.url" % label, server["url"])
+            if not url.startswith(("http://", "https://")):
+                fail("%s.url must be an absolute HTTP URL" % label)
+            validate_mcp_headers(label, server.get("headers", {}))
+        elif "command" in server:
+            as_text("%s.command" % label, server["command"])
+            args = server.get("args", [])
+            if not isinstance(args, list):
+                fail("%s.args must be an array" % label)
+            for part in args:
+                as_text("%s.args entry" % label, part)
+        else:
+            fail("%s must set url for a remote server or command for a stdio one" % label)
+
+
+def validate_mcp_headers(label, headers):
+    if not isinstance(headers, dict):
+        fail("%s.headers must be an object" % label)
+    for name in headers:
+        if not HEADER_NAME.match(name):
+            fail("%s.headers name %r is not an HTTP header name" % (label, name))
+        value = headers[name]
+        if isinstance(value, dict):
+            object_keys("%s.headers.%s" % (label, name), value, ("secret",))
+            reference = value.get("secret")
+            if not isinstance(reference, str) or not SECRET_NAME.match(reference):
+                fail("%s.headers.%s.secret must be a secret name" % (label, name))
+        else:
+            as_text("%s.headers.%s" % (label, name), value)
+
+
+def validate_agents(agents):
+    object_keys("agents", agents, ("repo", "ref", "path", "targets"))
+    repo = as_text("agents.repo", agents.get("repo"))
+    if not REPO_SHORTHAND.match(repo) and not repo.startswith("https://"):
+        fail("agents.repo must be owner/name or an absolute HTTPS git URL")
+    for key in ("ref", "path"):
+        if key in agents:
+            as_text("agents.%s" % key, agents[key])
+    path = agents.get("path", "")
+    if path.startswith("/") or ".." in path.split("/"):
+        fail("agents.path must be a relative path inside the repository")
+    targets = agents.get("targets")
+    if not isinstance(targets, list) or not targets:
+        fail("agents.targets must be a non-empty array")
+    for target in targets:
+        if not isinstance(target, str) or not TARGET_NAME.match(target):
+            fail("agents.targets entry %r is not a harness name" % target)
+
+
+def render_agents(agents):
+    lines = [
+        "name: %s" % AGENTS_MANIFEST_NAME,
+        "version: 1.0.0",
+        "dependencies:",
+        "  apm:",
+        "  - git: %s" % agents["repo"],
+    ]
+    if "path" in agents:
+        lines.append("    path: %s" % agents["path"])
+    if "ref" in agents:
+        lines.append("    ref: %s" % agents["ref"])
+    lines.append("targets:")
+    for target in agents["targets"]:
+        lines.append("- %s" % target)
+    return "\n".join(lines)
+
+
 def validate_git_sync(git_sync):
     object_keys(
         "git_sync",
@@ -334,6 +426,48 @@ def load(path):
         validate_skills(profile["skills"])
     if "git_sync" in profile:
         validate_git_sync(profile["git_sync"])
+    if "mcp_servers" in profile:
+        validate_mcp_servers(profile["mcp_servers"])
+    if "agents" in profile:
+        validate_agents(profile["agents"])
+    return profile
+
+
+def skill_key(skill):
+    return skill.get("repo_path") or skill["source"]
+
+
+def merge(profiles):
+    merged = {}
+    for profile in profiles:
+        for key in profile:
+            value = profile[key]
+            if key == "skills":
+                index = {}
+                for skill in list(merged.get("skills") or []) + value:
+                    index[skill_key(skill)] = skill
+                merged["skills"] = list(index.values())
+            elif key in MERGED_OBJECTS or key in MERGED_MAPS:
+                section = dict(merged.get(key) or {})
+                section.update(value)
+                merged[key] = section
+            else:
+                merged[key] = value
+    return merged
+
+
+def load_all(paths):
+    profile = merge([load(path) for path in paths])
+    secrets = profile.get("secrets") or {}
+    for name in profile.get("mcp_servers") or {}:
+        headers = (profile["mcp_servers"][name] or {}).get("headers") or {}
+        for header in headers:
+            value = headers[header]
+            if isinstance(value, dict) and value["secret"] not in secrets:
+                fail(
+                    "mcp_servers.%s.headers.%s references undeclared secret %s"
+                    % (name, header, value["secret"])
+                )
     return profile
 
 
@@ -438,13 +572,11 @@ def secret_reader(work):
     return read
 
 
-def apply_agent_settings(api, profile, secret):
+def apply_agent_settings(api, profile, secret, settings):
     llm = profile.get("llm") or {}
     agent = profile.get("agent") or {}
     if not llm and not agent:
         return
-    current = api.json_call("GET", "/api/settings", headers=("X-Expose-Secrets: plaintext",))
-    settings = current.get("agent_settings") or {}
     current_llm = settings.get("llm") or {}
     diff = {}
     llm_diff = {}
@@ -482,6 +614,43 @@ def apply_secrets(api, profile, secret):
         api.json_call("PUT", "/api/settings/secrets", {"name": name, "value": value})
         changed.append(name)
     print("secrets applied: %s" % (", ".join(changed) if changed else "none changed"))
+
+
+def mcp_body(server, secrets, secret):
+    if "url" in server:
+        body = {"transport": "http", "url": server["url"]}
+        headers = server.get("headers") or {}
+        if headers:
+            body["headers"] = dict(
+                (name, secret(secrets[value["secret"]]["item"]) if isinstance(value, dict) else value)
+                for name, value in headers.items()
+            )
+        return body
+    body = {"transport": "stdio", "command": server["command"]}
+    if server.get("args"):
+        body["args"] = list(server["args"])
+    return body
+
+
+def apply_mcp_servers(api, profile, secret, settings):
+    wanted = profile.get("mcp_servers") or {}
+    if not wanted:
+        return
+    secrets = profile.get("secrets") or {}
+    installed = settings.get("mcp_config") or {}
+    changed = []
+    for name in sorted(wanted):
+        body = mcp_body(wanted[name], secrets, secret)
+        current = installed.get(name)
+        if not isinstance(current, dict):
+            api.json_call("POST", "/api/settings/mcp/%s" % name, body)
+            changed.append(name)
+            continue
+        diff = dict((key, body[key]) for key in body if current.get(key) != body[key])
+        if diff:
+            api.json_call("PATCH", "/api/settings/mcp/%s" % name, diff)
+            changed.append(name)
+    print("mcp_servers applied: %s" % (", ".join(changed) if changed else "none changed"))
 
 
 def apply_skills(api, profile):
@@ -544,16 +713,26 @@ def write_state(path, digest):
 
 
 def main():
-    mode, profile_path, work, ingress, key_path, token_state = sys.argv[1:7]
-    profile = load(profile_path)
+    mode, work, ingress, key_path, token_state = sys.argv[1:6]
+    profile = load_all(sys.argv[6:])
     if mode == "validate":
         for item in wanted_items(profile):
             print(item)
         return
+    if mode == "agents":
+        agents = profile.get("agents")
+        if agents:
+            print(render_agents(agents))
+        return
     api = Api(ingress, key_path, work)
     secret = secret_reader(work)
-    apply_agent_settings(api, profile, secret)
+    settings = {}
+    if profile.get("llm") or profile.get("agent") or profile.get("mcp_servers"):
+        current = api.json_call("GET", "/api/settings", headers=("X-Expose-Secrets: plaintext",))
+        settings = current.get("agent_settings") or {}
+    apply_agent_settings(api, profile, secret, settings)
     apply_secrets(api, profile, secret)
+    apply_mcp_servers(api, profile, secret, settings)
     apply_skills(api, profile)
     apply_git_sync(api, profile, secret, token_state)
 
@@ -562,22 +741,64 @@ main()
 PYTHON
 }
 
+# agent_run DIRECTORY COMMAND... - runs COMMAND as the agent user in DIRECTORY.
+agent_run() {
+    directory=$1
+    shift
+    runuser -u agent -- env HOME="$AGENT_HOME" USER=agent LOGNAME=agent \
+        PATH="$AGENT_HOME/.local/bin:$PATH" \
+        sh -eu -c 'cd "$1"; shift; exec "$@"' sh "$directory" "$@"
+}
+
+agents_sync() {
+    manifest=$1
+    id agent >/dev/null 2>&1 || fail 'agent user missing'
+    command -v omni >/dev/null 2>&1 || fail 'omni is required for the agents section'
+    install -d -o agent -g agent -m 0755 "$AGENT_HOME/.config" "$(dirname "$OMNI_MANIFEST")"
+    changed=1
+    if [ -f "$OMNI_MANIFEST" ] && [ "$(cat "$OMNI_MANIFEST")" = "$manifest" ]; then
+        changed=0
+    fi
+    if [ "$changed" = 1 ]; then
+        printf '%s\n' "$manifest" > "$OMNI_MANIFEST.tmp"
+        chown agent:agent "$OMNI_MANIFEST.tmp"
+        chmod 0644 "$OMNI_MANIFEST.tmp"
+        mv -f "$OMNI_MANIFEST.tmp" "$OMNI_MANIFEST"
+    fi
+    agent_run "$AGENT_HOME" omni agents sync
+    if [ "$changed" = 1 ]; then
+        echo 'agents applied: synced'
+    else
+        echo 'agents unchanged'
+    fi
+    printf 'agents targets: %s\n' \
+        "$(printf '%s\n' "$manifest" | awk '/^targets:$/ { collect = 1; next } collect && /^- / { count++ } END { print count + 0 }')"
+}
+
 settings() {
-    profile=''
+    files=''
     while [ $# -gt 0 ]; do
         case $1 in
-            --file) profile=${2:-}; shift 2 ;;
+            --file)
+                profile=${2:-}
+                [ -n "$profile" ] || usage
+                [ -r "$profile" ] || fail "unreadable profile $profile"
+                case $profile in *[[:space:]]*) fail "profile path must not contain whitespace: $profile" ;; esac
+                files="$files $profile"
+                shift 2 ;;
             --password-stdin) PASSWORD_STDIN=1; shift ;;
             *) usage ;;
         esac
     done
-    [ -n "$profile" ] || usage
-    [ -r "$profile" ] || fail "unreadable profile $profile"
+    [ -n "$files" ] || usage
     command -v curl >/dev/null 2>&1 || fail 'curl is required'
     command -v python3 >/dev/null 2>&1 || fail 'python3 is required'
     [ -r "$BACKEND_KEY" ] || fail "missing $BACKEND_KEY"
 
-    items=$(settings_helper validate "$profile" '' '' '' '')
+    # shellcheck disable=SC2086
+    items=$(settings_helper validate '' '' '' '' $files)
+    # shellcheck disable=SC2086
+    agents_manifest=$(settings_helper agents '' '' '' '' $files)
     umask 077
     rm -rf "$WORK_DIRECTORY"
     install -d -o root -g root -m 0700 "$WORK_DIRECTORY"
@@ -593,8 +814,12 @@ settings() {
             rm -f "$OVERLAY_WORK/items"
         '
     fi
-    settings_helper apply "$profile" "$WORK_DIRECTORY" "$INGRESS" "$BACKEND_KEY" "$GIT_SYNC_TOKEN_STATE"
+    # shellcheck disable=SC2086
+    settings_helper apply "$WORK_DIRECTORY" "$INGRESS" "$BACKEND_KEY" "$GIT_SYNC_TOKEN_STATE" $files
     rm -rf "$WORK_DIRECTORY"
+    if [ -n "$agents_manifest" ]; then
+        agents_sync "$agents_manifest"
+    fi
 }
 
 state() {
@@ -623,13 +848,18 @@ state_import() {
     tar --numeric-owner --extract --gzip --file - --directory /
     for path in $STATE_PATHS; do
         if [ -e "/$path" ]; then
-            chown -R agent:agent "/$path"
+            case $path in
+                home/agent/*) chown -R agent:agent "/$path" ;;
+                *) chown -R root:root "/$path" ;;
+            esac
             printf 'import /%s\n' "$path"
         fi
     done
     for directory in "$AGENT_HOME/.openhands" "$AGENT_HOME/.claude" "$AGENT_HOME/.codex"; do
         if [ -d "$directory" ]; then chmod 0700 "$directory"; fi
     done
+    if [ -d "$STATE_DIRECTORY" ]; then chmod 0700 "$STATE_DIRECTORY"; fi
+    if [ -f "$GIT_SYNC_TOKEN_STATE" ]; then chmod 0600 "$GIT_SYNC_TOKEN_STATE"; fi
     if [ -f "$GIT_CREDENTIALS" ]; then chmod 0600 "$GIT_CREDENTIALS"; fi
     echo 'state imported'
 }

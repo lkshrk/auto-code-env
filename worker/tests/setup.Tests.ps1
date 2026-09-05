@@ -64,7 +64,8 @@ foreach ($name in "Get-WorkerJsonMember", "ConvertTo-WorkerStringArray", "Read-W
     "Save-WorkerAsset", "Get-WorkerVaultCredential", "Save-WorkerVaultCredential", "Get-WorkerOverlayArguments",
     "Get-WorkerPasswordBytes", "ConvertTo-WorkerArgument", "ConvertTo-WorkerCommandLine", "Invoke-WorkerProcess", "Invoke-WorkerOverlay", "Get-WorkerAssetNames",
     "Resolve-WorkerProfilePath", "Get-WorkerConfigPath", "Get-WorkerCredentialPath", "Invoke-WorkerProvision",
-    "Invoke-WorkerActivation") {
+    "Invoke-WorkerActivation", "Resolve-WorkerCommonProfileName", "Get-WorkerSettingsCommand",
+    "Get-WorkerGuestProfilePaths") {
     Invoke-Expression (Import-ScriptFunction -Path $commonPath -Name $name)
 }
 
@@ -148,6 +149,13 @@ try {
     Assert-Equal "" $configuration.Architecture "architecture is auto-detected when absent"
     Assert-Equal 2 $configuration.RemoteAddresses.Count "remote addresses"
     Assert-Equal "cf9ec766-c260-4e7d-abe0-3299745b57b4" $configuration.Items["ca"] "ca item"
+    Assert-Equal "profile-common.json" $configuration.ProfileCommon "profileCommon defaults to the shared release asset"
+
+    [IO.File]::WriteAllText($configPath, ($configJson -replace '"profile": "profile-towerr.json"', '"profile": "profile-towerr.json", "profileCommon": "profile-shared.json"'))
+    Assert-Equal "profile-shared.json" (Read-WorkerConfig -Path $configPath).ProfileCommon "profileCommon is read from worker.json"
+    [IO.File]::WriteAllText($configPath, ($configJson -replace '"profile": "profile-towerr.json"', '"profile": "profile-towerr.json", "profileCommon": "../escape.json"'))
+    Assert-Throws { Read-WorkerConfig -Path $configPath } "profileCommon" "a profileCommon that is not a release asset name is refused"
+    [IO.File]::WriteAllText($configPath, $configJson)
 
     foreach ($case in @(
             @{ Pattern = 'remoteAddresses'; Json = $configJson -replace '"remoteAddresses": \[[^\]]*\]', '"remoteAddresses": []' },
@@ -188,6 +196,19 @@ try {
     Assert-Equal (Join-Path $assetDirectory "profile-towerr.json") (Resolve-WorkerProfilePath -ProfileAsset "profile-towerr.json" -Directory $assetDirectory -Download $download) "release asset profile"
     Assert-Equal $profileFile (Resolve-WorkerProfilePath -ProfileAsset $profileFile -Directory $assetDirectory -Download $download) "local profile path"
     Assert-Throws { Resolve-WorkerProfilePath -ProfileAsset "no-such-profile" -Directory $assetDirectory -Download $download } "is not a release asset name" "an unusable profile is refused"
+
+    $commonChecksums = @{ "profile-common.json" = ("0" * 64); "profile-towerr.json" = ("0" * 64) }
+    Assert-Equal "profile-common.json" (Resolve-WorkerCommonProfileName -ProfileCommon "profile-common.json" -Checksums $commonChecksums) "a published common profile is resolved"
+    Assert-Equal "" (Resolve-WorkerCommonProfileName -ProfileCommon "profile-common.json" -Checksums @{ "profile-towerr.json" = ("0" * 64) }) "a release without the common profile falls back to the host profile alone"
+    Assert-Equal "" (Resolve-WorkerCommonProfileName -ProfileCommon "" -Checksums $commonChecksums) "an empty profileCommon resolves to nothing"
+    Assert-Equal "" (Resolve-WorkerCommonProfileName -ProfileCommon "../escape.json" -Checksums $commonChecksums) "a path-like profileCommon resolves to nothing"
+
+    Assert-Equal "/etc/openhands/profile.json" ((Get-WorkerGuestProfilePaths -CommonProfilePath "") -join " ") "no common profile means one settings file"
+    Assert-Equal "/etc/openhands/profile-common.json /etc/openhands/profile.json" ((Get-WorkerGuestProfilePaths -CommonProfilePath "C:\assets\profile-common.json") -join " ") "the common profile is layered under the host profile"
+    Assert-Equal "settings --file /etc/openhands/profile-common.json --file /etc/openhands/profile.json" `
+        ((Get-WorkerSettingsCommand -ProfilePaths @("/etc/openhands/profile-common.json", "/etc/openhands/profile.json")) -join " ") "layered settings command"
+    Assert-Throws { Get-WorkerSettingsCommand -ProfilePaths @() } "At least one settings profile" "an empty profile list is refused"
+    Assert-Throws { Get-WorkerSettingsCommand -ProfilePaths @("/etc/openhands/profile.json; rm -rf /") } "must be absolute" "a profile path with shell metacharacters is refused"
     Write-Host "PASS: release asset selection"
 
     $credentialPath = Join-Path $root "vault.cred"
@@ -270,7 +291,7 @@ exit "${FAKE_WSL_EXIT:-0}"
         if ($usePassword) { $passworded.Add($command[0]) }
     }
     Invoke-WorkerProvision -Configuration $configuration -OverlayPath "C:\assets\openhands-overlay" `
-        -ProfilePath "C:\assets\profile-towerr.json" -StatePath "" -CopyFile $copyFile -Overlay $overlay
+        -ProfilePath "C:\assets\profile-towerr.json" -CommonProfilePath "" -StatePath "" -CopyFile $copyFile -Overlay $overlay
     Invoke-WorkerActivation -Overlay $overlay
     $expected = @(
         "copy /usr/local/sbin/openhands-overlay 0755",
@@ -287,7 +308,15 @@ exit "${FAKE_WSL_EXIT:-0}"
 
     $calls.Clear()
     Invoke-WorkerProvision -Configuration $configuration -OverlayPath "C:\assets\openhands-overlay" `
-        -ProfilePath "C:\assets\profile-towerr.json" -StatePath "C:\state.tar.gz" -CopyFile $copyFile -Overlay $overlay
+        -ProfilePath "C:\assets\profile-towerr.json" -CommonProfilePath "C:\assets\profile-common.json" -StatePath "" -CopyFile $copyFile -Overlay $overlay
+    Invoke-WorkerActivation -Overlay $overlay -ProfilePaths (Get-WorkerGuestProfilePaths -CommonProfilePath "C:\assets\profile-common.json")
+    Assert-Equal "copy /etc/openhands/profile-common.json 0600" $calls[1] "the common profile is staged before the host profile"
+    Assert-Equal "copy /etc/openhands/profile.json 0600" $calls[2] "the host profile is staged after the common profile"
+    Assert-True ($calls -contains "overlay settings --file /etc/openhands/profile-common.json --file /etc/openhands/profile.json") "activation layers the common profile under the host profile"
+
+    $calls.Clear()
+    Invoke-WorkerProvision -Configuration $configuration -OverlayPath "C:\assets\openhands-overlay" `
+        -ProfilePath "C:\assets\profile-towerr.json" -CommonProfilePath "" -StatePath "C:\state.tar.gz" -CopyFile $copyFile -Overlay $overlay
     Assert-Equal "overlay state import <C:\state.tar.gz" $calls[$calls.Count - 1] "state import is the last step before activation"
     Write-Host "PASS: provisioning order"
 }
