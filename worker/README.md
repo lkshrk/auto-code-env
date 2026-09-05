@@ -638,7 +638,7 @@ deployment-specific; image does not claim to configure them.
 
 ## Tool convergence and updates
 
-`provision.sh` bootstraps exact Node `24.20.0`, uv/uvx `0.12.7`, and Omni `0.10.4`
+`provision.sh` bootstraps exact Node `24.20.0`, uv/uvx `0.12.7`, and Omni `0.10.14`
 with vendor checksum verification. Omni desired state is
 `worker/omni/settings.json`, copied root-owned to
 `/etc/openhands/omni/settings.json`.

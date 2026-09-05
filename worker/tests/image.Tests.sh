@@ -125,7 +125,7 @@ assert(dockerignore == [
   '/etc/credstore/local_backend_api_key',
   'LoadCredential=local_backend_api_key',
   'ConditionVirtualization=!wsl',
-  'Omni `0.10.4`',
+  'Omni `0.10.14`',
   'Windows-on-Arm',
   'PR #16635',
   'OpenHands issue #16217',

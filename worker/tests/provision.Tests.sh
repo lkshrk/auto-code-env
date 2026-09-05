@@ -136,7 +136,7 @@ setup_fixture() {
   mkdir -p /tmp/fixture-src/omni
   printf '%s\n' \
     '#!/bin/sh' \
-    'if test "${1:-}" = --version; then printf "%s\\n" "omni version v0.10.4 (fixture)"; exit 0; fi' \
+    'if test "${1:-}" = --version; then printf "%s\\n" "omni version v0.10.14 (fixture)"; exit 0; fi' \
     'test "$1" = --config && test -f "$2" && test "$2" != /etc/openhands/omni/settings.json && test "$3" = --cache-dir && test "$5" = --state-dir && test "$7" = --yes && test "$8" = tools && test "$9" = sync && test "${10}" = --group || exit 91' \
     'group=${11}' \
     'touch "$(dirname "$2")/.omni-config.lock"; cp "$2" "$2.bak"' \
@@ -246,12 +246,12 @@ setup_fixture() {
     '  https://github.com/astral-sh/uv/releases/download/0.12.7/uv-*.tar.gz)' \
     '    test "$url" = "https://github.com/astral-sh/uv/releases/download/0.12.7/uv-$uv_target.tar.gz" || exit 72' \
     '    /usr/bin/cp -- "/fixtures/uv-$uv_target.tar.gz" "$output" ;;' \
-    '  https://github.com/lkshrk/omni/releases/download/v0.10.4/checksums.txt)' \
+    '  https://github.com/lkshrk/omni/releases/download/v0.10.14/checksums.txt)' \
     '    case "$(cat /tmp/fixture-machine-arch)" in x86_64|amd64) omni_target=x86_64 ;; aarch64|arm64) omni_target=arm64 ;; *) exit 72 ;; esac' \
     '    hash=$(/usr/bin/sha256sum "/fixtures/omni_linux_$omni_target.tar.gz"); hash=${hash%% *}; printf "%s  omni_linux_%s.tar.gz\\ndeadbeef  other\\n" "$hash" "$omni_target" > "$output" ;;' \
-    '  https://github.com/lkshrk/omni/releases/download/v0.10.4/omni_linux_*.tar.gz)' \
+    '  https://github.com/lkshrk/omni/releases/download/v0.10.14/omni_linux_*.tar.gz)' \
     '    case "$(cat /tmp/fixture-machine-arch)" in x86_64|amd64) omni_target=x86_64 ;; aarch64|arm64) omni_target=arm64 ;; *) exit 72 ;; esac' \
-    '    test "$url" = "https://github.com/lkshrk/omni/releases/download/v0.10.4/omni_linux_$omni_target.tar.gz" || exit 72' \
+    '    test "$url" = "https://github.com/lkshrk/omni/releases/download/v0.10.14/omni_linux_$omni_target.tar.gz" || exit 72' \
     '    /usr/bin/cp -- "/fixtures/omni_linux_$omni_target.tar.gz" "$output" ;;' \
     '  *) exit 72 ;;' \
     'esac' > /usr/bin/curl
