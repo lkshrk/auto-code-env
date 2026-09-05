@@ -28,7 +28,8 @@ WSL2 distribution "coder-worker": Ubuntu 26.04, systemd, mirrored networking
         |
         +-- coder-<owner>-<workspace>        codercom/enterprise-base:ubuntu
         +-- coder-<owner>-<workspace>-dind   docker:27-dind, privileged, optional
-        `-- /etc/ssl/lan/lan-ca.pem          bind-mounted read-only into workspaces
+        +-- /etc/ssl/lan/lan-ca.pem          bind-mounted read-only into workspaces
+        `-- /etc/coder-worker/workspace.env  bind-mounted read-only into workspaces
 
 workspace agent -> https://coder.h-cloud.io   outbound only, DERP relay in coderd
 ```
@@ -159,6 +160,7 @@ the script refuses otherwise.
 | `ca.pem` | Vaultwarden item, PEM in the notes | `coder-worker-overlay secrets --ca-id` |
 | `server-cert.pem` | Vaultwarden item, PEM in the notes | `--crt-id` |
 | `server-key.pem` | Vaultwarden item, PEM in the notes | `--key-id` |
+| workspace env file | Vaultwarden item, `NAME=value` lines in the notes | `--env-id`, optional |
 | `ca.pem` | `coder-docker-tls` SOPS Secret, key `ca.pem` | coderd |
 | `client-cert.pem` | `coder-docker-tls` SOPS Secret, key `cert.pem` | coderd |
 | `client-key.pem` | `coder-docker-tls` SOPS Secret, key `key.pem` | coderd |
@@ -170,19 +172,59 @@ is the item the worker already uses, referenced by `--lan-ca-id`.
 Rotation is the same sequence: regenerate, replace the Vaultwarden items and the
 SOPS secret, run `secrets` and `enable` again, reconcile Flux.
 
+## Workspace environment
+
+Kubernetes workspaces receive `LITELLM_API` and a GitHub token from a cluster
+Secret through `secret_key_ref`. A Docker workspace on the desktop cannot read
+that Secret, so the same values arrive natively for this backend: a fifth
+Vaultwarden item holds an env file, `secrets` writes it to
+`/etc/coder-worker/workspace.env`, and the Docker template bind-mounts it into
+each workspace container, which exports every line before starting the agent.
+The values never pass through Coder, Terraform state, or this repository.
+
+The item's notes are the file, verbatim:
+
+```text
+# comments and blank lines are allowed
+LITELLM_API=https://litellm.h-cloud.io/v1
+GH_TOKEN=<pat>
+GITHUB_TOKEN=<pat>
+GITHUB_PERSONAL_ACCESS_TOKEN=<pat>
+```
+
+`NAME` must match `^[A-Za-z_][A-Za-z0-9_]*$`. Everything after the first `=` is
+the value, taken raw: no quote stripping, no expansion, only a trailing carriage
+return removed. Any line that is not a comment, blank, or `NAME=value` fails the
+whole `secrets` run and is reported by line number, never by content.
+
+The four names above are what this deployment expects: one PAT repeated under
+three names, the same thing the Kubernetes backend does. Nothing enforces them.
+The file is whatever the item says.
+
+Rotation happens in two places on purpose. The cluster workspaces read the SOPS
+secret and the desktop workspaces read this item, so a rotated PAT has to be
+written to both. Neither backend can reach the other's copy.
+
+Any client holding the Docker client certificate can start a container that
+bind-mounts this file and read it. The file's `0600` mode keeps it away from
+other processes in the distribution, not from the daemon's clients: the
+certificate is already a root credential for the desktop, and this file is one
+more thing it grants.
+
 ## Secrets and enable
 
 Inside the distribution as root. `coder-worker-overlay secrets` reads the
 Vaultwarden master password once with `systemd-ask-password`, keeps it only in a
 root-owned tmpfs file for the duration of one transient `systemd-run` unit that
-exposes it to `rbw` as a credential, fetches the four items by immutable UUID,
-and writes them with the required ownership and modes. It then locks `rbw`,
-stops its agent, and purges the local vault copy.
+exposes it to `rbw` as a credential, fetches the items by immutable UUID, and
+writes them with the required ownership and modes. It then locks `rbw`, stops
+its agent, and purges the local vault copy.
 
 ```powershell
 wsl.exe -d coder-worker -u root -- coder-worker-overlay secrets `
   --vault-url https://vault.example --email worker@example `
-  --ca-id <uuid> --crt-id <uuid> --key-id <uuid> --lan-ca-id <uuid>
+  --ca-id <uuid> --crt-id <uuid> --key-id <uuid> --lan-ca-id <uuid> `
+  --env-id <uuid>
 wsl.exe -d coder-worker -u root -- coder-worker-overlay verify
 wsl.exe -d coder-worker -u root -- coder-worker-overlay enable
 ```
@@ -194,12 +236,22 @@ wsl.exe -d coder-worker -u root -- coder-worker-overlay enable
 | `/etc/docker/tls/server-cert.pem` | `root:root` | `0644` |
 | `/etc/docker/tls/server-key.pem` | `root:root` | `0600` |
 | `/etc/ssl/lan/lan-ca.pem` | `root:root` | `0644` |
+| `/etc/coder-worker/workspace.env` | `1000:1000` | `0600` |
+
+All five items are staged beside their destinations and moved into place only
+once every one of them is fetched and accepted, so a failure anywhere leaves the
+previous files exactly as they were. `--env-id` is the one optional item: omit
+it and `workspace.env` is written empty, with the same owner and mode, so the
+Docker template always has a file to mount. `1000:1000` is the container's
+`coder` user; the distribution itself has no such account, which is why the file
+is owned by a bare numeric id.
 
 `verify` checks that each path is a regular file with that owner and mode, that
-the server key matches the server certificate, that the certificate was issued
-by `ca.pem`, that `/etc/ssl/lan/lan-ca.pem` is a file and not the directory
-Docker creates for a bind mount whose source is missing, that `daemon.json`
-never names port 2375, and that `dockerd --validate` accepts it.
+every line of `workspace.env` is a comment, blank, or `NAME=value`, that the
+server key matches the server certificate, that the certificate was issued by
+`ca.pem`, that `/etc/ssl/lan/lan-ca.pem` is a file and not the directory Docker
+creates for a bind mount whose source is missing, that `daemon.json` never names
+port 2375, and that `dockerd --validate` accepts it.
 
 `enable` refuses to start anything until `verify` passes, then enables
 `docker.socket` and `docker.service`, pulls the workspace images listed in
@@ -207,8 +259,11 @@ never names port 2375, and that `dockerd --validate` accepts it.
 answers on 2375 or nothing answers on 2376.
 
 `status` prints the release marker, unit state, the trust material with its
-modes, the server certificate expiry, and the listening sockets. It is the one
-subcommand that is safe to run at any time.
+modes, whether `workspace.env` is empty or which variables it names, the server
+certificate expiry, and the listening sockets. It is the one subcommand that is
+safe to run at any time. Nothing prints a value from the env file, on any path:
+not `secrets`, not `verify`, not `status`, and not a failure message, which
+reports the offending line by number only.
 
 Until all three files under `/etc/docker/tls` exist, `docker.service` carries a
 `ConditionPathExists` for each of them and systemd skips it. The daemon fails

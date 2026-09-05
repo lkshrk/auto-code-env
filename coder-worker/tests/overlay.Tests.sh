@@ -39,6 +39,17 @@ bash /src/coder-worker/scripts/gen-docker-tls.sh --out /tmp/tls > /dev/null
 bash /src/coder-worker/scripts/gen-docker-tls.sh --out /tmp/other --ca-cn 'other CA' > /dev/null
 printf 'hunter2' > /tmp/fixture.master
 
+mkdir -p /tmp/env
+printf '%s\n' \
+  '# workspace environment' \
+  '' \
+  'LITELLM_API=https://litellm.h-cloud.io/v1' \
+  'GH_TOKEN=ghp_fixture$(id)`whoami`;echo leaked' \
+  'GITHUB_TOKEN=ghp_fixture$(id)`whoami`;echo leaked' \
+  'GITHUB_PERSONAL_ACCESS_TOKEN=ghp_fixture$(id)`whoami`;echo leaked' > /tmp/env/expected.env
+sed 's/$/\r/' /tmp/env/expected.env > /tmp/env/workspace.env
+printf '%s\n' 'GOOD=1' '9bad=leaked-by-a-malformed-line' > /tmp/env/malformed.env
+
 cat > /usr/bin/rbw <<'EOF'
 #!/bin/sh
 echo "rbw $*" >> /tmp/log/rbw
@@ -56,6 +67,8 @@ case "$1" in
       "get --field notes 44444444-4444-4444-4444-444444444444") cat /tmp/other/ca.pem ;;
       "get --field notes 55555555-5555-5555-5555-555555555555") cat /tmp/other/server-key.pem ;;
       "get --field notes 66666666-6666-6666-6666-666666666666") cat /tmp/other/server-cert.pem ;;
+      "get --field notes 77777777-7777-7777-7777-777777777777") cat /tmp/env/workspace.env ;;
+      "get --field notes 88888888-8888-8888-8888-888888888888") cat /tmp/env/malformed.env ;;
       *) echo "unknown item $*" >&2; exit 1 ;;
     esac ;;
   *) echo "unexpected rbw $*" >&2; exit 1 ;;
@@ -101,16 +114,20 @@ output=$(run secrets --vault-url https://vault.example --email a@b \
   --ca-id 11111111-1111-1111-1111-111111111111 \
   --crt-id 22222222-2222-2222-2222-222222222222 \
   --key-id 33333333-3333-3333-3333-333333333333 \
-  --lan-ca-id 44444444-4444-4444-4444-444444444444)
+  --lan-ca-id 44444444-4444-4444-4444-444444444444 \
+  --env-id 77777777-7777-7777-7777-777777777777)
 printf '%s\n' "$output" | grep -Fq 'overlay verified'
 printf '%s\n' "$output" | grep -Fq 'IP Address:172.16.20.195'
 if printf '%s\n' "$output" | grep -Eq 'PRIVATE KEY'; then echo 'key material leaked to stdout'; exit 1; fi
+if printf '%s\n' "$output" | grep -Fq 'ghp_fixture'; then echo 'a workspace env value leaked to stdout'; exit 1; fi
 
 test "$(stat -c '%U:%G %a' /etc/docker/tls)" = 'root:root 700'
 test "$(stat -c '%U:%G %a' /etc/docker/tls/ca.pem)" = 'root:root 644'
 test "$(stat -c '%U:%G %a' /etc/docker/tls/server-cert.pem)" = 'root:root 644'
 test "$(stat -c '%U:%G %a' /etc/docker/tls/server-key.pem)" = 'root:root 600'
 test "$(stat -c '%U:%G %a' /etc/ssl/lan/lan-ca.pem)" = 'root:root 644'
+test "$(stat -c '%u:%g %a' /etc/coder-worker/workspace.env)" = '1000:1000 600'
+cmp -s /tmp/env/expected.env /etc/coder-worker/workspace.env
 test -f /etc/ssl/lan/lan-ca.pem
 cmp -s /tmp/tls/ca.pem /etc/docker/tls/ca.pem
 cmp -s /tmp/tls/server-cert.pem /etc/docker/tls/server-cert.pem
@@ -135,13 +152,70 @@ if run secrets --vault-url https://vault.example --email a@b \
   echo 'secrets must fail when a vault item is missing'; exit 1
 fi
 test "$(tail -n 3 /tmp/log/rbw | tr '\n' ' ')" = 'rbw lock rbw stop-agent rbw purge '
-test -z "$(find /etc/docker/tls /etc/ssl/lan -name '*.tmp')"
+test -z "$(find /etc/docker/tls /etc/ssl/lan /etc/coder-worker -name '*.tmp')"
 cmp -s /tmp/tls/ca.pem /etc/docker/tls/ca.pem
 cmp -s /tmp/tls/server-cert.pem /etc/docker/tls/server-cert.pem
 cmp -s /tmp/tls/server-key.pem /etc/docker/tls/server-key.pem
 cmp -s /tmp/other/ca.pem /etc/ssl/lan/lan-ca.pem
+cmp -s /tmp/env/expected.env /etc/coder-worker/workspace.env
 test ! -e /run/coder-worker-rbw-master
 echo 'PASS: a failed fetch still locks and purges the vault and leaves the trust material untouched'
+
+run secrets --vault-url https://vault.example --email a@b \
+  --ca-id 11111111-1111-1111-1111-111111111111 \
+  --crt-id 22222222-2222-2222-2222-222222222222 \
+  --key-id 33333333-3333-3333-3333-333333333333 \
+  --lan-ca-id 44444444-4444-4444-4444-444444444444 > /dev/null
+test "$(stat -c '%u:%g %a' /etc/coder-worker/workspace.env)" = '1000:1000 600'
+test ! -s /etc/coder-worker/workspace.env
+run status > /tmp/emptyenv.log
+grep -Fq 'workspace env is empty' /tmp/emptyenv.log
+echo 'PASS: no --env-id leaves an empty workspace env file with the same owner and mode'
+
+: > /tmp/log/rbw
+if run secrets --vault-url https://vault.example --email a@b \
+  --ca-id 11111111-1111-1111-1111-111111111111 \
+  --crt-id 22222222-2222-2222-2222-222222222222 \
+  --key-id 33333333-3333-3333-3333-333333333333 \
+  --lan-ca-id 44444444-4444-4444-4444-444444444444 \
+  --env-id 88888888-8888-8888-8888-888888888888 > /tmp/badenv.log 2>&1; then
+  echo 'a malformed workspace env line must fail secrets'; exit 1
+fi
+grep -Fq 'line 2 is not NAME=value' /tmp/badenv.log
+if grep -Fq 'leaked-by-a-malformed-line' /tmp/badenv.log; then echo 'the offending line leaked'; exit 1; fi
+test "$(tail -n 3 /tmp/log/rbw | tr '\n' ' ')" = 'rbw lock rbw stop-agent rbw purge '
+test -z "$(find /etc/docker/tls /etc/ssl/lan /etc/coder-worker -name '*.tmp')"
+cmp -s /tmp/tls/ca.pem /etc/docker/tls/ca.pem
+cmp -s /tmp/tls/server-cert.pem /etc/docker/tls/server-cert.pem
+cmp -s /tmp/tls/server-key.pem /etc/docker/tls/server-key.pem
+cmp -s /tmp/other/ca.pem /etc/ssl/lan/lan-ca.pem
+test ! -s /etc/coder-worker/workspace.env
+echo 'PASS: a malformed workspace env line fails the whole fetch without printing a value'
+
+run secrets --vault-url https://vault.example --email a@b \
+  --ca-id 11111111-1111-1111-1111-111111111111 \
+  --crt-id 22222222-2222-2222-2222-222222222222 \
+  --key-id 33333333-3333-3333-3333-333333333333 \
+  --lan-ca-id 44444444-4444-4444-4444-444444444444 \
+  --env-id 77777777-7777-7777-7777-777777777777 > /dev/null
+chmod 0644 /etc/coder-worker/workspace.env
+if run verify > /tmp/envmode.log 2>&1; then echo 'verify must reject a readable workspace env file'; exit 1; fi
+grep -Fq 'wrong owner or mode on /etc/coder-worker/workspace.env' /tmp/envmode.log
+chmod 0600 /etc/coder-worker/workspace.env
+chown root:root /etc/coder-worker/workspace.env
+if run verify >/dev/null 2>&1; then echo 'verify must reject a root-owned workspace env file'; exit 1; fi
+chown 1000:1000 /etc/coder-worker/workspace.env
+printf '%s\n' 'not a variable' >> /etc/coder-worker/workspace.env
+if run verify > /tmp/envline.log 2>&1; then echo 'verify must reject a malformed workspace env line'; exit 1; fi
+grep -Fq '/etc/coder-worker/workspace.env line 7 is not NAME=value' /tmp/envline.log
+if grep -Fq 'not a variable' /tmp/envline.log; then echo 'verify echoed the offending line'; exit 1; fi
+run secrets --vault-url https://vault.example --email a@b \
+  --ca-id 11111111-1111-1111-1111-111111111111 \
+  --crt-id 22222222-2222-2222-2222-222222222222 \
+  --key-id 33333333-3333-3333-3333-333333333333 \
+  --lan-ca-id 44444444-4444-4444-4444-444444444444 \
+  --env-id 77777777-7777-7777-7777-777777777777 > /dev/null
+echo 'PASS: verify rejects a wrong mode, a wrong owner, and a malformed workspace env line'
 
 : > /tmp/docker-up
 start_listener 2376
@@ -162,6 +236,9 @@ echo 'PASS: a plaintext listener fails enable'
 run status > /tmp/status.log
 grep -Fq 'release coder-worker ' /tmp/status.log
 grep -qx 'listen 2376' /tmp/status.log
+grep -Fqx 'workspace env defines 4 variables: GH_TOKEN GITHUB_PERSONAL_ACCESS_TOKEN GITHUB_TOKEN LITELLM_API' /tmp/status.log
+if grep -Fq 'ghp_fixture' /tmp/status.log; then echo 'status leaked a workspace env value'; exit 1; fi
+echo 'PASS: status names the workspace variables without printing a value'
 
 mv /etc/ssl/lan/lan-ca.pem /tmp/lan-ca.pem
 mkdir /etc/ssl/lan/lan-ca.pem

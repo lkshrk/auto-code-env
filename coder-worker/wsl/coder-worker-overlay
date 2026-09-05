@@ -13,6 +13,8 @@ DAEMON_CONFIG=/etc/docker/daemon.json
 CONFIG_DIRECTORY=/etc/coder-worker
 IMAGE_LIST="$CONFIG_DIRECTORY/images"
 RELEASE_MARKER="$CONFIG_DIRECTORY/release"
+WORKSPACE_ENV="$CONFIG_DIRECTORY/workspace.env"
+WORKSPACE_ENV_OWNER=1000:1000
 MASTER_PASSWORD_FILE=/run/coder-worker-rbw-master
 RBW_CONFIG=/root/.config/rbw/config.json
 TLS_PORT=2376
@@ -20,7 +22,7 @@ PLAINTEXT_PORT=2375
 
 usage() {
     cat >&2 <<'EOF'
-usage: coder-worker-overlay secrets --vault-url URL --email EMAIL --ca-id UUID --crt-id UUID --key-id UUID --lan-ca-id UUID
+usage: coder-worker-overlay secrets --vault-url URL --email EMAIL --ca-id UUID --crt-id UUID --key-id UUID --lan-ca-id UUID [--env-id UUID]
        coder-worker-overlay verify
        coder-worker-overlay enable
        coder-worker-overlay status
@@ -84,7 +86,7 @@ vault_run() {
 }
 
 secrets() {
-    vault_url='' email='' ca_id='' crt_id='' key_id='' lan_ca_id=''
+    vault_url='' email='' ca_id='' crt_id='' key_id='' lan_ca_id='' env_id=''
     while [ $# -gt 0 ]; do
         case $1 in
             --vault-url) vault_url=${2:-}; shift 2 ;;
@@ -93,48 +95,87 @@ secrets() {
             --crt-id) crt_id=${2:-}; shift 2 ;;
             --key-id) key_id=${2:-}; shift 2 ;;
             --lan-ca-id) lan_ca_id=${2:-}; shift 2 ;;
+            --env-id) env_id=${2:-}; shift 2 ;;
             *) usage ;;
         esac
     done
     for id in "$ca_id" "$crt_id" "$key_id" "$lan_ca_id"; do
         is_uuid "$id" || fail 'item ids must be lowercase UUIDs'
     done
+    [ -z "$env_id" ] || is_uuid "$env_id" || fail 'item ids must be lowercase UUIDs'
     configure_rbw "$vault_url" "$email"
     vault_run \
         "OVERLAY_CA_ID=$ca_id" "OVERLAY_CRT_ID=$crt_id" "OVERLAY_KEY_ID=$key_id" "OVERLAY_LAN_CA_ID=$lan_ca_id" \
+        "OVERLAY_ENV_ID=$env_id" \
         "OVERLAY_TLS_DIRECTORY=$TLS_DIRECTORY" "OVERLAY_LAN_CA_DIRECTORY=$LAN_CA_DIRECTORY" \
+        "OVERLAY_CONFIG_DIRECTORY=$CONFIG_DIRECTORY" \
         "OVERLAY_CA_CERTIFICATE=$CA_CERTIFICATE" "OVERLAY_SERVER_CERTIFICATE=$SERVER_CERTIFICATE" \
-        "OVERLAY_SERVER_KEY=$SERVER_KEY" "OVERLAY_LAN_CA=$LAN_CA" -- '
+        "OVERLAY_SERVER_KEY=$SERVER_KEY" "OVERLAY_LAN_CA=$LAN_CA" \
+        "OVERLAY_WORKSPACE_ENV=$WORKSPACE_ENV" "OVERLAY_WORKSPACE_ENV_OWNER=$WORKSPACE_ENV_OWNER" -- '
         umask 077
         install -d -o root -g root -m 0700 "$OVERLAY_TLS_DIRECTORY"
         install -d -o root -g root -m 0755 "$OVERLAY_LAN_CA_DIRECTORY"
-        trap '"'"'rm -f "$OVERLAY_TLS_DIRECTORY"/*.tmp "$OVERLAY_LAN_CA_DIRECTORY"/*.tmp'"'"' EXIT
-        stage_item() {
-            if [ -e "$2" ] && { [ ! -f "$2" ] || [ -L "$2" ]; }; then
-                echo "refusing to replace non-regular file $2" >&2
+        install -d -o root -g root -m 0755 "$OVERLAY_CONFIG_DIRECTORY"
+        trap '"'"'rm -f "$OVERLAY_TLS_DIRECTORY"/*.tmp "$OVERLAY_LAN_CA_DIRECTORY"/*.tmp "$OVERLAY_CONFIG_DIRECTORY"/*.tmp'"'"' EXIT
+        guard_regular_file() {
+            if [ -e "$1" ] && { [ ! -f "$1" ] || [ -L "$1" ]; }; then
+                echo "refusing to replace non-regular file $1" >&2
                 exit 1
             fi
+        }
+        stage_item() {
+            guard_regular_file "$2"
             rbw get --field notes "$1" > "$2.tmp"
             grep -q "^-----BEGIN " "$2.tmp" || { echo "vault item $1 is not PEM" >&2; exit 1; }
             chown root:root "$2.tmp"
             chmod "$3" "$2.tmp"
         }
+        stage_env() {
+            guard_regular_file "$2"
+            if [ -n "$1" ]; then
+                rbw get --field notes "$1" > "$2.raw.tmp"
+                sed "s/\r$//" "$2.raw.tmp" > "$2.tmp"
+                rm -f "$2.raw.tmp"
+                line=$(grep -nvE "^([A-Za-z_][A-Za-z0-9_]*=|#|$)" "$2.tmp" | head -n 1 | cut -d: -f1)
+                [ -z "$line" ] || { echo "vault item $1 line $line is not NAME=value" >&2; exit 1; }
+            else
+                : > "$2.tmp"
+            fi
+            chown "$3" "$2.tmp"
+            chmod 0600 "$2.tmp"
+        }
         stage_item "$OVERLAY_CA_ID" "$OVERLAY_CA_CERTIFICATE" 0644
         stage_item "$OVERLAY_CRT_ID" "$OVERLAY_SERVER_CERTIFICATE" 0644
         stage_item "$OVERLAY_KEY_ID" "$OVERLAY_SERVER_KEY" 0600
         stage_item "$OVERLAY_LAN_CA_ID" "$OVERLAY_LAN_CA" 0644
-        for path in "$OVERLAY_CA_CERTIFICATE" "$OVERLAY_SERVER_CERTIFICATE" "$OVERLAY_SERVER_KEY" "$OVERLAY_LAN_CA"; do
+        stage_env "$OVERLAY_ENV_ID" "$OVERLAY_WORKSPACE_ENV" "$OVERLAY_WORKSPACE_ENV_OWNER"
+        for path in "$OVERLAY_CA_CERTIFICATE" "$OVERLAY_SERVER_CERTIFICATE" "$OVERLAY_SERVER_KEY" \
+            "$OVERLAY_LAN_CA" "$OVERLAY_WORKSPACE_ENV"; do
             mv -f "$path.tmp" "$path"
         done
     '
     verify
 }
 
-assert_regular_file() {
-    path=$1 mode=$2
+assert_owned_file() {
+    path=$1 owner=$2 mode=$3
     [ -f "$path" ] || fail "missing $path"
     [ ! -L "$path" ] || fail "$path is a symbolic link"
-    [ "$(stat -c '%U:%G %a' "$path")" = "root:root $mode" ] || fail "wrong owner or mode on $path"
+    [ "$(stat -c '%u:%g %a' "$path")" = "$owner $mode" ] || fail "wrong owner or mode on $path"
+}
+
+assert_regular_file() {
+    assert_owned_file "$1" 0:0 "$2"
+}
+
+workspace_env_names() {
+    sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$WORKSPACE_ENV"
+}
+
+assert_workspace_env() {
+    assert_owned_file "$WORKSPACE_ENV" "$WORKSPACE_ENV_OWNER" 600
+    line=$(grep -nvE '^([A-Za-z_][A-Za-z0-9_]*=|#|$)' "$WORKSPACE_ENV" | head -n 1 | cut -d: -f1)
+    [ -z "$line" ] || fail "$WORKSPACE_ENV line $line is not NAME=value"
 }
 
 assert_directory() {
@@ -173,6 +214,7 @@ verify() {
     assert_regular_file "$SERVER_CERTIFICATE" 644
     assert_regular_file "$SERVER_KEY" 600
     assert_regular_file "$LAN_CA" 644
+    assert_workspace_env
 
     subject=$(openssl x509 -in "$SERVER_CERTIFICATE" -noout -subject) || fail 'unreadable server certificate'
     certificate_key=$(openssl x509 -in "$SERVER_CERTIFICATE" -noout -pubkey) || fail 'unreadable server public key'
@@ -230,13 +272,22 @@ status() {
         echo 'release unknown (no marker)'
     fi
     systemctl is-active docker.socket docker.service || true
-    for path in "$CA_CERTIFICATE" "$SERVER_CERTIFICATE" "$SERVER_KEY" "$LAN_CA"; do
+    for path in "$CA_CERTIFICATE" "$SERVER_CERTIFICATE" "$SERVER_KEY" "$LAN_CA" "$WORKSPACE_ENV"; do
         if [ -f "$path" ]; then
             printf '%s %s\n' "$path" "$(stat -c '%U:%G %a' "$path")"
         else
             printf '%s missing\n' "$path"
         fi
     done
+    if [ -f "$WORKSPACE_ENV" ]; then
+        names=$(workspace_env_names | sort)
+        if [ -n "$names" ]; then
+            printf 'workspace env defines %s variables: %s\n' \
+                "$(printf '%s\n' "$names" | wc -l)" "$(printf '%s' "$names" | tr '\n' ' ')"
+        else
+            echo 'workspace env is empty'
+        fi
+    fi
     if [ -f "$SERVER_CERTIFICATE" ]; then
         openssl x509 -in "$SERVER_CERTIFICATE" -noout -enddate
     fi
