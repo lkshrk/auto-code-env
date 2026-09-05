@@ -212,9 +212,7 @@ function Get-WslArtifactArchitecture {
         [string]$RuntimeArchitecture
     )
 
-    # Resolved lazily: a parameter default binds on every call, and
-    # RuntimeInformation::OSArchitecture is missing on older Windows PowerShell
-    # hosts, which would fail even when the environment already answered.
+    # A parameter default would bind on every call, failing hosts without the type.
     $detectedArchitecture = if (-not [string]::IsNullOrWhiteSpace($Wow64Architecture)) { $Wow64Architecture } elseif (-not [string]::IsNullOrWhiteSpace($Architecture)) { $Architecture } elseif (-not [string]::IsNullOrWhiteSpace($RuntimeArchitecture)) { $RuntimeArchitecture } else { [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() }
     switch ($detectedArchitecture.ToUpperInvariant()) {
         "AMD64" { return "amd64" }

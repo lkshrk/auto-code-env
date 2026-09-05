@@ -210,10 +210,7 @@ agent_run() {
         sh -eu -c 'cd "$1"; shift; exec "$@"' sh "$directory" "$@"
 }
 
-# prune_apm_mcp - removes MCP servers a previous apm-managed release deployed
-# into the harness configs. Their ${env:NAME} placeholders are not expanded by
-# either harness, so the literal text was sent as the credential and shadowed
-# the servers Canvas forwards to the ACP subprocess.
+# prune_apm_mcp - drops harness MCP entries whose ${env:NAME} no harness expands.
 prune_apm_mcp() {
     [ -d "$AGENT_HOME" ] || return 0
     agent_run "$AGENT_HOME" python3 - "$AGENT_HOME" <<'PYTHON'
