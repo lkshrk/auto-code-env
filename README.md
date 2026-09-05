@@ -14,10 +14,11 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
   security, release, and verification details.
 - [`coder-worker/`](coder-worker/) turns a stock Ubuntu WSL2 distribution on the
   Windows desktop into a Docker host for Coder workspaces, exposed only as a
-  mutual-TLS Docker API on TCP/2376. `wsl/` holds the pinned setup script and
-  the in-distro overlay tool, `windows/` the installer, and `scripts/` the
-  trust-material generator. There is no image build; the distribution is stock
-  Ubuntu plus a checksummed script. See
+  mutual-TLS Docker API on TCP/2376. `wsl/` holds the in-distro tool that
+  installs and operates the distribution, `windows/` the installer, `hosts/` the
+  committed non-secret host profiles, and `scripts/` the trust-material
+  generator. There is no image build; the distribution is stock Ubuntu plus one
+  checksummed file. See
   [`coder-worker/README.md`](coder-worker/README.md) for the runtime contract,
   installation, firewall, secrets, and verification details.
 - [`openhands/`](openhands/) holds everything that targets an Agent Canvas
