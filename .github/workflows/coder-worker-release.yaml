@@ -1,0 +1,120 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Coder worker release
+
+on:
+  push:
+    tags:
+      - coder-worker-v*
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-coder-worker-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish immutable release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate the release contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          [[ "$tag" == coder-worker-v* ]]
+          VERSION=${tag#coder-worker-v}
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          tag_commit=$(git ls-remote --tags origin "refs/tags/$tag" | awk -v direct="refs/tags/$tag" -v peeled="refs/tags/$tag^{}" '
+            $2 == direct { direct_oid = $1 }
+            $2 == peeled { peeled_oid = $1 }
+            END { print peeled_oid != "" ? peeled_oid : direct_oid }
+          ')
+          test -n "$tag_commit"
+          test "$tag_commit" = "$GITHUB_SHA"
+          grep -Fxq "\$DefaultRelease = \"$tag\"" coder-worker/windows/install.ps1
+          grep -Fxq "readonly RELEASE_VERSION=$VERSION" coder-worker/wsl/coder-worker-overlay
+          bash coder-worker/tests/profile.Tests.sh
+          bash coder-worker/tests/install.Tests.sh
+          bash coder-worker/tests/overlay.Tests.sh
+          bash coder-worker/tests/gen-docker-tls.Tests.sh
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1
+          find coder-worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
+          shellcheck coder-worker/wsl/coder-worker-overlay
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Assemble and verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release
+          cp coder-worker/windows/install.ps1 release/install.ps1
+          cp coder-worker/wsl/coder-worker-overlay release/coder-worker-overlay
+          cp coder-worker/scripts/gen-docker-tls.sh release/gen-docker-tls.sh
+          cp worker/windows/firewall.ps1 release/firewall.ps1
+          cp worker/windows/keepalive.ps1 release/keepalive.ps1
+          assets=(install.ps1 coder-worker-overlay gen-docker-tls.sh firewall.ps1 keepalive.ps1)
+          for source in coder-worker/hosts/*.profile; do
+            test -f "$source"
+            asset="host-$(basename "$source")"
+            cp "$source" "release/$asset"
+            assets+=("$asset")
+          done
+          test "${#assets[@]}" -gt 5
+          (cd release && sha256sum "${assets[@]}" > checksums.txt)
+          (cd release && sha256sum -c checksums.txt)
+          printf '%s\n' "${assets[@]}" checksums.txt > "$RUNNER_TEMP/assets.txt"
+
+      - name: Publish immutable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=$RELEASE_TAG
+          mapfile -t assets < "$RUNNER_TEMP/assets.txt"
+          release_json="$RUNNER_TEMP/release.json"
+          release_error="$RUNNER_TEMP/release-error.log"
+          if ! gh release view "$tag" --json isDraft,tagName,assets > "$release_json" 2> "$release_error"; then
+            if ! grep -Eqi 'HTTP 404|not found' "$release_error"; then
+              cat "$release_error" >&2
+              exit 1
+            fi
+            gh release create "$tag" \
+              --verify-tag \
+              --draft \
+              --title "Coder worker $VERSION" \
+              --generate-notes
+            gh release view "$tag" --json isDraft,tagName,assets > "$release_json"
+          fi
+          test "$(jq -r '.tagName' "$release_json")" = "$tag"
+          release_draft=$(jq -r '.isDraft' "$release_json")
+          case "$release_draft" in
+            true)
+              gh release upload "$tag" --clobber "${assets[@]/#/release/}"
+              gh release edit "$tag" --draft=false
+              ;;
+            false)
+              for asset in "${assets[@]}"; do
+                digest="sha256:$(sha256sum "release/$asset" | awk '{print $1}')"
+                jq -e --arg asset "$asset" --arg digest "$digest" \
+                  '.assets[] | select(.name == $asset and .state == "uploaded" and .digest == $digest)' \
+                  "$release_json" >/dev/null
+              done
+              ;;
+            *)
+              echo "::error::Unexpected release draft state: $release_draft"
+              exit 1
+              ;;
+          esac
