@@ -1,6 +1,5 @@
 provider "coder" {}
 
-data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
@@ -201,14 +200,15 @@ locals {
 # ---------------------------------------------------------------------------
 
 resource "coder_agent" "main" {
-  os             = "linux"
-  arch           = "amd64"
-  startup_script = local.coder_dotfiles_bootstrap
+  os                      = "linux"
+  arch                    = "amd64"
+  startup_script          = local.coder_dotfiles_bootstrap
+  startup_script_behavior = "blocking"
 
   env = merge({
-    GIT_AUTHOR_NAME         = data.coder_workspace_owner.me.full_name
+    GIT_AUTHOR_NAME         = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
     GIT_AUTHOR_EMAIL        = data.coder_workspace_owner.me.email
-    GIT_COMMITTER_NAME      = data.coder_workspace_owner.me.full_name
+    GIT_COMMITTER_NAME      = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
     GIT_COMMITTER_EMAIL     = data.coder_workspace_owner.me.email
     CODER_OMNI_HOST         = local.omni_host
     OMNI_HOSTNAME           = local.omni_host

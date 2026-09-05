@@ -26,8 +26,7 @@ provider "docker" {
   host      = var.docker_host
   cert_path = var.docker_cert_path
 
-  # Provider configure otherwise pings the daemon, which fails every template
-  # import while the desktop is asleep.
+  # Without this, provider configure pings the daemon and every template import fails while the desktop sleeps.
   disable_docker_daemon_check = true
 }
 
@@ -108,8 +107,7 @@ resource "docker_container" "dind" {
   image      = "docker:27-dind"
   privileged = true
 
-  # dind derives its server certificate SANs from the container hostname; the
-  # workspace reaches it under the same name via the network alias.
+  # dind puts the container hostname in its server cert SANs; the network alias must match.
   hostname = "docker"
 
   env = ["DOCKER_TLS_CERTDIR=/certs"]

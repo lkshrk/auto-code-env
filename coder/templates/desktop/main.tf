@@ -1,7 +1,4 @@
-# Workspaces as Docker containers on the Windows desktop. Shared parameters,
-# agent, modules, and bootstrap live in common.tf; the container, volumes, and
-# dind sibling live in backends/docker.tf, selected by the `backend` marker
-# that CI copies into this directory at template-push time.
+# Workspaces as Docker containers on the Windows desktop; backends/docker.tf is selected by the `backend` marker.
 
 data "coder_workspace_preset" "monorepo" {
   name    = "monorepo"
