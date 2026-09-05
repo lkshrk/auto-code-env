@@ -95,8 +95,10 @@ def validate_secrets(secrets):
     for name, spec in secrets.items():
         if not SECRET_NAME.match(name):
             fail("secret name %r must start with a letter and use letters, digits, underscores" % name)
-        object_keys("secrets.%s" % name, spec, ("item",))
+        object_keys("secrets.%s" % name, spec, ("item", "prefix"))
         as_item("secrets.%s.item" % name, spec.get("item"))
+        if "prefix" in spec and not isinstance(spec["prefix"], str):
+            fail("secrets.%s.prefix must be a string" % name)
 
 
 def validate_skills(skills):
@@ -390,13 +392,18 @@ def apply_agent_settings(api, profile, secret, settings):
     print("settings applied: %s" % ", ".join(sorted(diff)))
 
 
+def declared_secret(profile, secret, name):
+    spec = (profile.get("secrets") or {}).get(name) or {}
+    return spec.get("prefix", "") + secret(name)
+
+
 def apply_secrets(api, profile, secret):
     wanted = profile.get("secrets") or {}
     if not wanted:
         return
     changed = []
     for name in sorted(wanted):
-        value = secret(name)
+        value = declared_secret(profile, secret, name)
         status, text = api.call("GET", "/api/settings/secrets/%s" % name)
         if status == 200 and text == value:
             continue
@@ -405,13 +412,13 @@ def apply_secrets(api, profile, secret):
     print("secrets applied: %s" % (", ".join(changed) if changed else "none changed"))
 
 
-def mcp_body(server, secret):
+def mcp_body(server, secret, profile):
     if "url" in server:
         body = {"transport": "http", "url": server["url"]}
         headers = server.get("headers") or {}
         if headers:
             body["headers"] = dict(
-                (name, secret(value["secret"]) if isinstance(value, dict) else value)
+                (name, declared_secret(profile, secret, value["secret"]) if isinstance(value, dict) else value)
                 for name, value in headers.items()
             )
         return body
@@ -428,7 +435,7 @@ def apply_mcp_servers(api, profile, secret, settings):
     installed = settings.get("mcp_config") or {}
     changed = []
     for name in sorted(wanted):
-        body = mcp_body(wanted[name], secret)
+        body = mcp_body(wanted[name], secret, profile)
         current = installed.get(name)
         if not isinstance(current, dict):
             api.json_call("POST", "/api/settings/mcp/%s" % name, body)

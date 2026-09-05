@@ -1,7 +1,8 @@
 {
   "secrets": {
     "LITELLM_API": {
-      "item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57"
+      "item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57",
+      "prefix": "Bearer "
     }
   },
   "skills": [

@@ -93,8 +93,13 @@ and use letters, digits, and underscores. Each becomes a Canvas secret, which is
 exported into the environment of the ACP subprocesses.
 
 ```json
-{ "secrets": { "LITELLM_API": { "item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57" } } }
+{ "secrets": { "LITELLM_API": { "item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57", "prefix": "Bearer " } } }
 ```
+
+`prefix` is prepended to the fetched material before it is stored as the
+Canvas secret and wherever an MCP header references the secret. The LiteLLM
+gateway requires `Bearer ` in `x-litellm-api-key`, and the dotfiles `apm.yml`
+expects the `LITELLM_API` variable to carry that prefix already.
 
 `common.json` declares `LITELLM_API`, which the MCP header below also consumes.
 `towerr.json` adds `GH_TOKEN` from the worker's GitHub PAT so `gh` and the GitHub

@@ -68,7 +68,7 @@ cat > /tmp/common.json <<'EOF'
   "llm": {"model": "common/model", "base_url": "https://common.example/v1"},
   "secrets": {
     "ANTHROPIC_API_KEY": {"item": "77777777-7777-7777-7777-777777777777"},
-    "LITELLM_API": {"item": "66666666-6666-6666-6666-666666666666"}
+    "LITELLM_API": {"item": "66666666-6666-6666-6666-666666666666", "prefix": "Bearer "}
   },
   "skills": [
     {"source": "https://github.com/lkshrk/auto-code-env.git", "ref": "common", "repo_path": "openhands/skills/agent-sandbox-deploy"},
@@ -143,10 +143,10 @@ assert agent['llm']['base_url'] == 'https://api.ai.h-cloud.lan/v1', agent
 assert agent['llm']['api_key'] == 'sk-llm-FIXTUREKEY111111111111', agent
 servers = agent['mcp_config']
 assert sorted(servers) == ['litellm-tools', 'openaiDeveloperDocs'], servers
-assert servers['litellm-tools']['headers'] == {'x-litellm-api-key': 'sk-llm-FIXTUREKEY111111111111'}, servers
+assert servers['litellm-tools']['headers'] == {'x-litellm-api-key': 'Bearer sk-llm-FIXTUREKEY111111111111'}, servers
 assert state['secrets'] == {
     'ANTHROPIC_API_KEY': 'sk-ant-FIXTUREANTHROPIC22222',
-    'LITELLM_API': 'sk-llm-FIXTUREKEY111111111111',
+    'LITELLM_API': 'Bearer sk-llm-FIXTUREKEY111111111111',
 }, state['secrets']
 assert state['git_sync_token'] == 'ghs_FIXTUREGITSYNCTOKEN33333', state
 assert state['git_sync']['branch'] == 'main', state
