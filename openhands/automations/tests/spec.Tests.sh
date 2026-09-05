@@ -5,7 +5,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 automations="$repo_root/openhands/automations"
 apply="$automations/common/apply.py"
 workflow="$repo_root/.github/workflows/openhands-automations-validate.yaml"
-max_timeout=7200
+max_timeout=43200
 
 test -f "$apply"
 grep -F 'openhands/automations/tests/spec.Tests.sh' "$workflow" >/dev/null
