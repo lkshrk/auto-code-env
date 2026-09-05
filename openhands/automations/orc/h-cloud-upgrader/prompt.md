@@ -62,8 +62,17 @@ issue or comment.
 ## 1. Discover
 
 Enumerate every pinned dependency in the repo. Completeness matters: an entire class
-missing (for example all HelmRepository charts) means a tool is missing, not that the
-class is empty. Install the tool and rerun.
+missing (for example all HelmRepository charts) means a tool or a query is wrong, not
+that the class is empty. A command that returns nothing and exits 0 is not a finding;
+fix it and rerun before going on.
+
+Discovery has two independent sources and is complete only when they agree: the
+manifest scan (rows below) and the open bot PRs. Every open bot PR must map to a pin
+you also found by scanning, and every outdated pin you found should have a PR unless
+the repo's Renovate config excludes it. Print both counts and the unmatched entries
+on either side before ordering anything. A mismatch means the scan missed a path or
+Renovate is misconfigured for it — say so in the report. Grouped PRs cover several
+pins, so the PR count is a lower bound on outdated pins, never an upper bound.
 
 | Class | Where | Current version | Newest upstream |
 |---|---|---|---|
@@ -73,7 +82,7 @@ class is empty. Install the tool and rerun.
 | Container image | `image:` in manifests, HelmRelease `values`, `app-template` style `image.repository`+`image.tag` | tag | `crane ls <image>` |
 | Renovate-annotated pins | `# renovate: datasource=... depName=...` comments followed by a version line | the pinned value | per datasource (github-releases → `gh release list -R`; docker → `crane ls`; helm → index.yaml) |
 | Flux itself, kubernetes tools in CI, Taskfile/justfile pins | wherever versioned | as pinned | GitHub releases |
-| Open Renovate/Dependabot PRs | `gh pr list --search 'author:app/renovate OR author:app/dependabot'` | PR base | PR head |
+| Open bot PRs | `gh pr list -R GITOPS_REPO --state open --limit 200 --json number,title,author,files`, then keep authors whose login is a GitHub App (`author.login` starting with `app/`, or `author.is_bot`). Do not guess the app slug: self-hosted Renovate runs under its own name (here `app/renovate-master`), and `--author app/renovate` returns nothing with exit 0. | PR base | PR head |
 
 Use `yq` to parse multi-document YAML; use Renovate's own config (`renovate.json*`) to
 learn how the repo expects versions to be discovered where it exists. Ignore
@@ -141,9 +150,17 @@ Skip rules, checked in this order; log which rule fired:
 
 ## 4. Apply one upgrade
 
-1. Fresh `git checkout main && git pull --ff-only`. Edit exactly the files for this
-   one dependency (all places where the same dependency is pinned). Keep the repo's
-   formatting and any renovate comment in sync.
+1. Fresh `git checkout main && git pull --ff-only`. Before editing, locate every pin
+   of this dependency: `grep -rn '<name without registry prefix>' --include='*.yaml'
+   --include='*.yml' --include='*.json5' .` — the same chart or image is often pinned
+   under two registries (a Flux `OCIRepository` on one mirror, a bootstrap helmfile on
+   another), and Renovate raises a separate PR for each, so two similar PR titles are
+   not proof of a duplicate. Edit all of them in this one commit. Keep the repo's
+   formatting and any renovate comment in sync. If the pins were not already grouped
+   in the repo's Renovate config, add a group rule so they arrive as one PR next time
+   (that edit belongs to this dependency's commit). A pin outside the Flux-reconciled
+   tree (for example `bootstrap/`) cannot be verified by the health gate; say so in
+   the report line rather than implying it was.
 2. Validate with the repo's validator (`just flux validate`, `task validate`,
    `flux build kustomization ... --dry-run`, `kubeconform`, whatever the repo uses).
    If nothing exists: `flux build kustomization <ks> --path <dir> --kustomization-file <file> --dry-run`
@@ -245,7 +262,17 @@ Finish with a summary in this format, one line per dependency you looked at:
 ```
 
 followed by the inventory counts (total, up to date, embargoed, awaiting decision,
-applied this run, remaining). Print any command that failed with its exact error.
+applied this run, remaining), the open bot PR count and how it reconciled against the
+manifest scan, and why the run ended: work finished, budget reached, or deadline
+reached. Always state the remaining count, even when it is large; applied work
+without its denominator presents a partial run as a complete one. A class you could
+not enumerate is reported as unknown, not omitted. Print any command that failed
+with its exact error.
+
+Your output is the report, the commits, the PR-close comments and the issues in
+section 5. Do not write runbooks, notes or prompt patches into the repo or the
+workspace; if the rules in this document were wrong or incomplete, say what and why
+in the report and leave the rules to the operator.
 
 ## 7. Hard limits
 
@@ -254,8 +281,9 @@ applied this run, remaining). Print any command that failed with its exact error
 - Never downgrade. Never change to `latest`. Never remove a pin.
 - Never merge, approve or edit pull requests other than closing a superseded Renovate
   PR with a comment.
-- Never edit files unrelated to the dependency being bumped; never touch secrets,
-  SOPS-encrypted files, or anything under a path the repo's `AGENTS.md` marks as
+- Never edit files unrelated to the dependency being bumped (the only exception is
+  the Renovate group rule from section 4 step 1); never touch secrets, SOPS-encrypted
+  files, docs, runbooks, or anything under a path the repo's `AGENTS.md` marks as
   hands-off.
 - Never `kubectl apply`, `patch`, `annotate`, `delete`, `edit`, `exec` or `scale` on the cluster. Cluster
   access is read-only; reconciliation goes through the Receiver.
