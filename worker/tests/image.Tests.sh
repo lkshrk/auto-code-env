@@ -149,7 +149,7 @@ checks = validation.fetch('jobs').fetch('checks-amd64')
 assert(checks['runs-on'] == 'ubuntu-24.04', 'deterministic checks must run on amd64')
 checks_run = run(checks, 'Run deterministic validation')
 %w[provision.Tests.sh runtime.Tests.sh image.Tests.sh overlay.Tests.sh install.Tests.ps1 firewall.Tests.ps1
-   keepalive.Tests.ps1 setup.Tests.ps1 update.Tests.ps1].each do |test|
+   keepalive.Tests.ps1 setup.Tests.ps1 update.Tests.ps1 compat.Tests.ps1].each do |test|
   assert(checks_run.include?(test), "deterministic checks must run #{test}")
 end
 assert(checks_run.match?(%r{mcr\.microsoft\.com/powershell@sha256:[0-9a-f]{64}}), 'PowerShell test image must be digest-pinned')
