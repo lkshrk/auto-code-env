@@ -96,6 +96,37 @@ grep -F 'systemctl enable --now nginx.service agent-canvas.service' "$overlay"
 grep -F 'OH_ALLOW_CORS_ORIGINS_' "$overlay"
 grep -F 'x-access-token' "$overlay"
 grep -F '/home/agent/.git-credentials' "$overlay"
+grep -F -- '--password-stdin) PASSWORD_STDIN=1' "$overlay"
+grep -Fx 'INGRESS=http://127.0.0.1:8000' "$overlay"
+grep -Fx 'CA_CERTIFICATE=/usr/local/share/ca-certificates/openhands-lan-ca.crt' "$overlay"
+grep -Fx 'WORK_DIRECTORY=/run/openhands-overlay' "$overlay"
+grep -F 'X-Session-API-Key' "$overlay"
+grep -F 'PATCH", "/api/settings"' "$overlay"
+grep -F 'PUT", "/api/settings/secrets"' "$overlay"
+grep -F 'POST", "/api/skills/install"' "$overlay"
+grep -F 'PUT", "/api/automation/v1/git-sync/config"' "$overlay"
+grep -F 'GET", "/api/automation/v1/git-sync/status"' "$overlay"
+grep -F 'update-ca-certificates' "$overlay"
+grep -F 'tar --numeric-owner --create --gzip --file - --directory /' "$overlay"
+grep -F 'tar --numeric-owner --extract --gzip --file - --directory /' "$overlay"
+for subcommand in 'ca) ca "$@" ;;' 'settings) settings "$@" ;;' 'state) state "$@" ;;'; do
+  grep -F "$subcommand" "$overlay"
+done
+python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$repo_root/openhands/profiles/towerr.json"
+python3 - "$repo_root/openhands/profiles/towerr.json" <<'PY'
+import json, sys
+profile = json.load(open(sys.argv[1]))
+assert profile["llm"]["base_url"] == "https://api.ai.h-cloud.lan/v1", profile["llm"]
+assert profile["llm"]["model"] == "openai/gpt-5.6-sol", profile["llm"]
+assert profile["llm"]["api_key_item"] == "TODO", profile["llm"]
+assert profile["agent"]["kind"] == "acp", profile["agent"]
+assert profile["agent"]["acp_server"] == "claude-code", profile["agent"]
+assert profile["agent"]["acp_command"] == "/home/agent/.local/bin/claude-agent-acp", profile["agent"]
+assert profile["skills"][0]["repo_path"] == "openhands/skills/agent-sandbox-deploy", profile["skills"]
+assert profile["git_sync"]["path"] == "openhands/automations/towerr", profile["git_sync"]
+assert profile["git_sync"]["token_item"] == "28226043-0a70-4d54-bfb8-592086a319c0", profile["git_sync"]
+assert profile["git_sync"]["interval_seconds"] == 0, profile["git_sync"]
+PY
 grep -Fx 'ARG OPENHANDS_WORKER_VERSION=dev' "$containerfile"
 grep -F 'printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release' "$containerfile"
 grep -F 'RELEASE_MARKER=/etc/openhands/release' "$overlay"

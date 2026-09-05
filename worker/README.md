@@ -190,6 +190,60 @@ only needed if `secrets` has not configured `rbw` yet.
 wsl.exe -d openhands-worker -u root -- openhands-overlay github --pat-id <uuid>
 ```
 
+Unattended runs replace the interactive prompt. `secrets`, `github`, `ca`, and
+`settings` accept `--password-stdin`, which reads the Vaultwarden master
+password as one line from stdin. Nothing else changes: the password still lives
+only in the root-owned tmpfs file for the duration of the transient unit, and an
+empty password is refused.
+
+```powershell
+$password | wsl.exe -d openhands-worker -u root -- openhands-overlay settings --file /etc/openhands/towerr.json --password-stdin
+```
+
+`openhands-overlay settings --file <profile>.json` applies a declarative
+per-backend profile to the local Agent Canvas backend through the ingress at
+`http://127.0.0.1:8000`, authenticating with the
+`/etc/credstore/local_backend_api_key` value in the `X-Session-API-Key` header.
+Repository profiles live in `openhands/profiles/`, and
+`openhands/profiles/towerr.json` is the reference shape. Every section is
+optional:
+
+| Section | Effect |
+|---|---|
+| `llm` | `model`, `base_url`, `api_key_item` through `PATCH /api/settings` |
+| `agent` | `kind`, `acp_server`, `acp_command`, `acp_model` through the same PATCH |
+| `secrets` | one `PUT /api/settings/secrets` per named secret |
+| `skills` | `POST /api/skills/install` for a skill that is not installed yet |
+| `git_sync` | `PUT /api/automation/v1/git-sync/config` |
+
+Every `*_item` value is a Vaultwarden item UUID. All of them are fetched inside
+one transient vault session, staged in a root-only tmpfs directory, used, and
+deleted. Unknown keys and non-UUID item ids are refused, so a profile carrying a
+`TODO` placeholder documents its shape without applying anything. The tool reads
+current state before each write and skips any value that already matches, so a
+second run changes nothing. Secret values are never printed; each section prints
+one line.
+
+The LAN gateway `api.ai.h-cloud.lan` presents a certificate issued by the LAN
+CA, so the worker must trust that CA before `llm.base_url` is reachable.
+`openhands-overlay ca --item <uuid>` fetches the PEM certificate from the vault
+item's notes, installs it as
+`/usr/local/share/ca-certificates/openhands-lan-ca.crt` (`root:root`, mode
+`0644`), and runs `update-ca-certificates`.
+
+`openhands-overlay state export` writes a gzip tar of `/home/agent/.openhands`,
+`.claude`, `.codex`, `.git-credentials`, and `.gitconfig` to stdout with
+`--numeric-owner` and nothing else; progress goes to stderr.
+`openhands-overlay state import` reads that tar from stdin, extracts it under
+`/`, and restores `agent:agent` ownership with the `0700` directory and `0600`
+credential modes. That is the supported way to move agent authentication onto a
+replacement distribution.
+
+```powershell
+wsl.exe -d openhands-worker -u root -- openhands-overlay state export > worker-state.tar.gz
+wsl.exe -d openhands-worker -u root -- openhands-overlay state import < worker-state.tar.gz
+```
+
 Every image carries `/etc/openhands/release` with `openhands-worker <version>`
 (`ci-<sha>` for validation builds, `dev` for untagged local builds), stamped
 through the `OPENHANDS_WORKER_VERSION` build argument. `openhands-overlay

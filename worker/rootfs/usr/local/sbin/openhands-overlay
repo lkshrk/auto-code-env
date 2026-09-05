@@ -9,20 +9,34 @@ TLS_KEY="$TLS_DIRECTORY/tls.key"
 CREDSTORE=/etc/credstore
 BACKEND_KEY="$CREDSTORE/local_backend_api_key"
 MASTER_PASSWORD_FILE=/run/openhands-rbw-master
+WORK_DIRECTORY=/run/openhands-overlay
 SERVICE_DROPIN=/etc/systemd/system/agent-canvas.service.d/10-overlay.conf
 RELEASE_MARKER=/etc/openhands/release
 RBW_CONFIG=/root/.config/rbw/config.json
 AGENT_HOME=/home/agent
 GIT_CREDENTIALS=/home/agent/.git-credentials
+INGRESS=http://127.0.0.1:8000
+CA_CERTIFICATE=/usr/local/share/ca-certificates/openhands-lan-ca.crt
+STATE_DIRECTORY=/var/lib/openhands/overlay
+GIT_SYNC_TOKEN_STATE="$STATE_DIRECTORY/git-sync-token.sha256"
+STATE_PATHS='home/agent/.openhands home/agent/.claude home/agent/.codex home/agent/.git-credentials home/agent/.gitconfig'
+PASSWORD_STDIN=0
 
 usage() {
     cat >&2 <<'EOF'
-usage: openhands-overlay secrets --vault-url URL --email EMAIL --crt-id UUID --key-id UUID --api-id UUID
-       openhands-overlay github --pat-id UUID [--vault-url URL --email EMAIL]
+usage: openhands-overlay secrets --vault-url URL --email EMAIL --crt-id UUID --key-id UUID --api-id UUID [--password-stdin]
+       openhands-overlay github --pat-id UUID [--vault-url URL --email EMAIL] [--password-stdin]
+       openhands-overlay ca --item UUID [--vault-url URL --email EMAIL] [--password-stdin]
+       openhands-overlay settings --file PATH [--password-stdin]
+       openhands-overlay state export > state.tar.gz
+       openhands-overlay state import < state.tar.gz
        openhands-overlay origin https://canvas.example [https://other.example ...]
        openhands-overlay verify
        openhands-overlay enable
        openhands-overlay status
+
+--password-stdin reads the Vaultwarden master password from stdin instead of
+asking for it interactively.
 EOF
     exit 2
 }
@@ -30,6 +44,11 @@ EOF
 fail() {
     printf 'openhands-overlay: %s\n' "$1" >&2
     exit 1
+}
+
+cleanup() {
+    rm -f "$MASTER_PASSWORD_FILE"
+    rm -rf "$WORK_DIRECTORY"
 }
 
 require_root() {
@@ -57,6 +76,16 @@ configure_rbw() {
     rbw config set lock_timeout 300
 }
 
+read_master_password() {
+    umask 077
+    if [ "$PASSWORD_STDIN" = 1 ]; then
+        head -n 1 | tr -d '\r\n' > "$MASTER_PASSWORD_FILE"
+    else
+        systemd-ask-password --echo=no 'Vaultwarden master password:' | tr -d '\n' > "$MASTER_PASSWORD_FILE"
+    fi
+    [ -s "$MASTER_PASSWORD_FILE" ] || fail 'empty master password'
+}
+
 # vault_run ENV_ASSIGNMENT... -- SCRIPT
 # Runs SCRIPT as root inside one transient unit with an unlocked rbw; the master
 # password lives only in a root tmpfs file for the duration.
@@ -70,10 +99,7 @@ vault_run() {
         esac
     done
     [ $# -eq 1 ] || fail 'vault_run needs exactly one script'
-    umask 077
-    trap 'rm -f "$MASTER_PASSWORD_FILE"' EXIT INT TERM
-    systemd-ask-password --echo=no 'Vaultwarden master password:' | tr -d '\n' > "$MASTER_PASSWORD_FILE"
-    [ -s "$MASTER_PASSWORD_FILE" ] || fail 'empty master password'
+    read_master_password
     # shellcheck disable=SC2086
     systemd-run --quiet --pipe --wait --collect \
         -E HOME=/root -E USER=root $env_args \
@@ -81,7 +107,6 @@ vault_run() {
         -p "LoadCredential=rbw_master:$MASTER_PASSWORD_FILE" \
         /bin/sh -eu -c 'umask 077; rbw login; rbw sync; sh -eu -c "$OVERLAY_SCRIPT"; rbw lock; rbw stop-agent; rbw purge'
     rm -f "$MASTER_PASSWORD_FILE"
-    trap - EXIT INT TERM
 }
 
 secrets() {
@@ -93,6 +118,7 @@ secrets() {
             --crt-id) crt_id=${2:-}; shift 2 ;;
             --key-id) key_id=${2:-}; shift 2 ;;
             --api-id) api_id=${2:-}; shift 2 ;;
+            --password-stdin) PASSWORD_STDIN=1; shift ;;
             *) usage ;;
         esac
     done
@@ -120,6 +146,7 @@ github() {
             --vault-url) vault_url=${2:-}; shift 2 ;;
             --email) email=${2:-}; shift 2 ;;
             --pat-id) pat_id=${2:-}; shift 2 ;;
+            --password-stdin) PASSWORD_STDIN=1; shift ;;
             *) usage ;;
         esac
     done
@@ -137,6 +164,473 @@ github() {
     runuser -u agent -- env HOME="$AGENT_HOME" git config --global credential.helper store
     [ "$(stat -c '%U:%G %a' "$GIT_CREDENTIALS")" = 'agent:agent 600' ] || fail 'wrong owner or mode on git credentials'
     echo 'github credential installed for agent'
+}
+
+ca() {
+    vault_url='' email='' item=''
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --vault-url) vault_url=${2:-}; shift 2 ;;
+            --email) email=${2:-}; shift 2 ;;
+            --item) item=${2:-}; shift 2 ;;
+            --password-stdin) PASSWORD_STDIN=1; shift ;;
+            *) usage ;;
+        esac
+    done
+    is_uuid "$item" || fail '--item must be a lowercase UUID'
+    configure_rbw "$vault_url" "$email"
+    install -d -o root -g root -m 0755 "$(dirname "$CA_CERTIFICATE")"
+    vault_run "OVERLAY_CA_ID=$item" "OVERLAY_CA_FILE=$CA_CERTIFICATE" -- '
+        rbw get --field notes "$OVERLAY_CA_ID" > "$OVERLAY_CA_FILE.tmp"
+        grep -q "BEGIN CERTIFICATE" "$OVERLAY_CA_FILE.tmp" || {
+            rm -f "$OVERLAY_CA_FILE.tmp"
+            echo "vault item does not hold a PEM certificate" >&2
+            exit 1
+        }
+        chown root:root "$OVERLAY_CA_FILE.tmp"
+        chmod 0644 "$OVERLAY_CA_FILE.tmp"
+        mv -f "$OVERLAY_CA_FILE.tmp" "$OVERLAY_CA_FILE"
+    '
+    update-ca-certificates >/dev/null
+    printf 'ca installed %s\n' "$CA_CERTIFICATE"
+}
+
+settings_helper() {
+    python3 - "$@" <<'PYTHON'
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+
+SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync")
+ACP_SERVERS = ("claude-code", "codex", "gemini-cli", "custom")
+AGENT_KINDS = ("openhands", "acp")
+UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+SECRET_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+
+
+def fail(message):
+    sys.stderr.write("openhands-overlay: %s\n" % message)
+    raise SystemExit(1)
+
+
+def object_keys(name, value, allowed):
+    if not isinstance(value, dict):
+        fail("%s must be an object" % name)
+    for key in value:
+        if key not in allowed:
+            fail("unknown key %s.%s" % (name, key))
+
+
+def as_text(name, value):
+    if not isinstance(value, str) or not value.strip():
+        fail("%s must be a non-empty string" % name)
+    return value
+
+
+def as_item(name, value):
+    if not isinstance(value, str) or not UUID.match(value):
+        fail("%s must be a lowercase vault item UUID" % name)
+    return value
+
+
+def validate_llm(llm):
+    object_keys("llm", llm, ("model", "base_url", "api_key_item"))
+    if "model" in llm:
+        as_text("llm.model", llm["model"])
+    if "base_url" in llm:
+        base_url = as_text("llm.base_url", llm["base_url"])
+        if not base_url.startswith(("http://", "https://")):
+            fail("llm.base_url must be an absolute HTTP URL")
+    if "api_key_item" in llm:
+        as_item("llm.api_key_item", llm["api_key_item"])
+
+
+def validate_agent(agent):
+    object_keys("agent", agent, ("kind", "acp_server", "acp_command", "acp_model"))
+    kind = agent.get("kind")
+    if kind is not None and kind not in AGENT_KINDS:
+        fail("agent.kind must be one of %s" % ", ".join(AGENT_KINDS))
+    if "acp_server" in agent and agent["acp_server"] not in ACP_SERVERS:
+        fail("agent.acp_server must be one of %s" % ", ".join(ACP_SERVERS))
+    if "acp_command" in agent:
+        command = agent["acp_command"]
+        if isinstance(command, str):
+            command = [command]
+        if not isinstance(command, list) or not command:
+            fail("agent.acp_command must be a command string or argument array")
+        for part in command:
+            as_text("agent.acp_command entry", part)
+        agent["acp_command"] = command
+    if agent.get("acp_model") is not None:
+        as_text("agent.acp_model", agent["acp_model"])
+    acp_keys = [key for key in agent if key.startswith("acp_")]
+    if acp_keys and kind != "acp":
+        fail("agent.kind must be 'acp' to set %s" % ", ".join(sorted(acp_keys)))
+
+
+def validate_secrets(secrets):
+    if not isinstance(secrets, dict):
+        fail("secrets must be an object")
+    for name, spec in secrets.items():
+        if not SECRET_NAME.match(name):
+            fail("secret name %r must start with a letter and use letters, digits, underscores" % name)
+        object_keys("secrets.%s" % name, spec, ("item",))
+        as_item("secrets.%s.item" % name, spec.get("item"))
+
+
+def validate_skills(skills):
+    if not isinstance(skills, list) or not skills:
+        fail("skills must be a non-empty array")
+    for index, skill in enumerate(skills):
+        label = "skills[%d]" % index
+        object_keys(label, skill, ("source", "ref", "repo_path"))
+        as_text("%s.source" % label, skill.get("source"))
+        for key in ("ref", "repo_path"):
+            if key in skill:
+                as_text("%s.%s" % (label, key), skill[key])
+
+
+def validate_git_sync(git_sync):
+    object_keys(
+        "git_sync",
+        git_sync,
+        ("repo_url", "branch", "path", "token_item", "interval_seconds"),
+    )
+    as_text("git_sync.repo_url", git_sync.get("repo_url"))
+    for key in ("branch", "path"):
+        if key in git_sync:
+            as_text("git_sync.%s" % key, git_sync[key])
+    if "token_item" in git_sync:
+        as_item("git_sync.token_item", git_sync["token_item"])
+    interval = git_sync.get("interval_seconds", 0)
+    if not isinstance(interval, int) or isinstance(interval, bool) or interval < 0:
+        fail("git_sync.interval_seconds must be a non-negative integer")
+
+
+def load(path):
+    try:
+        with open(path) as handle:
+            profile = json.load(handle)
+    except ValueError as error:
+        fail("invalid JSON in %s: %s" % (path, error))
+    except OSError as error:
+        fail("cannot read %s: %s" % (path, error))
+    if not isinstance(profile, dict):
+        fail("profile must be a JSON object")
+    for key in profile:
+        if key not in SECTIONS:
+            fail("unknown section %s" % key)
+    if "llm" in profile:
+        validate_llm(profile["llm"])
+    if "agent" in profile:
+        validate_agent(profile["agent"])
+    if "secrets" in profile:
+        validate_secrets(profile["secrets"])
+    if "skills" in profile:
+        validate_skills(profile["skills"])
+    if "git_sync" in profile:
+        validate_git_sync(profile["git_sync"])
+    return profile
+
+
+def wanted_items(profile):
+    items = []
+    llm = profile.get("llm") or {}
+    if "api_key_item" in llm:
+        items.append(llm["api_key_item"])
+    for name in sorted(profile.get("secrets") or {}):
+        items.append(profile["secrets"][name]["item"])
+    git_sync = profile.get("git_sync") or {}
+    if "token_item" in git_sync:
+        items.append(git_sync["token_item"])
+    unique = []
+    for item in items:
+        if item not in unique:
+            unique.append(item)
+    return unique
+
+
+class Api:
+    def __init__(self, ingress, key_path, work):
+        self.ingress = ingress.rstrip("/")
+        self.work = work
+        self.config = os.path.join(work, "curl.conf")
+        try:
+            with open(key_path) as handle:
+                key = handle.read().strip()
+        except OSError:
+            fail("cannot read the local backend API key")
+        if not key:
+            fail("empty local backend API key")
+        if any(character in key for character in '"\\'):
+            fail("local backend API key contains unsupported characters")
+        write_private(self.config, 'header = "X-Session-API-Key: %s"\nsilent\nshow-error\n' % key)
+
+    def call(self, method, path, body=None, headers=()):
+        response = os.path.join(self.work, "response")
+        payload = os.path.join(self.work, "request.json")
+        command = [
+            "curl",
+            "--config", self.config,
+            "--request", method,
+            "--url", self.ingress + path,
+            "--output", response,
+            "--write-out", "%{http_code}",
+        ]
+        for header in headers:
+            command += ["--header", header]
+        if body is not None:
+            write_private(payload, json.dumps(body))
+            command += [
+                "--header", "Content-Type: application/json",
+                "--data-binary", "@" + payload,
+            ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True)
+        finally:
+            if os.path.exists(payload):
+                os.remove(payload)
+        if result.returncode != 0:
+            fail("curl failed for %s %s: %s" % (method, path, result.stderr.strip()))
+        try:
+            with open(response) as handle:
+                text = handle.read()
+        except OSError:
+            text = ""
+        os.remove(response)
+        return result.stdout.strip(), text
+
+    def json_call(self, method, path, body=None, headers=()):
+        status, text = self.call(method, path, body, headers)
+        if not status.startswith("2"):
+            fail("%s %s returned HTTP %s" % (method, path, status))
+        try:
+            return json.loads(text) if text else {}
+        except ValueError:
+            fail("%s %s returned a non-JSON body" % (method, path))
+
+
+def write_private(path, text):
+    previous = os.umask(0o077)
+    try:
+        with open(path, "w") as handle:
+            handle.write(text)
+    finally:
+        os.umask(previous)
+
+
+def secret_reader(work):
+    cache = {}
+
+    def read(item):
+        if item not in cache:
+            try:
+                with open(os.path.join(work, item)) as handle:
+                    cache[item] = handle.read()
+            except OSError:
+                fail("vault item material is missing")
+        return cache[item]
+
+    return read
+
+
+def apply_agent_settings(api, profile, secret):
+    llm = profile.get("llm") or {}
+    agent = profile.get("agent") or {}
+    if not llm and not agent:
+        return
+    current = api.json_call("GET", "/api/settings", headers=("X-Expose-Secrets: plaintext",))
+    settings = current.get("agent_settings") or {}
+    current_llm = settings.get("llm") or {}
+    diff = {}
+    llm_diff = {}
+    for key in ("model", "base_url"):
+        if key in llm and current_llm.get(key) != llm[key]:
+            llm_diff[key] = llm[key]
+    if "api_key_item" in llm:
+        value = secret(llm["api_key_item"])
+        if current_llm.get("api_key") != value:
+            llm_diff["api_key"] = value
+    if llm_diff:
+        diff["llm"] = llm_diff
+    if "kind" in agent and settings.get("agent_kind") != agent["kind"]:
+        diff["agent_kind"] = agent["kind"]
+    for key in ("acp_server", "acp_command", "acp_model"):
+        if key in agent and settings.get(key) != agent[key]:
+            diff[key] = agent[key]
+    if not diff:
+        print("settings unchanged")
+        return
+    api.json_call("PATCH", "/api/settings", {"agent_settings_diff": diff})
+    print("settings applied: %s" % ", ".join(sorted(diff)))
+
+
+def apply_secrets(api, profile, secret):
+    wanted = profile.get("secrets") or {}
+    if not wanted:
+        return
+    changed = []
+    for name in sorted(wanted):
+        value = secret(wanted[name]["item"])
+        status, text = api.call("GET", "/api/settings/secrets/%s" % name)
+        if status == "200" and text == value:
+            continue
+        api.json_call("PUT", "/api/settings/secrets", {"name": name, "value": value})
+        changed.append(name)
+    print("secrets applied: %s" % (", ".join(changed) if changed else "none changed"))
+
+
+def apply_skills(api, profile):
+    wanted = profile.get("skills") or []
+    if not wanted:
+        return
+    current = api.json_call("GET", "/api/skills/installed")
+    installed = {
+        (entry.get("source"), entry.get("repo_path"))
+        for entry in current.get("skills") or []
+    }
+    changed = []
+    for skill in wanted:
+        if (skill["source"], skill.get("repo_path")) in installed:
+            continue
+        body = {"source": skill["source"], "force": True}
+        for key in ("ref", "repo_path"):
+            if key in skill:
+                body[key] = skill[key]
+        info = api.json_call("POST", "/api/skills/install", body)
+        changed.append(info.get("name") or skill["source"])
+    print("skills applied: %s" % (", ".join(changed) if changed else "none changed"))
+
+
+def apply_git_sync(api, profile, secret, token_state):
+    wanted = profile.get("git_sync")
+    if not wanted:
+        return
+    current = api.json_call("GET", "/api/automation/v1/git-sync/status")
+    body = {}
+    for key in ("repo_url", "branch", "path", "interval_seconds"):
+        if key in wanted and current.get(key) != wanted[key]:
+            body[key] = wanted[key]
+    digest = None
+    if "token_item" in wanted:
+        token = secret(wanted["token_item"])
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        if read_state(token_state) != digest:
+            body["token"] = token
+    if not body:
+        print("git_sync unchanged")
+        return
+    api.json_call("PUT", "/api/automation/v1/git-sync/config", body)
+    if digest is not None:
+        write_state(token_state, digest)
+    print("git_sync applied: %s" % ", ".join(sorted(body)))
+
+
+def read_state(path):
+    try:
+        with open(path) as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
+def write_state(path, digest):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    write_private(path, digest + "\n")
+
+
+def main():
+    mode, profile_path, work, ingress, key_path, token_state = sys.argv[1:7]
+    profile = load(profile_path)
+    if mode == "validate":
+        for item in wanted_items(profile):
+            print(item)
+        return
+    api = Api(ingress, key_path, work)
+    secret = secret_reader(work)
+    apply_agent_settings(api, profile, secret)
+    apply_secrets(api, profile, secret)
+    apply_skills(api, profile)
+    apply_git_sync(api, profile, secret, token_state)
+
+
+main()
+PYTHON
+}
+
+settings() {
+    profile=''
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --file) profile=${2:-}; shift 2 ;;
+            --password-stdin) PASSWORD_STDIN=1; shift ;;
+            *) usage ;;
+        esac
+    done
+    [ -n "$profile" ] || usage
+    [ -r "$profile" ] || fail "unreadable profile $profile"
+    command -v curl >/dev/null 2>&1 || fail 'curl is required'
+    command -v python3 >/dev/null 2>&1 || fail 'python3 is required'
+    [ -r "$BACKEND_KEY" ] || fail "missing $BACKEND_KEY"
+
+    items=$(settings_helper validate "$profile" '' '' '' '')
+    umask 077
+    rm -rf "$WORK_DIRECTORY"
+    install -d -o root -g root -m 0700 "$WORK_DIRECTORY"
+    if [ -n "$items" ]; then
+        configure_rbw '' ''
+        printf '%s\n' "$items" > "$WORK_DIRECTORY/items"
+        vault_run "OVERLAY_WORK=$WORK_DIRECTORY" -- '
+            while read -r item; do
+                rbw get "$item" | tr -d "\n" > "$OVERLAY_WORK/$item"
+                [ -s "$OVERLAY_WORK/$item" ] || { echo "empty vault item" >&2; exit 1; }
+                chmod 0600 "$OVERLAY_WORK/$item"
+            done < "$OVERLAY_WORK/items"
+            rm -f "$OVERLAY_WORK/items"
+        '
+    fi
+    settings_helper apply "$profile" "$WORK_DIRECTORY" "$INGRESS" "$BACKEND_KEY" "$GIT_SYNC_TOKEN_STATE"
+    rm -rf "$WORK_DIRECTORY"
+}
+
+state() {
+    [ $# -eq 1 ] || usage
+    case $1 in
+        export) state_export ;;
+        import) state_import ;;
+        *) usage ;;
+    esac
+}
+
+state_export() {
+    set --
+    for path in $STATE_PATHS; do
+        if [ -e "/$path" ]; then set -- "$@" "$path"; fi
+    done
+    [ $# -gt 0 ] || fail 'no agent state to export'
+    for path in "$@"; do
+        printf 'export /%s\n' "$path" >&2
+    done
+    tar --numeric-owner --create --gzip --file - --directory / -- "$@"
+}
+
+state_import() {
+    id agent >/dev/null 2>&1 || fail 'agent user missing'
+    tar --numeric-owner --extract --gzip --file - --directory /
+    for path in $STATE_PATHS; do
+        if [ -e "/$path" ]; then
+            chown -R agent:agent "/$path"
+            printf 'import /%s\n' "$path"
+        fi
+    done
+    for directory in "$AGENT_HOME/.openhands" "$AGENT_HOME/.claude" "$AGENT_HOME/.codex"; do
+        if [ -d "$directory" ]; then chmod 0700 "$directory"; fi
+    done
+    if [ -f "$GIT_CREDENTIALS" ]; then chmod 0600 "$GIT_CREDENTIALS"; fi
+    echo 'state imported'
 }
 
 assert_file() {
@@ -205,11 +699,15 @@ status() {
 }
 
 require_root
+trap cleanup EXIT INT TERM
 command=${1:-}
 [ $# -gt 0 ] && shift
 case $command in
     secrets) secrets "$@" ;;
     github) github "$@" ;;
+    ca) ca "$@" ;;
+    settings) settings "$@" ;;
+    state) state "$@" ;;
     verify) [ $# -eq 0 ] || usage; verify ;;
     enable) [ $# -eq 0 ] || usage; enable_services ;;
     origin) origin "$@" ;;
