@@ -278,7 +278,7 @@ EOF
 cat > /tmp/profile.json <<'EOF'
 {
   "llm": {
-    "model": "openai/gpt-6-astra",
+    "model": "openai/gpt-5.6-sol",
     "base_url": "https://api.ai.h-cloud.lan/v1",
     "api_key_item": "66666666-6666-6666-6666-666666666666"
   },
@@ -373,7 +373,7 @@ agent = state['agent_settings']
 assert agent['agent_kind'] == 'acp', agent
 assert agent['acp_server'] == 'claude-code', agent
 assert agent['acp_command'] == ['/home/agent/.local/bin/claude-agent-acp'], agent
-assert agent['llm']['model'] == 'openai/gpt-6-astra', agent
+assert agent['llm']['model'] == 'openai/gpt-5.6-sol', agent
 assert agent['llm']['base_url'] == 'https://api.ai.h-cloud.lan/v1', agent
 assert agent['llm']['api_key'] == 'sk-llm-FIXTUREKEY111111111111', agent
 servers = agent['mcp_config']
