@@ -68,6 +68,7 @@ assert(dockerignore == [
   'releases/download/openhands-worker-v<version>/setup.ps1',
   'releases/download/openhands-worker-v<version>/update.ps1',
   'releases/download/openhands-worker-v<version>/openhands-overlay',
+  'releases/download/openhands-worker-v<version>/apply-profile.py',
   'idle-stops',
   'openhands-overlay secrets',
   'openhands-overlay enable',
@@ -85,6 +86,10 @@ assert(dockerignore == [
   'common.ps1',
   'worker.json',
   'profile-towerr.json',
+  'profile-orc.json',
+  '/usr/local/lib/openhands/apply-profile.py',
+  '--secrets-dir',
+  '--skip agents',
   'vault.cred',
   '-Schedule',
   '-Replace',
@@ -155,8 +160,8 @@ assert(validation_export.include?('build-wsl.sh'), 'validation must export WSL i
 checks = validation.fetch('jobs').fetch('checks-amd64')
 assert(checks['runs-on'] == 'ubuntu-24.04', 'deterministic checks must run on amd64')
 checks_run = run(checks, 'Run deterministic validation')
-%w[provision.Tests.sh runtime.Tests.sh image.Tests.sh overlay.Tests.sh install.Tests.ps1 firewall.Tests.ps1
-   keepalive.Tests.ps1 setup.Tests.ps1 update.Tests.ps1 compat.Tests.ps1].each do |test|
+%w[provision.Tests.sh runtime.Tests.sh image.Tests.sh overlay.Tests.sh applier.Tests.sh install.Tests.ps1
+   firewall.Tests.ps1 keepalive.Tests.ps1 setup.Tests.ps1 update.Tests.ps1 compat.Tests.ps1].each do |test|
   assert(checks_run.include?(test), "deterministic checks must run #{test}")
 end
 assert(checks_run.match?(%r{mcr\.microsoft\.com/powershell@sha256:[0-9a-f]{64}}), 'PowerShell test image must be digest-pinned')
@@ -183,6 +188,7 @@ assert(build_run.include?(full_tar_check), 'release must consume the full WSL ta
 assert(validation_export.include?(modules_tar_check), 'validation must inspect the WSL module-loader drop-in')
 assert(build_run.include?(modules_tar_check), 'release must inspect the WSL module-loader drop-in')
 dbus_tar_check = %q{tar -tf "$artifact" | grep -E '^\.?/?usr/lib/systemd/system/dbus\.socket$' >/dev/null}
+applier_tar_check = %q{tar -tf "$artifact" | grep -E '^\.?/?usr/local/lib/openhands/apply-profile\.py$' >/dev/null}
 release_tar_check = %q{tar -xOf "$artifact" --wildcards '*etc/openhands/release' | grep -Fx "openhands-worker $}
 assert(validation_export.include?(release_tar_check + 'version"'), 'validation must verify the release marker inside the WSL artifact')
 assert(build_run.include?(release_tar_check + 'VERSION"'), 'release must verify the release marker inside the WSL artifact')
@@ -191,6 +197,8 @@ assert(run(validate, 'Smoke native image build').include?('--build-arg "OPENHAND
 pam_tar_check = %q{tar -xOf "$artifact" --wildcards '*etc/pam.d/common-session' | grep -E '^session[[:space:]]+optional[[:space:]]+pam_systemd\.so' >/dev/null}
 assert(validation_export.include?(dbus_tar_check), 'validation must inspect the D-Bus system bus socket unit')
 assert(build_run.include?(dbus_tar_check), 'release must inspect the D-Bus system bus socket unit')
+assert(validation_export.include?(applier_tar_check), 'validation must inspect the shipped profile applier')
+assert(build_run.include?(applier_tar_check), 'release must inspect the shipped profile applier')
 assert(validation_export.include?(pam_tar_check), 'validation must inspect the pam_systemd session hook')
 assert(build_run.include?(pam_tar_check), 'release must inspect the pam_systemd session hook')
 assert(build_run.include?('push-by-digest=true'), 'release must push architecture images by digest')
@@ -216,16 +224,18 @@ assert(prepare.include?('cp worker/windows/common.ps1 release/common.ps1'), 'rel
 assert(prepare.include?('cp worker/windows/setup.ps1 release/setup.ps1'), 'release must stage the setup script from the tagged tree')
 assert(prepare.include?('cp worker/windows/update.ps1 release/update.ps1'), 'release must stage the update script from the tagged tree')
 assert(prepare.include?('cp worker/rootfs/usr/local/sbin/openhands-overlay release/openhands-overlay'), 'release must stage the overlay tool from the tagged tree')
+assert(prepare.include?('cp worker/rootfs/usr/local/lib/openhands/apply-profile.py release/apply-profile.py'), 'release must stage the profile applier from the tagged tree')
 assert(prepare.include?('for source in openhands/profiles/*.json; do'), 'release must stage every settings profile from the tagged tree')
 assert(prepare.include?('asset="profile-$(basename "$source")"'), 'each settings profile must be published as profile-<name>.json')
 assert(prepare.include?('test "${#profiles[@]}" -gt 0'), 'release must refuse to publish without a settings profile')
-assert(prepare.include?('sha256sum install.ps1 firewall.ps1 keepalive.ps1 common.ps1 setup.ps1 update.ps1 openhands-overlay "${profiles[@]}" >> checksums.txt'), 'release checksums must cover every host script, the overlay tool, and every profile')
+assert(prepare.include?('sha256sum install.ps1 firewall.ps1 keepalive.ps1 common.ps1 setup.ps1 update.ps1 openhands-overlay apply-profile.py "${profiles[@]}" >> checksums.txt'), 'release checksums must cover every host script, the overlay tool, the applier, and every profile')
 assert(prepare.include?('"${profiles[@]/#/release/}"'), 'draft upload must include every staged profile')
 assert(prepare.scan(/"\$\{profiles\[@\]\}"/).length >= 2, 'profiles must be checksummed and verified like every other asset')
 ['setup.ps1', 'update.ps1', 'common.ps1'].each do |script|
   assert(prepare.scan(/"?#{Regexp.escape(script)}"?/).length >= 4, "#{script} must be uploaded and verified like every other asset")
 end
 assert(prepare.scan(/"?openhands-overlay"?/).length >= 4, 'overlay tool must be uploaded and verified like every other asset')
+assert(prepare.scan(/"?apply-profile\.py"?/).length >= 4, 'profile applier must be uploaded and verified like every other asset')
 assert(prepare.scan(/"?keepalive\.ps1"?/).length >= 4, 'keepalive script must be uploaded and verified like every other asset')
 assert(prepare.scan(/"?firewall\.ps1"?/).length >= 4, 'firewall script must be uploaded and verified like every other asset')
 assert(prepare.include?('release/install.ps1'), 'release must publish the installer')
