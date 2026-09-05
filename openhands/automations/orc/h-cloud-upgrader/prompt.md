@@ -22,9 +22,8 @@ issue or comment.
   binary), `crane` (google/go-containerregistry release tarball), `flux` (fluxcd/flux2
   release tarball), `helm` (release tarball). Do not use `sudo`, do not install
   system-wide.
-- **Access pre-flight.** Cluster read access is granted to this pod only inside a
-  nightly window (a ClusterRoleBinding created shortly before the schedule and removed
-  a few hours later). Before touching the repo, verify all of:
+- **Access pre-flight.** This pod has read-only cluster access. Before touching the
+  repo, verify all of:
   `kubectl auth can-i list kustomizations.kustomize.toolkit.fluxcd.io -n flux-system`,
   `kubectl auth can-i list helmreleases.helm.toolkit.fluxcd.io --all-namespaces`,
   `kubectl auth can-i get pods --all-namespaces`,
@@ -47,11 +46,18 @@ issue or comment.
 - Web search: `curl -s "http://searxng.ai.svc.cluster.local:8080/search?q=<urlencoded>&format=json"`
   returns JSON with `results[].{title,url,content}`. Use it as the fallback when the
   source repo does not have what you need. Fetch pages with `curl -sL`.
-- Budget: `MAX_UPGRADES_PER_RUN` is the maximum number of dependencies that reach the
-  bump step in one run; `0` means no limit — work through the whole list. Stop
-  cleanly when the budget or `RUN_DEADLINE_MINUTES` minutes are used; everything left
-  is picked up next run. Never leave the repo or cluster in a half-applied state when
-  you stop.
+- Settings for this run: `max_upgrades=MAX_UPGRADES_PER_RUN` (dependencies that may
+  reach the bump step; 0 means no limit — work through the whole list),
+  `deadline=RUN_DEADLINE_MINUTES` minutes, `health_timeout=HEALTH_TIMEOUT_MINUTES`
+  minutes, `dry_run=DRY_RUN`. Stop cleanly when the budget or the deadline is used;
+  everything left is picked up next run. Never leave the repo or cluster in a
+  half-applied state when you stop.
+- When `dry_run` is `true`, sections 0–3 run exactly as written, but nothing leaves
+  this pod: no commit, no push, no Receiver POST, no issue, no PR comment, no label
+  creation. In section 3 step 4 record the decision you *would* take (`would-apply`,
+  `would-ask`) instead of acting, then continue with the next dependency. The report
+  in section 6 uses those verbs. The access pre-flight still applies; a dry run
+  without cluster access is still an exit.
 
 ## 1. Discover
 
@@ -158,7 +164,7 @@ Skip rules, checked in this order; log which rule fired:
    not after 6, treat it as a gate failure (section 6) — the repo change is real,
    the cluster has not followed.
 5. **Health gate** (mandatory; CI green, PR merged or "push succeeded" are not
-   substitutes). Poll up to `HEALTH_TIMEOUT_MINUTES` minutes, every 20 s:
+   substitutes). Poll up to `health_timeout` minutes, every 20 s:
    - Flux `Kustomization` for the affected path: `Ready=True` and the last applied
      revision is your commit.
    - `HelmRelease` (if any): `Ready=True`, `.status.history[0].chartVersion` /
@@ -235,7 +241,7 @@ the commits.
 Finish with a summary in this format, one line per dependency you looked at:
 
 ```
-<name>  <current> -> <target|none>  <applied|skipped:<rule>|asked:#<issue>|reverted:#<issue>|failed>  <verify result>
+<name>  <current> -> <target|none>  <applied|skipped:<rule>|asked:#<issue>|reverted:#<issue>|failed|would-apply|would-ask>  <verify result>
 ```
 
 followed by the inventory counts (total, up to date, embargoed, awaiting decision,

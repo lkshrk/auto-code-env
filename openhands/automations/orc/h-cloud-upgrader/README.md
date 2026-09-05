@@ -11,7 +11,7 @@ operator answers instead of a silent change.
 |---|---|
 | `prompt.md` | The upgrade policy the agent executes. Placeholders are filled from `automation.json` `vars`. |
 | `automation.json` | Request body: cron trigger, model, timeout, and the `vars` block. |
-| `apply.py` | Creates or updates the automation. Stdlib only. |
+| `smoke.json` | Var overrides and report assertions for `common/smoke.py`. |
 
 ## Behaviour per dependency
 
@@ -53,19 +53,12 @@ cleanly after `MAX_UPGRADES_PER_RUN` applied upgrades (`0` = unlimited, the defa
 - Cluster access is declared in `lkshrk/h-cloud`. The automation runs on the
   `openhands` pod in `ai` (sandboxless), so it uses that pod's service account, which
   is otherwise scoped to `agent-sandbox`. The manifests give it **read-only** cluster
-  access inside a nightly window and **no write access at all**:
-  - `kubernetes/apps/ai/openhands-upgrader-rbac.yaml` — ClusterRole
-    `openhands-upgrader-reader` (get/list/watch on Flux objects, workloads, pods,
-    logs, events, services, endpointslices, HTTPRoutes, certificates, CRDs, and only
-    its own Receiver; no secrets, no configmaps, no exec, no writes) and two
-    CronJobs: `…-window-open` at 02:55 Europe/Berlin creates the ClusterRoleBinding
-    for `ai/openhands` with `cleanup.kyverno.io/ttl: 3h`, `…-window-close` at 06:00
-    deletes it as a backstop. The window is fail-closed: the opener has a 4-minute
-    `startingDeadlineSeconds`, the binding expires via Kyverno TTL, and a
-    ValidatingAdmissionPolicy pins name, roleRef, subject and TTL label of any
-    binding the window SA creates. Outside the window the pod is back to
-    `agent-sandbox` only; the prompt pre-flights this and exits if access is
-    missing.
+  access and **no write access at all**:
+  - `kubernetes/apps/ai/openhands-reader-rbac.yaml` — ClusterRole `openhands-reader`
+    (get/list/watch on Flux objects, workloads, pods, logs, events, services,
+    endpointslices, HTTPRoutes, certificates, CRDs, and only its own Receiver; no
+    secrets, no configmaps, no exec, no writes), bound permanently to `ai/openhands`.
+    The prompt pre-flights this and exits if access is missing.
   - `kubernetes/apps/flux-system/flux-instance/app/receiver.yaml` — Receiver
     `openhands-upgrader` (`generic`, reusing `gh-webhook-secret`) that reconciles the
     `flux-system` GitRepository and every Kustomization. The agent POSTs to
@@ -77,19 +70,18 @@ cleanly after `MAX_UPGRADES_PER_RUN` applied upgrades (`0` = unlimited, the defa
 - Tools: the agent installs `yq`, `crane`, `flux` and `helm` into `~/.openhands/bin`
   on first run; `kubectl` is already there.
 
-Time-windowed instead of run-scoped: automation runs share the pod (and service
-account) with interactive Agent Canvas sessions, so Kubernetes cannot distinguish a
-cron run from a chat. The window limits exposure to ~3 h a night; a manual dispatch
-outside the window fails the pre-flight and does nothing. Truly per-run identities
-would need the automation service to run each job in its own sandbox pod.
+Pod-scoped instead of run-scoped: automation runs share the pod (and service account)
+with interactive Agent Canvas sessions, so every conversation on the pod has the same
+read-only view. Truly per-run identities would need the automation service to run each
+job in its own sandbox pod.
 
 ## Applying
 
 ```bash
-OPENHANDS_AUTOMATION_API_KEY=... python3 openhands/automations/orc/h-cloud-upgrader/apply.py
+OPENHANDS_SESSION_API_KEY=... python3 openhands/automations/common/apply.py openhands/automations/orc/h-cloud-upgrader
 ```
 
-`apply.py` reads `automation.json`, renders `prompt.md` with the `vars` block, finds an
+`common/apply.py` reads `automation.json`, renders `prompt.md` with the `vars` block, finds an
 existing automation named `h-cloud-upgrader` via `GET /api/automation/v1`, and updates
 it (`PATCH`) or creates it (`POST /api/automation/v1/preset/prompt`). `--dry-run`
 prints the body. `OPENHANDS_URL` overrides the base URL, default
@@ -98,5 +90,18 @@ prints the body. `OPENHANDS_URL` overrides the base URL, default
 Trigger a run by hand:
 
 ```bash
-curl -X POST "$OPENHANDS_URL/api/automation/v1/<id>/dispatch" -H "Authorization: Bearer $OPENHANDS_AUTOMATION_API_KEY"
+curl -X POST "$OPENHANDS_URL/api/automation/v1/<id>/dispatch" -H "X-Session-API-Key: $OPENHANDS_SESSION_API_KEY"
 ```
+
+## Smoke test
+
+```bash
+OPENHANDS_SESSION_API_KEY=... python3 openhands/automations/common/smoke.py openhands/automations/orc/h-cloud-upgrader
+```
+
+Renders the prompt with `smoke.json` `vars` layered over `automation.json` (`DRY_RUN=true`,
+a small budget, a short deadline), registers it as `h-cloud-upgrader-smoke`, dispatches
+one run, waits for it, and checks the agent's final report against the `expect` and
+`forbid` regexes. The shadow automation is deleted afterwards (`--keep` retains it).
+With `DRY_RUN=true` the agent discovers, embargoes, researches and decides, but does not
+commit, push, reconcile or open issues.
