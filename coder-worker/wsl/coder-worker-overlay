@@ -78,7 +78,7 @@ vault_run() {
         -E HOME=/root -E USER=root $env_args \
         -E OVERLAY_SCRIPT="$1" \
         -p "LoadCredential=rbw_master:$MASTER_PASSWORD_FILE" \
-        /bin/sh -eu -c 'umask 077; rbw login; rbw sync; sh -eu -c "$OVERLAY_SCRIPT"; rbw lock; rbw stop-agent; rbw purge'
+        /bin/sh -u -c 'umask 077; rbw login && rbw sync && sh -eu -c "$OVERLAY_SCRIPT"; rc=$?; rbw lock; rbw stop-agent; rbw purge; exit $rc'
     rm -f "$MASTER_PASSWORD_FILE"
     trap - EXIT INT TERM
 }
@@ -108,7 +108,8 @@ secrets() {
         umask 077
         install -d -o root -g root -m 0700 "$OVERLAY_TLS_DIRECTORY"
         install -d -o root -g root -m 0755 "$OVERLAY_LAN_CA_DIRECTORY"
-        write_item() {
+        trap '"'"'rm -f "$OVERLAY_TLS_DIRECTORY"/*.tmp "$OVERLAY_LAN_CA_DIRECTORY"/*.tmp'"'"' EXIT
+        stage_item() {
             if [ -e "$2" ] && { [ ! -f "$2" ] || [ -L "$2" ]; }; then
                 echo "refusing to replace non-regular file $2" >&2
                 exit 1
@@ -117,12 +118,14 @@ secrets() {
             grep -q "^-----BEGIN " "$2.tmp" || { echo "vault item $1 is not PEM" >&2; exit 1; }
             chown root:root "$2.tmp"
             chmod "$3" "$2.tmp"
-            mv -f "$2.tmp" "$2"
         }
-        write_item "$OVERLAY_CA_ID" "$OVERLAY_CA_CERTIFICATE" 0644
-        write_item "$OVERLAY_CRT_ID" "$OVERLAY_SERVER_CERTIFICATE" 0644
-        write_item "$OVERLAY_KEY_ID" "$OVERLAY_SERVER_KEY" 0600
-        write_item "$OVERLAY_LAN_CA_ID" "$OVERLAY_LAN_CA" 0644
+        stage_item "$OVERLAY_CA_ID" "$OVERLAY_CA_CERTIFICATE" 0644
+        stage_item "$OVERLAY_CRT_ID" "$OVERLAY_SERVER_CERTIFICATE" 0644
+        stage_item "$OVERLAY_KEY_ID" "$OVERLAY_SERVER_KEY" 0600
+        stage_item "$OVERLAY_LAN_CA_ID" "$OVERLAY_LAN_CA" 0644
+        for path in "$OVERLAY_CA_CERTIFICATE" "$OVERLAY_SERVER_CERTIFICATE" "$OVERLAY_SERVER_KEY" "$OVERLAY_LAN_CA"; do
+            mv -f "$path.tmp" "$path"
+        done
     '
     verify
 }

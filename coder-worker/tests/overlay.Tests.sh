@@ -126,6 +126,23 @@ first_get=$(grep -n '^rbw get ' /tmp/log/rbw | head -n 1 | cut -d: -f1)
 test "$login_line" -lt "$first_get"
 echo 'PASS: trust material is fetched in one transient vault session'
 
+: > /tmp/log/rbw
+if run secrets --vault-url https://vault.example --email a@b \
+  --ca-id 11111111-1111-1111-1111-111111111111 \
+  --crt-id 22222222-2222-2222-2222-222222222222 \
+  --key-id 33333333-3333-3333-3333-333333333333 \
+  --lan-ca-id 99999999-9999-9999-9999-999999999999 >/dev/null 2>&1; then
+  echo 'secrets must fail when a vault item is missing'; exit 1
+fi
+test "$(tail -n 3 /tmp/log/rbw | tr '\n' ' ')" = 'rbw lock rbw stop-agent rbw purge '
+test -z "$(find /etc/docker/tls /etc/ssl/lan -name '*.tmp')"
+cmp -s /tmp/tls/ca.pem /etc/docker/tls/ca.pem
+cmp -s /tmp/tls/server-cert.pem /etc/docker/tls/server-cert.pem
+cmp -s /tmp/tls/server-key.pem /etc/docker/tls/server-key.pem
+cmp -s /tmp/other/ca.pem /etc/ssl/lan/lan-ca.pem
+test ! -e /run/coder-worker-rbw-master
+echo 'PASS: a failed fetch still locks and purges the vault and leaves the trust material untouched'
+
 : > /tmp/docker-up
 start_listener 2376
 run enable > /tmp/enable.log
