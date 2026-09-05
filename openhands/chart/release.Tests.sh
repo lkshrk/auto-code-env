@@ -8,6 +8,9 @@ workflow="$repo_root/.github/workflows/openhands-chart-release.yaml"
 validation="$repo_root/.github/workflows/openhands-chart-validate.yaml"
 test -x "$helper"
 grep -F './openhands/chart/release.sh' "$workflow" >/dev/null
+grep -F 'id: gate' "$workflow" >/dev/null
+grep -F 'git rev-parse HEAD:openhands/chart/upstream' "$workflow" >/dev/null
+test "$(grep -c "if: steps.gate.outputs.changed == 'true'" "$workflow")" -ge 4
 grep -F 'openhands/chart/release.Tests.sh' "$validation" >/dev/null
 grep -F 'openhands/chart/release.sh' "$validation" >/dev/null
 grep -F 'shellcheck openhands/chart/release.sh openhands/chart/release.Tests.sh' "$validation" >/dev/null
