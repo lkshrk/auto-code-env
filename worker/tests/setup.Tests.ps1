@@ -206,7 +206,7 @@ try {
     Write-Host "PASS: DPAPI-protected vault credential"
 
     $overlayArguments = Get-WorkerOverlayArguments -Distro "openhands-worker" -Command @("ca", "--item", "cf9ec766-c260-4e7d-abe0-3299745b57b4") -PasswordStdin
-    Assert-Equal "--distribution openhands-worker --user root --exec openhands-overlay ca --item cf9ec766-c260-4e7d-abe0-3299745b57b4 --password-stdin" ($overlayArguments -join " ") "overlay argument list"
+    Assert-Equal "--distribution openhands-worker --user root --exec /usr/local/sbin/openhands-overlay ca --item cf9ec766-c260-4e7d-abe0-3299745b57b4 --password-stdin" ($overlayArguments -join " ") "overlay argument list"
     Assert-Throws { Get-WorkerOverlayArguments -Distro "bad name; rm" -Command @("status") } "is not valid" "a distro name with shell characters is refused"
 
     $fakeWsl = Join-Path $root "fake-wsl"
