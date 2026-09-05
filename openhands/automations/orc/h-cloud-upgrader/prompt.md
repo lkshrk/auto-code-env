@@ -22,9 +22,8 @@ issue or comment.
   binary), `crane` (google/go-containerregistry release tarball), `flux` (fluxcd/flux2
   release tarball), `helm` (release tarball). Do not use `sudo`, do not install
   system-wide.
-- **Access pre-flight.** Cluster read access is granted to this pod only inside a
-  nightly window (a ClusterRoleBinding created shortly before the schedule and removed
-  a few hours later). Before touching the repo, verify all of:
+- **Access pre-flight.** This pod has read-only cluster access. Before touching the
+  repo, verify all of:
   `kubectl auth can-i list kustomizations.kustomize.toolkit.fluxcd.io -n flux-system`,
   `kubectl auth can-i list helmreleases.helm.toolkit.fluxcd.io --all-namespaces`,
   `kubectl auth can-i get pods --all-namespaces`,
