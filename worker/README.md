@@ -343,6 +343,14 @@ enabled by `openhands-overlay enable`, which removes run directories older than
 24 hours every hour as `agent`. Drop it once the image carries an
 `openhands-automation` with `AUTOMATION_WORKSPACE_RETENTION_SECONDS`.
 
+Before proposing outbound restrictions, measure what the worker actually
+talks to: `openhands-overlay egress --minutes 30` samples established TCP
+connections from `/proc/net/tcp` every few seconds and prints one line per
+destination and port with a sample count, reverse name, and `lan` or
+`internet` scope. Loopback and link-local are excluded. Run it while real
+Claude Code and Codex tasks execute so the allowlist comes from observed
+traffic.
+
 `openhands-overlay verify` checks files, ownership, modes, that the private
 key matches the certificate, and `nginx -t`. `openhands-overlay enable`
 refuses to start anything until `verify` passes, then enables nginx and

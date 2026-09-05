@@ -73,6 +73,7 @@ assert(dockerignore == [
   'openhands-overlay enable',
   'openhands-overlay origin',
   'openhands-overlay github',
+  'openhands-overlay egress',
   'openhands-overlay settings',
   'openhands-overlay state',
   'openhands-overlay ca',
