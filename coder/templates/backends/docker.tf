@@ -32,6 +32,16 @@ provider "docker" {
 
 locals {
   backend_bootstrap = ""
+
+  # Host-side env file from Vaultwarden (coder-worker-overlay); exported line by line so values are never evaluated.
+  workspace_env_file   = "/run/coder-worker/workspace.env"
+  workspace_entrypoint = <<-EOT
+    while IFS= read -r line || [ -n "$line" ]; do
+      case $line in ''|'#'*) continue ;; esac
+      export "$line"
+    done < ${local.workspace_env_file}
+    ${coder_agent.main.init_script}
+  EOT
 }
 
 resource "docker_volume" "home" {
@@ -150,7 +160,7 @@ resource "docker_container" "workspace" {
   image    = "codercom/enterprise-base:ubuntu"
   hostname = data.coder_workspace.me.name
 
-  entrypoint = ["sh", "-c", coder_agent.main.init_script]
+  entrypoint = ["sh", "-c", local.workspace_entrypoint]
 
   env = concat(
     ["CODER_AGENT_TOKEN=${coder_agent.main.token}"],
@@ -178,6 +188,11 @@ resource "docker_container" "workspace" {
   volumes {
     container_path = "/etc/ssl/lan/lan-ca.pem"
     host_path      = "/etc/ssl/lan/lan-ca.pem"
+    read_only      = true
+  }
+  volumes {
+    container_path = local.workspace_env_file
+    host_path      = "/etc/coder-worker/workspace.env"
     read_only      = true
   }
   dynamic "volumes" {

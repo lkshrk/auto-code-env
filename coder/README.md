@@ -68,12 +68,18 @@ provisioner reaches that host's Docker API over mutual TLS.
   (`DOCKER_TLS_CERTDIR=/certs`); the workspace reads the generated client
   certificate from the shared `/certs` volume.
 
-Desktop workspaces get none of the cluster-held secrets: no
-`coder-workspace-secrets` (`LITELLM_API`, `GH_TOKEN`, `GITHUB_TOKEN`,
-`GITHUB_PERSONAL_ACCESS_TOKEN`), no `<template>-workspace-env`, and no
-service-account token or kubeconfig. `gh` and github-mcp-server are
-unauthenticated there unless the user adds a Coder user secret. Per-user Claude
-and Codex credentials already come from Coder user secrets and work unchanged.
+Desktop workspaces cannot mount cluster Secrets, so the host supplies them:
+`coder-worker-overlay secrets --env-id` writes `/etc/coder-worker/workspace.env`
+from a Vaultwarden item, the container bind-mounts it read-only at
+`/run/coder-worker/workspace.env`, and the entrypoint exports each `NAME=value`
+line before the agent starts. Populate it with the same names the Kubernetes
+backend sets (`LITELLM_API`, `GH_TOKEN`, `GITHUB_TOKEN`,
+`GITHUB_PERSONAL_ACCESS_TOKEN`). Values never pass through Coder or Terraform
+state; rotation is a SOPS edit for the cluster and a vault edit for the
+desktop, two places on purpose. Desktop workspaces still get no
+`<template>-workspace-env` (project-scoped, intentional) and no
+service-account token or kubeconfig. Per-user Claude and Codex credentials
+are Coder user secrets and work unchanged.
 
 A project that should be startable on both backends needs a preset on its
 Kubernetes stack template and a second one on `desktop`. They are separate
