@@ -685,30 +685,32 @@ try {
 
     $registered = Invoke-Wsl -WslPath $wslPath -Arguments @("--list", "--quiet") `
         -FailureMessage "Unable to list installed WSL distributions."
-    if (Test-WslDistributionRegistered -Output $registered -Name $DistroName) {
-        Write-Host "WSL distribution '$DistroName' already exists; leaving it untouched."
+    $exists = Test-WslDistributionRegistered -Output $registered -Name $DistroName
+    if ($exists) {
+        Write-Host "WSL distribution '$DistroName' already exists; reconciling it."
     }
-    else {
-        $overlay = Get-Artifact -Label "Overlay" -Asset "coder-worker-overlay" -Path $OverlayPath -Uri $OverlayUri `
-            -Sha256 $OverlaySha256 -Destination (Join-Path $stage "coder-worker-overlay")
-        $overlayStream = [IO.File]::Open($overlay, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-        try {
-            $overlayDigest = Get-FileSha256 -Stream $overlayStream
-        }
-        finally {
-            $overlayStream.Dispose()
-        }
 
-        $stagedProfile = Join-Path $stage "profile"
-        [IO.File]::Copy((Get-Item -LiteralPath $ProfilePath -Force).FullName, $stagedProfile, $true)
-        $profileStream = [IO.File]::Open($stagedProfile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-        try {
-            $profileDigest = Get-FileSha256 -Stream $profileStream
-        }
-        finally {
-            $profileStream.Dispose()
-        }
+    $overlay = Get-Artifact -Label "Overlay" -Asset "coder-worker-overlay" -Path $OverlayPath -Uri $OverlayUri `
+        -Sha256 $OverlaySha256 -Destination (Join-Path $stage "coder-worker-overlay")
+    $overlayStream = [IO.File]::Open($overlay, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $overlayDigest = Get-FileSha256 -Stream $overlayStream
+    }
+    finally {
+        $overlayStream.Dispose()
+    }
 
+    $stagedProfile = Join-Path $stage "profile"
+    [IO.File]::Copy((Get-Item -LiteralPath $ProfilePath -Force).FullName, $stagedProfile, $true)
+    $profileStream = [IO.File]::Open($stagedProfile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $profileDigest = Get-FileSha256 -Stream $profileStream
+    }
+    finally {
+        $profileStream.Dispose()
+    }
+
+    if (-not $exists) {
         $rootfs = $null
         if (-not [string]::IsNullOrWhiteSpace($RootfsPath) -or -not [string]::IsNullOrWhiteSpace($RootfsUri)) {
             $rootfs = Get-StagedArtifact -Label "Rootfs" -Path $RootfsPath -Uri $RootfsUri `
@@ -729,24 +731,24 @@ try {
         Invoke-Wsl -WslPath $wslPath -Arguments @("--manage", $DistroName, "--set-sparse", "true") `
             -FailureMessage "Unable to mark WSL distribution '$DistroName' sparse." | Out-Null
         Write-Host "Coder worker stage 1 completed: '$DistroName' registered."
-
-        Assert-WslDistributionIdentity -WslPath $wslPath -Name $DistroName -Version $ubuntuVersion
-        Invoke-Wsl -WslPath $wslPath -Arguments @("--distribution", $DistroName, "--user", "root", "--exec", "/bin/mkdir", "-p", $StageRoot) `
-            -FailureMessage "Unable to create '$StageRoot' inside WSL distribution '$DistroName'." | Out-Null
-        Copy-FileIntoDistribution -WslPath $wslPath -Name $DistroName -Source $overlay -Target "$StageRoot/coder-worker-overlay" -Sha256 $overlayDigest
-        Copy-FileIntoDistribution -WslPath $wslPath -Name $DistroName -Source $stagedProfile -Target "$StageRoot/profile" -Sha256 $profileDigest
-        Write-Host "Coder worker stage 2 completed: overlay and host profile staged."
-
-        foreach ($pass in 1, 2) {
-            & $wslPath --distribution $DistroName --user root --exec /bin/bash "$StageRoot/coder-worker-overlay" install --profile "$StageRoot/profile"
-            if ($LASTEXITCODE -ne 0) {
-                throw "Setup pass $pass failed inside WSL distribution '$DistroName'."
-            }
-            Invoke-Wsl -WslPath $wslPath -Arguments @("--terminate", $DistroName) `
-                -FailureMessage "Unable to terminate WSL distribution '$DistroName'." | Out-Null
-        }
-        Write-Host "Coder worker stage 3 completed: docker installed and held down until TLS material exists."
     }
+
+    Assert-WslDistributionIdentity -WslPath $wslPath -Name $DistroName -Version $ubuntuVersion
+    Invoke-Wsl -WslPath $wslPath -Arguments @("--distribution", $DistroName, "--user", "root", "--exec", "/bin/mkdir", "-p", $StageRoot) `
+        -FailureMessage "Unable to create '$StageRoot' inside WSL distribution '$DistroName'." | Out-Null
+    Copy-FileIntoDistribution -WslPath $wslPath -Name $DistroName -Source $overlay -Target "$StageRoot/coder-worker-overlay" -Sha256 $overlayDigest
+    Copy-FileIntoDistribution -WslPath $wslPath -Name $DistroName -Source $stagedProfile -Target "$StageRoot/profile" -Sha256 $profileDigest
+    Write-Host "Coder worker stage 2 completed: overlay and host profile staged."
+
+    foreach ($pass in 1, 2) {
+        & $wslPath --distribution $DistroName --user root --exec /bin/bash "$StageRoot/coder-worker-overlay" install --profile "$StageRoot/profile"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Setup pass $pass failed inside WSL distribution '$DistroName'."
+        }
+        Invoke-Wsl -WslPath $wslPath -Arguments @("--terminate", $DistroName) `
+            -FailureMessage "Unable to terminate WSL distribution '$DistroName'." | Out-Null
+    }
+    Write-Host "Coder worker stage 3 completed: docker installed and held down until TLS material exists."
 
     if ($SkipKeepalive) {
         Write-Host "Skipping the keepalive task: '$DistroName' will idle-stop between workspace builds."

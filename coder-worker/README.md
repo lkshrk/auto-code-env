@@ -46,10 +46,12 @@ or `-OverlayUri` with `-OverlaySha256`, and likewise `-Firewall*`,
 firewall leaves 2376 unrestricted. The parameter is `-HostProfile` because
 `-Host` and `-Profile` shadow PowerShell automatic variables.
 
-Windows 11, elevated PowerShell and WSL 2.7 or later are required. An
-already-registered distribution is left untouched, though the firewall rule and
-keepalive task are still reconciled. `.wslconfig` is global, so the installer
-never sets `memory` or `processors`.
+Windows 11, elevated PowerShell and WSL 2.7 or later are required. Every step
+reconciles, so rerunning the installer is how you recover a half-finished
+install or roll out a newer overlay: an already-registered distribution keeps
+its data and its VHD, and only the overlay install, the firewall rule and the
+keepalive task are reapplied. `.wslconfig` is global, so the installer never
+sets `memory` or `processors`.
 
 ## Host profile
 
