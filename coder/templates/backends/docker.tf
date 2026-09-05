@@ -114,7 +114,7 @@ resource "docker_network" "workspace" {
 resource "docker_container" "dind" {
   count      = local.enable_dind ? data.coder_workspace.me.start_count : 0
   name       = "${local.workspace_k8s_name}-dind"
-  image      = "docker:27-dind"
+  image      = "docker:29-dind"
   privileged = true
 
   # dind puts the container hostname in its server cert SANs; the network alias must match.
