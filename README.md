@@ -22,6 +22,12 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
     `agent-sandbox` namespace.
   - `automations/` holds automation definitions, one directory per backend.
   - `scripts/` holds operational one-off tooling.
+- [`coder/`](coder/) holds the Terraform sources for the Coder workspace
+  templates in `coder/templates/`.
+  `.github/workflows/coder-templates.yaml` validates them and pushes changed
+  templates to `https://coder.h-cloud.io` on `main`. See
+  [`coder/README.md`](coder/README.md) for the CI flow, local validation, and
+  the cluster contract the templates depend on.
 
 Documentation beyond these READMEs is not kept in this repository.
 
