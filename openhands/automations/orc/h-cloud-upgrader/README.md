@@ -41,9 +41,13 @@ operator answers instead of a silent change.
    required value, CRD ordering), otherwise `git revert`, push, reconcile, confirm the
    gate passes on the reverted state, open an issue with the evidence.
 
-Superseded Renovate PRs are closed with a comment naming the commit. The run stops
-cleanly after `MAX_UPGRADES_PER_RUN` applied upgrades (`0` = unlimited, the default) or
-`RUN_DEADLINE_MINUTES`.
+Superseded Renovate PRs are closed with a comment naming the commit. There is no run
+deadline: every inventory row must end with a terminal disposition (`applied`,
+`asked:#N`, `reverted:#N`, `failed`, `skipped:embargo`, `skipped:already-decided`,
+`skipped:already-latest`), and the run ends only when the work list is empty. Risk and
+"major" are reasons to ask, never to skip silently. `MAX_UPGRADES_PER_RUN` (`0` =
+unlimited, the default) is a testing knob that caps how many dependencies reach the bump
+step. The automation `timeout` (12 h) is the platform's hard stop, not a pacing target.
 
 ## Prerequisites
 
@@ -100,7 +104,7 @@ OPENHANDS_SESSION_API_KEY=... python3 openhands/automations/common/smoke.py open
 ```
 
 Renders the prompt with `smoke.json` `vars` layered over `automation.json` (`DRY_RUN=true`,
-a small budget, a short deadline), registers it as `h-cloud-upgrader-smoke`, dispatches
+a small budget), registers it as `h-cloud-upgrader-smoke`, dispatches
 one run, waits for it, and checks the agent's final report against the `expect` and
 `forbid` regexes. The shadow automation is deleted afterwards (`--keep` retains it).
 With `DRY_RUN=true` the agent discovers, embargoes, researches and decides, but does not
