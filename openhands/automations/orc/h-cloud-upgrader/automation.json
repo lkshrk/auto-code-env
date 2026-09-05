@@ -13,6 +13,7 @@
     "GITOPS_REPO": "lkshrk/h-cloud",
     "MAX_UPGRADES_PER_RUN": "0",
     "RUN_DEADLINE_MINUTES": "150",
-    "HEALTH_TIMEOUT_MINUTES": "10"
+    "HEALTH_TIMEOUT_MINUTES": "10",
+    "DRY_RUN": "false"
   }
 }

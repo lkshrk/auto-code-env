@@ -11,6 +11,7 @@ operator answers instead of a silent change.
 |---|---|
 | `prompt.md` | The upgrade policy the agent executes. Placeholders are filled from `automation.json` `vars`. |
 | `automation.json` | Request body: cron trigger, model, timeout, and the `vars` block. |
+| `smoke.json` | Var overrides and report assertions for `common/smoke.py`. |
 
 ## Behaviour per dependency
 
@@ -99,3 +100,17 @@ Trigger a run by hand:
 ```bash
 curl -X POST "$OPENHANDS_URL/api/automation/v1/<id>/dispatch" -H "X-Session-API-Key: $OPENHANDS_SESSION_API_KEY"
 ```
+
+## Smoke test
+
+```bash
+OPENHANDS_SESSION_API_KEY=... python3 openhands/automations/common/smoke.py openhands/automations/orc/h-cloud-upgrader
+```
+
+Renders the prompt with `smoke.json` `vars` layered over `automation.json` (`DRY_RUN=true`,
+a small budget, a short deadline), registers it as `h-cloud-upgrader-smoke`, dispatches
+one run, waits for it, and checks the agent's final report against the `expect` and
+`forbid` regexes. The shadow automation is deleted afterwards (`--keep` retains it).
+With `DRY_RUN=true` the agent discovers, embargoes, researches and decides, but does not
+commit, push, reconcile or open issues. It still needs the cluster read window, so run
+it between 02:55 and 06:00 Europe/Berlin or open the window by hand.

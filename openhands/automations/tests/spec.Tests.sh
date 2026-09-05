@@ -76,6 +76,35 @@ sys.exit(1 if errors else 0)
 EOF
     check python3 "$apply" "$spec" --file "$(basename "$file")" --dry-run >/dev/null
   done
+
+  if [ -f "$spec/smoke.json" ]; then
+    check python3 - "$spec/smoke.json" "$spec/automation.json" <<'EOF'
+import json, re, sys
+
+smoke_file, spec_file = sys.argv[1], sys.argv[2]
+smoke = json.load(open(smoke_file))
+variables = json.load(open(spec_file)).get("vars", {})
+errors = []
+
+for name in smoke.get("vars", {}):
+    if name not in variables:
+        errors.append(f"smoke var {name} is not declared in automation.json")
+for section in ("expect", "forbid"):
+    for pattern in smoke.get(section, []):
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            errors.append(f"{section} pattern {pattern!r}: {e}")
+if not smoke.get("expect"):
+    errors.append("smoke.json needs at least one expect pattern")
+
+for error in errors:
+    print(f"{smoke_file}: {error}", file=sys.stderr)
+sys.exit(1 if errors else 0)
+EOF
+  fi
 done < <(find "$automations" -mindepth 3 -maxdepth 3 -name automation.json | sort)
+
+python3 -m py_compile "$automations/common/smoke.py"
 
 exit "$fail"

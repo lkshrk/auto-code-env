@@ -52,6 +52,12 @@ issue or comment.
   cleanly when the budget or `RUN_DEADLINE_MINUTES` minutes are used; everything left
   is picked up next run. Never leave the repo or cluster in a half-applied state when
   you stop.
+- Dry run: `DRY_RUN` is `true` or `false`. When `true`, sections 0–3 run exactly as
+  written, but nothing leaves this pod: no commit, no push, no Receiver POST, no
+  issue, no PR comment, no label creation. In section 3 step 4 record the decision
+  you *would* take (`would-apply`, `would-ask`) instead of acting, then continue with
+  the next dependency. The report in section 6 uses those verbs. The access
+  pre-flight still applies; a dry run without cluster access is still an exit.
 
 ## 1. Discover
 
@@ -235,7 +241,7 @@ the commits.
 Finish with a summary in this format, one line per dependency you looked at:
 
 ```
-<name>  <current> -> <target|none>  <applied|skipped:<rule>|asked:#<issue>|reverted:#<issue>|failed>  <verify result>
+<name>  <current> -> <target|none>  <applied|skipped:<rule>|asked:#<issue>|reverted:#<issue>|failed|would-apply|would-ask>  <verify result>
 ```
 
 followed by the inventory counts (total, up to date, embargoed, awaiting decision,
