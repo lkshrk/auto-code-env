@@ -30,12 +30,32 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Detect upstream pointer change
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          before='${{ github.event.before }}'
+          current=$(git rev-parse HEAD:openhands/chart/upstream)
+          previous=''
+          if [[ "$before" =~ ^[0-9a-f]{40}$ ]] && ! [[ "$before" =~ ^0+$ ]] && git cat-file -e "$before" 2>/dev/null; then
+            previous=$(git rev-parse "$before:openhands/chart/upstream" 2>/dev/null || git rev-parse "$before:deploy/openhands/upstream" 2>/dev/null || true)
+          fi
+          if [[ -n "$previous" && "$previous" == "$current" ]]; then
+            echo "upstream pointer unchanged ($current); nothing to release"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Helm
+        if: steps.gate.outputs.changed == 'true'
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
           version: v4.2.4
 
       - name: Prepare package
+        if: steps.gate.outputs.changed == 'true'
         id: package
         shell: bash
         run: |
@@ -89,6 +109,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Fetch upstream release notes
+        if: steps.gate.outputs.changed == 'true'
         id: notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -113,11 +134,13 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to GHCR
+        if: steps.gate.outputs.changed == 'true'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Publish or recover chart and release
+        if: steps.gate.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE: ${{ steps.package.outputs.package }}
