@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from apply import DEFAULT_URL, find_automation, render, request  # noqa: E402
+from apply import DEFAULT_URL, deploy, find_automation, render, request  # noqa: E402
 
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"}
 
@@ -58,10 +58,8 @@ def main():
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
 
-    body = render(args.spec_dir / args.file, args.spec_dir / args.prompt)
     smoke = json.loads((args.spec_dir / "smoke.json").read_text())
-    for name, value in smoke["vars"].items():
-        body["prompt"] = body["prompt"].replace(name, str(value))
+    body = render(args.spec_dir / args.file, args.spec_dir / args.prompt, smoke["vars"])
     body["name"] = f"{body['name']}-smoke"
     body["enabled"] = True
     body["timeout"] = min(args.timeout, body["timeout"])
@@ -74,7 +72,7 @@ def main():
     existing = find_automation(base, key, body["name"])
     if existing:
         request("DELETE", f"{base}/api/automation/v1/{existing['id']}", key)
-    automation = request("POST", f"{base}/api/automation/v1/preset/prompt", key, body)
+    automation, _ = deploy(base, key, body, args.spec_dir)
     automation_id = automation["id"]
     print(f"created {body['name']} id={automation_id}")
 

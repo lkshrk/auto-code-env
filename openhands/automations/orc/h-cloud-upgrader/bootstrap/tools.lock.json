@@ -1,0 +1,126 @@
+{
+  "platform": "linux/x86_64",
+  "tools": [
+    {
+      "name": "yq",
+      "version": "v4.53.6",
+      "url": "https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64",
+      "sha256": "c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385",
+      "checksum_source": "https://api.github.com/repos/mikefarah/yq/releases/tags/v4.53.6",
+      "member": null,
+      "version_args": [
+        "--version"
+      ],
+      "version_match": "v4.53.6",
+      "binary_sha256": "c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385"
+    },
+    {
+      "name": "crane",
+      "version": "v0.22.1",
+      "url": "https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz",
+      "sha256": "0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0",
+      "checksum_source": "https://api.github.com/repos/google/go-containerregistry/releases/tags/v0.22.1",
+      "member": "crane",
+      "version_args": [
+        "version"
+      ],
+      "version_match": "0.22.1",
+      "binary_sha256": "8e75c326adb43b053cfd78b9b987663f8f4fe4557f4d3915905643f25c730992"
+    },
+    {
+      "name": "flux",
+      "version": "v2.9.5",
+      "url": "https://github.com/fluxcd/flux2/releases/download/v2.9.5/flux_2.9.5_linux_amd64.tar.gz",
+      "sha256": "b853df82adfd7736f580692f9f734473d571606307139f8fd20c2a80dd1ff473",
+      "checksum_source": "https://api.github.com/repos/fluxcd/flux2/releases/tags/v2.9.5",
+      "member": "flux",
+      "version_args": [
+        "--version"
+      ],
+      "version_match": "2.9.5",
+      "binary_sha256": "392a85dd1126875c1ab677e18b6edb73f292c9e9ebcbb2e5402eb98bcfd81974"
+    },
+    {
+      "name": "gh",
+      "version": "v2.98.0",
+      "url": "https://github.com/cli/cli/releases/download/v2.98.0/gh_2.98.0_linux_amd64.tar.gz",
+      "sha256": "3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de",
+      "checksum_source": "https://api.github.com/repos/cli/cli/releases/tags/v2.98.0",
+      "member": "gh_2.98.0_linux_amd64/bin/gh",
+      "version_args": [
+        "--version"
+      ],
+      "version_match": "2.98.0",
+      "binary_sha256": "62885b97de6a0cd85e616cdd94bcda908bf5cf1018094385892b05cea3537163"
+    },
+    {
+      "name": "flate",
+      "version": "v0.6.1",
+      "url": "https://github.com/home-operations/flate/releases/download/v0.6.1/flate_0.6.1_linux_amd64.tar.gz",
+      "sha256": "25de65dd4f4478575768b4c30d6bad4cbb7a75a7a38be5a3cd776ae065fd6631",
+      "checksum_source": "https://api.github.com/repos/home-operations/flate/releases/tags/v0.6.1",
+      "member": "flate",
+      "version_args": [
+        "--version"
+      ],
+      "version_match": "0.6.1",
+      "binary_sha256": "143f5e0032825a3c49f8ee92d5cd215cd0f10d8db6fd190edfde8cedb71f21b6"
+    },
+    {
+      "name": "just",
+      "version": "1.58.0",
+      "url": "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d",
+      "checksum_source": "https://api.github.com/repos/casey/just/releases/tags/1.58.0",
+      "member": "just",
+      "version_args": [
+        "--version"
+      ],
+      "version_match": "1.58.0",
+      "binary_sha256": "3ad66571feae522db2cad31b9613bf21035b8a06d2738d6fc8fe6089856f2042"
+    },
+    {
+      "name": "jq",
+      "version": "jq-1.8.1",
+      "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64",
+      "sha256": "020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d",
+      "checksum_source": "https://api.github.com/repos/jqlang/jq/releases/tags/jq-1.8.1",
+      "member": null,
+      "version_args": [
+        "--version"
+      ],
+      "version_match": "1.8.1",
+      "binary_sha256": "020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d"
+    },
+    {
+      "name": "kubectl",
+      "version": "v1.37.0",
+      "url": "https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl",
+      "sha256": "6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f",
+      "checksum_source": "https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl.sha256",
+      "member": null,
+      "version_args": [
+        "version",
+        "--client",
+        "-o",
+        "json"
+      ],
+      "version_match": "v1.37.0",
+      "binary_sha256": "6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f"
+    },
+    {
+      "name": "helm",
+      "version": "v3.19.0",
+      "url": "https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz",
+      "sha256": "a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496",
+      "checksum_source": "https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz.sha256sum",
+      "member": "linux-amd64/helm",
+      "version_args": [
+        "version",
+        "--short"
+      ],
+      "version_match": "v3.19.0",
+      "binary_sha256": "e4722a77de9df824214aaf19d43687c49f7cbcf3b107905acea002173777d486"
+    }
+  ]
+}

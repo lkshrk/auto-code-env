@@ -9,6 +9,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import bootstrap
+
 
 DEFAULT_URL = "http://openhands.ai.svc.cluster.local:8000"
 PATCHABLE = ("name", "model", "prompt", "trigger", "timeout", "keep_alive", "enabled")
@@ -43,13 +45,40 @@ def find_automation(base, key, name):
             return None
 
 
-def render(spec_file, prompt_file):
+def render(spec_file, prompt_file, overrides=None):
     body = json.loads(Path(spec_file).read_text())
     prompt = Path(prompt_file).read_text()
-    for name, value in body.pop("vars", {}).items():
+    variables = body.pop("vars", {}) | (overrides or {})
+    for name, value in variables.items():
         prompt = prompt.replace(name, str(value))
+    if body.pop("bootstrap", False):
+        directory = Path(spec_file).parent / "bootstrap"
+        for name in bootstrap.FILES:
+            if not (directory / name).is_file():
+                raise ValueError(f"Missing bootstrap file: {name}")
+        prompt = prompt.replace("BOOTSTRAP_BIN", bootstrap.bin_path(directory))
+        body["setup_script_path"] = bootstrap.SETUP
     body["prompt"] = prompt
     return body
+
+
+def deploy(base, key, body, spec_dir):
+    existing = find_automation(base, key, body["name"])
+    action = "updated" if existing else "created"
+    with_bootstrap = body.get("setup_script_path") == bootstrap.SETUP
+    if not existing:
+        creation = {k: v for k, v in body.items() if k != "setup_script_path"}
+        if with_bootstrap:
+            creation["enabled"] = False
+        existing = request("POST", f"{base}/api/automation/v1/preset/prompt", key, creation)
+        if not with_bootstrap:
+            return existing, action
+    patch = {k: v for k, v in body.items() if k in PATCHABLE}
+    if with_bootstrap:
+        patch["tarball_path"] = bootstrap.attach(base, key, existing, spec_dir / "bootstrap")
+        patch["setup_script_path"] = bootstrap.SETUP
+    result = request("PATCH", f"{base}/api/automation/v1/{existing['id']}", key, patch)
+    return result, action
 
 
 def main():
@@ -71,14 +100,7 @@ def main():
     if not key:
         sys.exit("OPENHANDS_SESSION_API_KEY is not set")
 
-    existing = find_automation(base, key, body["name"])
-    if existing:
-        patch = {k: v for k, v in body.items() if k in PATCHABLE}
-        result = request("PATCH", f"{base}/api/automation/v1/{existing['id']}", key, patch)
-        action = "updated"
-    else:
-        result = request("POST", f"{base}/api/automation/v1/preset/prompt", key, body)
-        action = "created"
+    result, action = deploy(base, key, body, args.spec_dir)
 
     print(f"{action} {result['name']} id={result['id']} enabled={result['enabled']}")
 

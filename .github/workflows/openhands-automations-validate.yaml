@@ -24,4 +24,5 @@ jobs:
         run: |
           set -euo pipefail
           bash openhands/automations/tests/spec.Tests.sh
+          python3 -m unittest discover -s openhands/automations/tests -p 'test_*.py' -v
           shellcheck openhands/automations/tests/spec.Tests.sh
