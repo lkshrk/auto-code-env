@@ -23,7 +23,7 @@ openhands-overlay settings --file /etc/openhands/profile-common.json --file /etc
 
 | Section | Merge rule |
 |---|---|
-| `llm`, `agent`, `git_sync`, `agents` | per key; a later file overrides only the keys it sets |
+| `llm`, `agent`, `git_sync` | per key; a later file overrides only the keys it sets |
 | `secrets` | by secret name; a later file replaces the entry that shares a name |
 | `mcp_servers` | by server key |
 | `skills` | by `repo_path` |
@@ -41,15 +41,13 @@ the applier directly:
 
 ```sh
 apply-profile.py --api http://openhands:8000 --api-key-file /secrets/sessionApiKey \
-  --secrets-dir /secrets/profile --state-dir /tmp/state --skip agents \
+  --secrets-dir /secrets/profile --state-dir /tmp/state \
   profile-common.json profile-orc.json
 ```
 
 An hourly CronJob downloads `apply-profile.py`, `profile-common.json`,
 `profile-orc.json`, and `checksums.txt` from one pinned `openhands-worker-v*`
-release, verifies the checksums, and runs the command above. `--skip agents`
-drops the worker-only `agents` section, because omni deploys agent primitives
-into the worker's home directory and runs outside the applier.
+release, verifies the checksums, and runs the command above.
 
 `--secrets-dir` holds one file per referenced secret name, and on orc it is a
 projection of the `openhands-secret` Kubernetes Secret: key `LITE_LLM` is
@@ -155,42 +153,3 @@ to the Canvas secret of that name. The name must be declared in the merged
 | `token_item` | string | Vaultwarden item UUID holding the sync token |
 | `interval_seconds` | non-negative integer | poll interval, `0` disables polling |
 
-### `agents`
-
-| Key | Type | Meaning |
-|---|---|---|
-| `repo` | string | `owner/name` shorthand or absolute HTTPS git URL, required |
-| `ref` | string | branch or tag; the `ref:` line is omitted when absent |
-| `path` | string | relative directory inside the repository holding `apm.yml` |
-| `targets` | array of strings | harnesses to deploy to, non-empty and required |
-
-The overlay renders these into the omni root manifest at
-`/home/agent/.config/omni/apm.yml` and runs `omni agents sync` in
-`/home/agent`, both as the `agent` user. omni installs the global APM workspace
-under `/home/agent/.apm` and deploys the primitives into `/home/agent/.claude`
-and `/home/agent/.codex`. The manifest is rewritten only when it differs; the
-sync runs every time and is the reconciliation step.
-
-```json
-{
-  "agents": {
-    "repo": "lkshrk/dotfiles",
-    "ref": "main",
-    "path": "apm/ai-plugins",
-    "targets": ["claude", "codex"]
-  }
-}
-```
-
-```yaml
-name: openhands-worker
-version: 1.0.0
-dependencies:
-  apm:
-  - git: lkshrk/dotfiles
-    path: apm/ai-plugins
-    ref: main
-targets:
-- claude
-- codex
-```

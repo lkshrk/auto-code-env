@@ -10,8 +10,8 @@ import sys
 import urllib.error
 import urllib.request
 
-SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync", "mcp_servers", "agents")
-MERGED_OBJECTS = ("llm", "agent", "git_sync", "agents")
+SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync", "mcp_servers")
+MERGED_OBJECTS = ("llm", "agent", "git_sync")
 MERGED_MAPS = ("secrets", "mcp_servers")
 ACP_SERVERS = ("claude-code", "codex", "gemini-cli", "custom")
 AGENT_KINDS = ("openhands", "acp")
@@ -19,9 +19,6 @@ UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 SECRET_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 MCP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
-REPO_SHORTHAND = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
-TARGET_NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
-AGENTS_MANIFEST_NAME = "openhands-worker"
 LLM_API_KEY = "LLM_API_KEY"
 GIT_SYNC_TOKEN = "GIT_SYNC_TOKEN"
 STATE_DIRECTORY = "/var/lib/openhands/overlay"
@@ -156,43 +153,6 @@ def validate_mcp_headers(label, headers):
             as_text("%s.headers.%s" % (label, name), value)
 
 
-def validate_agents(agents):
-    object_keys("agents", agents, ("repo", "ref", "path", "targets"))
-    repo = as_text("agents.repo", agents.get("repo"))
-    if not REPO_SHORTHAND.match(repo) and not repo.startswith("https://"):
-        fail("agents.repo must be owner/name or an absolute HTTPS git URL")
-    for key in ("ref", "path"):
-        if key in agents:
-            as_text("agents.%s" % key, agents[key])
-    path = agents.get("path", "")
-    if path.startswith("/") or ".." in path.split("/"):
-        fail("agents.path must be a relative path inside the repository")
-    targets = agents.get("targets")
-    if not isinstance(targets, list) or not targets:
-        fail("agents.targets must be a non-empty array")
-    for target in targets:
-        if not isinstance(target, str) or not TARGET_NAME.match(target):
-            fail("agents.targets entry %r is not a harness name" % target)
-
-
-def render_agents(agents):
-    lines = [
-        "name: %s" % AGENTS_MANIFEST_NAME,
-        "version: 1.0.0",
-        "dependencies:",
-        "  apm:",
-        "  - git: %s" % agents["repo"],
-    ]
-    if "path" in agents:
-        lines.append("    path: %s" % agents["path"])
-    if "ref" in agents:
-        lines.append("    ref: %s" % agents["ref"])
-    lines.append("targets:")
-    for target in agents["targets"]:
-        lines.append("- %s" % target)
-    return "\n".join(lines)
-
-
 def validate_git_sync(git_sync):
     object_keys(
         "git_sync",
@@ -235,8 +195,6 @@ def load(path):
         validate_git_sync(profile["git_sync"])
     if "mcp_servers" in profile:
         validate_mcp_servers(profile["mcp_servers"])
-    if "agents" in profile:
-        validate_agents(profile["agents"])
     return profile
 
 
@@ -517,7 +475,7 @@ def parse_arguments(argv):
     parser.add_argument("--secrets-dir", help="directory holding one file per referenced secret name")
     parser.add_argument("--state-dir", default=STATE_DIRECTORY, help="writable directory for the git-sync token digest")
     parser.add_argument("--skip", action="append", choices=SECTIONS, default=[], help="section to drop from the merged profile, repeatable")
-    parser.add_argument("--print", dest="report", choices=("secret-items", "agents-manifest"), help="print a derived value and exit without contacting the backend")
+    parser.add_argument("--print", dest="report", choices=("secret-items",), help="print a derived value and exit without contacting the backend")
     parser.add_argument("profile", nargs="+", help="profile JSON files, layered left to right")
     return parser.parse_args(argv)
 
@@ -528,11 +486,6 @@ def main(argv):
     if options.report == "secret-items":
         for name, item in wanted_secrets(profile):
             print("%s %s" % (name, item))
-        return
-    if options.report == "agents-manifest":
-        agents = profile.get("agents")
-        if agents:
-            print(render_agents(agents))
         return
     for flag in ("api", "api_key_file", "secrets_dir"):
         if not getattr(options, flag):

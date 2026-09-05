@@ -13,9 +13,6 @@ RUN OPENHANDS_IMAGE_BUILD=1 /bin/bash /opt/openhands-build/provision.sh && \
     /usr/bin/rm -f /etc/nginx/sites-enabled/default && \
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin UV_CACHE_DIR=/home/agent/.cache/uv \
       /usr/local/bin/uvx --from openhands-agent-server==1.44.0 --with openhands-sdk==1.44.0 --with openhands-tools==1.44.0 --with openhands-workspace==1.44.0 --with 'agent-client-protocol<0.11' --with 'posthog>=6,<7' agent-server --import-modules canvas_ui_tool --help >/dev/null && \
-    /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin UV_CACHE_DIR=/home/agent/.cache/uv \
-      UV_TOOL_DIR=/home/agent/.local/share/uv/tools UV_TOOL_BIN_DIR=/home/agent/.local/bin \
-      /usr/local/bin/uv tool install apm-cli==0.29.0 >/dev/null && \
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin \
       /usr/local/bin/node /opt/openhands-build/patch-agent-canvas-automation.mjs /home/agent/.local/lib/node_modules/@openhands/agent-canvas/scripts/dev-with-automation.mjs && \
     /usr/local/bin/node --check /home/agent/.local/lib/node_modules/@openhands/agent-canvas/scripts/dev-with-automation.mjs && \
@@ -49,7 +46,6 @@ RUN test "$(/usr/bin/id -u agent)" = 1000 && test "$(/usr/bin/id -g agent)" = 10
     installed=$(/usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin NPM_CONFIG_USERCONFIG=/dev/null NPM_CONFIG_GLOBALCONFIG=/etc/openhands/npmrc /usr/local/bin/npm --prefix /home/agent/.local --cache /home/agent/.cache/npm --global --depth=0 --json ls) && \
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin /usr/local/bin/node -e 'const expected = {"@openhands/agent-canvas":"1.16.0","@agentclientprotocol/claude-agent-acp":"0.63.0","@agentclientprotocol/codex-acp":"1.1.7","@anthropic-ai/claude-code":"2.1.251","@openai/codex":"0.151.0"}; const actual = JSON.parse(process.argv[1]).dependencies || {}; process.exit(Object.keys(actual).length === Object.keys(expected).length && Object.entries(expected).every(([name, version]) => actual[name]?.version === version) ? 0 : 1);' "$installed" && \
     test "$(/usr/sbin/runuser -u agent -- /home/agent/.local/bin/claude --version)" = '2.1.251 (Claude Code)' && test "$(/usr/sbin/runuser -u agent -- /home/agent/.local/bin/codex --version)" = 'codex-cli 0.151.0' && \
-    test "$(/usr/sbin/runuser -u agent -- /home/agent/.local/bin/apm --version)" = 'Agent Package Manager (APM) CLI version 0.29.0' && \
     for path in /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/workspaces; do test "$(/usr/bin/stat -c '%U:%G %a' "$path")" = 'agent:agent 700'; done && \
     /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update && \
     /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends openssl && \

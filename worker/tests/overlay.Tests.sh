@@ -260,12 +260,6 @@ cat > /tmp/common.json <<'EOF'
     "openaiDeveloperDocs": {"url": "https://developers.openai.com/mcp"},
     "local-notes": {"command": "notes-mcp", "args": ["--stdio"]}
   },
-  "agents": {
-    "repo": "lkshrk/dotfiles",
-    "ref": "main",
-    "path": "apm/ai-plugins",
-    "targets": ["claude", "codex"]
-  },
   "git_sync": {
     "repo_url": "https://github.com/lkshrk/auto-code-env.git",
     "branch": "common",
@@ -316,16 +310,26 @@ printf '{"mcp_servers": {"x": {}}}' > /tmp/bad-mcp-empty.json
 if printf 'hunter2' | run settings --file /tmp/bad-mcp-empty.json --password-stdin >/dev/null 2>&1; then echo 'an MCP server without url or command must be rejected'; exit 1; fi
 printf '{"mcp_servers": {"x": {"url": "https://x.example", "command": "y"}}}' > /tmp/bad-mcp-mixed.json
 if printf 'hunter2' | run settings --file /tmp/bad-mcp-mixed.json --password-stdin >/dev/null 2>&1; then echo 'an MCP server mixing url and command must be rejected'; exit 1; fi
-printf '{"agents": {"repo": "lkshrk/dotfiles", "path": "/etc", "targets": ["claude"]}}' > /tmp/bad-agents-path.json
-if printf 'hunter2' | run settings --file /tmp/bad-agents-path.json --password-stdin >/dev/null 2>&1; then echo 'an absolute agents.path must be rejected'; exit 1; fi
-printf '{"agents": {"repo": "git@github.com:lkshrk/dotfiles.git", "targets": ["claude"]}}' > /tmp/bad-agents-repo.json
-if printf 'hunter2' | run settings --file /tmp/bad-agents-repo.json --password-stdin >/dev/null 2>&1; then echo 'an SSH agents.repo must be rejected'; exit 1; fi
-printf '{"agents": {"repo": "lkshrk/dotfiles", "targets": []}}' > /tmp/bad-agents-targets.json
-if printf 'hunter2' | run settings --file /tmp/bad-agents-targets.json --password-stdin >/dev/null 2>&1; then echo 'an empty agents.targets must be rejected'; exit 1; fi
-printf '{"agents": {"repo": "lkshrk/dotfiles", "targets": ["Claude Code"]}}' > /tmp/bad-agents-target.json
-if printf 'hunter2' | run settings --file /tmp/bad-agents-target.json --password-stdin >/dev/null 2>&1; then echo 'a non-harness agents.targets entry must be rejected'; exit 1; fi
 if run settings --password-stdin >/dev/null 2>&1; then echo 'settings requires at least one --file'; exit 1; fi
 test ! -e /tmp/log/api
+
+install -d -o agent -g agent -m 0700 /home/agent/.codex
+cat > /home/agent/.claude.json <<'CLAUDE'
+{"mcpServers":{"litellm-tools":{"type":"http","url":"https://api.ai.h-cloud.lan/mcp/","headers":{"x-litellm-api-key":"${env:LITELLM_API}"}},"keepme":{"type":"http","url":"https://example.test/mcp"}}}
+CLAUDE
+cat > /home/agent/.codex/config.toml <<'CODEX'
+model = "gpt-5.6-sol"
+
+[mcp_servers.litellm-tools]
+url = "https://api.ai.h-cloud.lan/mcp/"
+
+[mcp_servers.litellm-tools.http_headers]
+x-litellm-api-key = "${env:LITELLM_API}"
+
+[mcp_servers.keepme]
+command = "bunx"
+CODEX
+chown agent:agent /home/agent/.claude.json /home/agent/.codex/config.toml
 
 applied=$(printf 'hunter2' | run settings --file /tmp/common.json --file /tmp/profile.json --password-stdin)
 printf '%s\n' "$applied" | grep -Fq 'settings applied: acp_command, acp_server, agent_kind, llm'
@@ -333,8 +337,7 @@ printf '%s\n' "$applied" | grep -Fq 'secrets applied: ANTHROPIC_API_KEY, LITELLM
 printf '%s\n' "$applied" | grep -Fq 'mcp_servers applied: litellm-tools, local-notes, openaiDeveloperDocs'
 printf '%s\n' "$applied" | grep -Fq 'skills applied: agent-sandbox-deploy, common-only'
 printf '%s\n' "$applied" | grep -Fq 'git_sync applied: branch, interval_seconds, path, repo_url, token'
-printf '%s\n' "$applied" | grep -Fxq 'agents applied: synced'
-printf '%s\n' "$applied" | grep -Fxq 'agents targets: 2'
+printf '%s\n' "$applied" | grep -Fq 'apm mcp pruned: claude:litellm-tools, codex:litellm-tools'
 if printf '%s\n' "$applied" | grep -Eq 'sk-llm|sk-ant|ghs_'; then echo 'secret leaked to stdout'; exit 1; fi
 test ! -e /run/openhands-overlay
 test ! -e /run/openhands-rbw-master
@@ -347,25 +350,19 @@ grep -Fxq 'POST /api/skills/install' /tmp/log/api
 grep -Fxq 'PUT /api/automation/v1/git-sync/config' /tmp/log/api
 test "$(grep -c '^GET /api/settings$' /tmp/log/api)" = 1
 test "$(stat -c '%U:%G %a' /var/lib/openhands/overlay/git-sync-token.sha256)" = 'root:root 600'
-grep -Fq 'omni agents sync user=agent dir=/home/agent home=/home/agent' /tmp/log/omni
-grep -Fq 'path=/home/agent/.local/bin:' /tmp/log/omni
-test "$(grep -c '^omni ' /tmp/log/omni)" = 1
-if grep -Ev '^omni agents sync ' /tmp/log/omni; then echo 'only omni agents sync may run'; exit 1; fi
-test "$(stat -c '%U:%G %a' /home/agent/.config/omni/apm.yml)" = 'agent:agent 644'
-test "$(stat -c '%U:%G %a' /home/agent/.config/omni)" = 'agent:agent 755'
-cat > /tmp/expected-apm.yml <<'EOF'
-name: openhands-worker
-version: 1.0.0
-dependencies:
-  apm:
-  - git: lkshrk/dotfiles
-    path: apm/ai-plugins
-    ref: main
-targets:
-- claude
-- codex
-EOF
-cmp /tmp/expected-apm.yml /home/agent/.config/omni/apm.yml
+if grep -q '^omni ' /tmp/log/omni; then echo 'omni must not run during settings'; exit 1; fi
+test ! -e /home/agent/.config/omni/apm.yml
+python3 - <<'PRUNE'
+import json
+data = json.load(open('/home/agent/.claude.json'))
+servers = data['mcpServers']
+assert 'litellm-tools' not in servers, servers
+assert servers['keepme'] == {'type': 'http', 'url': 'https://example.test/mcp'}, servers
+codex = open('/home/agent/.codex/config.toml').read()
+assert 'litellm-tools' not in codex, codex
+assert '[mcp_servers.keepme]' in codex, codex
+assert 'model = "gpt-5.6-sol"' in codex, codex
+PRUNE
 python3 - <<'PY'
 import json
 state = json.load(open('/tmp/api/state.json'))
@@ -418,18 +415,7 @@ printf '%s\n' "$repeated" | grep -Fq 'skills applied: none changed'
 printf '%s\n' "$repeated" | grep -Fq 'git_sync unchanged'
 if grep -Eq '^(PATCH|PUT|POST) ' /tmp/log/api; then echo 'second run must not write'; exit 1; fi
 grep -Fxq 'GET /api/settings' /tmp/log/api
-printf '%s\n' "$repeated" | grep -Fxq 'agents unchanged'
-printf '%s\n' "$repeated" | grep -Fxq 'agents targets: 2'
-grep -Fq 'omni agents sync user=agent dir=/home/agent' /tmp/log/omni
-cmp /tmp/expected-apm.yml /home/agent/.config/omni/apm.yml
-
-: > /tmp/log/omni
-printf 'stale\n' > /home/agent/.config/omni/apm.yml
-drifted=$(printf 'hunter2' | run settings --file /tmp/common.json --file /tmp/profile.json --password-stdin)
-printf '%s\n' "$drifted" | grep -Fxq 'agents applied: synced'
-cmp /tmp/expected-apm.yml /home/agent/.config/omni/apm.yml
-test "$(stat -c '%U:%G %a' /home/agent/.config/omni/apm.yml)" = 'agent:agent 644'
-grep -Fq 'omni agents sync' /tmp/log/omni
+printf '%s\n' "$repeated" | grep -Fxq 'apm mcp pruned: none'
 
 python3 - <<'PY'
 import json

@@ -24,11 +24,5 @@
     "openaiDeveloperDocs": {
       "url": "https://developers.openai.com/mcp"
     }
-  },
-  "agents": {
-    "repo": "lkshrk/dotfiles",
-    "ref": "main",
-    "path": "apm/ai-plugins",
-    "targets": ["claude", "codex"]
   }
 }

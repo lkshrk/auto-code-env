@@ -81,7 +81,6 @@ cat > /tmp/common.json <<'EOF'
     },
     "openaiDeveloperDocs": {"url": "https://developers.openai.com/mcp"}
   },
-  "agents": {"repo": "lkshrk/dotfiles", "ref": "main", "path": "apm/ai-plugins", "targets": ["claude", "codex"]},
   "git_sync": {
     "repo_url": "https://github.com/lkshrk/auto-code-env.git",
     "branch": "common",
@@ -119,19 +118,15 @@ test "$items" = 'ANTHROPIC_API_KEY 77777777-7777-7777-7777-777777777777
 GIT_SYNC_TOKEN 88888888-8888-8888-8888-888888888888
 LITELLM_API 66666666-6666-6666-6666-666666666666
 LLM_API_KEY 66666666-6666-6666-6666-666666666666'
-"$apply" --print agents-manifest /tmp/common.json /tmp/host.json | grep -Fxq 'name: openhands-worker'
-test -z "$("$apply" --print agents-manifest --skip agents /tmp/common.json /tmp/host.json)"
 
 test ! -e /tmp/log/api
-applied=$(run --skip agents /tmp/common.json /tmp/host.json)
-printf '%s\n' "$applied" | grep -Fxq 'agents skipped'
+applied=$(run /tmp/common.json /tmp/host.json)
 printf '%s\n' "$applied" | grep -Fq 'settings applied: llm'
 printf '%s\n' "$applied" | grep -Fq 'secrets applied: ANTHROPIC_API_KEY, LITELLM_API'
 printf '%s\n' "$applied" | grep -Fq 'mcp_servers applied: litellm-tools, openaiDeveloperDocs'
 printf '%s\n' "$applied" | grep -Fq 'skills applied: agent-sandbox-deploy, common-only'
 printf '%s\n' "$applied" | grep -Fq 'git_sync applied: branch, interval_seconds, path, repo_url, token'
 if printf '%s\n' "$applied" | grep -Eq 'sk-llm|sk-ant|ghs_'; then echo 'secret leaked to stdout'; exit 1; fi
-if grep -q 'agents' /tmp/log/api; then echo 'the skipped agents section must not reach the backend'; exit 1; fi
 test "$(stat -c '%a' /tmp/state/git-sync-token.sha256)" = 600
 
 python3 - <<'PY'
@@ -159,8 +154,7 @@ assert refs['openhands/skills/agent-sandbox-deploy'] == 'main', refs
 PY
 
 : > /tmp/log/api
-repeated=$(run --skip agents /tmp/common.json /tmp/host.json)
-printf '%s\n' "$repeated" | grep -Fxq 'agents skipped'
+repeated=$(run /tmp/common.json /tmp/host.json)
 printf '%s\n' "$repeated" | grep -Fxq 'settings unchanged'
 printf '%s\n' "$repeated" | grep -Fq 'secrets applied: none changed'
 printf '%s\n' "$repeated" | grep -Fq 'mcp_servers applied: none changed'
@@ -170,7 +164,7 @@ if grep -Eq '^(PATCH|PUT|POST) ' /tmp/log/api; then echo 'second run must not wr
 
 : > /tmp/log/api
 mv /tmp/secrets/ANTHROPIC_API_KEY /tmp/anthropic.kept
-if run --skip agents /tmp/common.json /tmp/host.json > /tmp/missing.out 2> /tmp/missing.err; then
+if run /tmp/common.json /tmp/host.json > /tmp/missing.out 2> /tmp/missing.err; then
   echo 'a missing secret file must fail'
   exit 1
 fi
@@ -178,14 +172,14 @@ grep -Fq 'missing material for secret ANTHROPIC_API_KEY at /tmp/secrets/ANTHROPI
 test ! -s /tmp/log/api
 mv /tmp/anthropic.kept /tmp/secrets/ANTHROPIC_API_KEY
 
-if run --skip agents /tmp/common.json /tmp/host.json --secrets-dir /tmp/nowhere >/dev/null 2>&1; then
+if run /tmp/common.json /tmp/host.json --secrets-dir /tmp/nowhere >/dev/null 2>&1; then
   echo 'an unreadable secrets directory must fail'
   exit 1
 fi
 
 printf 'wrong-key\n' > /tmp/bad-key
 if "$apply" --api http://127.0.0.1:8000 --api-key-file /tmp/bad-key --secrets-dir /tmp/secrets \
-  --state-dir /tmp/state --skip agents /tmp/common.json /tmp/host.json >/dev/null 2>/tmp/forbidden.err; then
+  --state-dir /tmp/state /tmp/common.json /tmp/host.json >/dev/null 2>/tmp/forbidden.err; then
   echo 'a wrong session API key must fail'
   exit 1
 fi
@@ -205,8 +199,7 @@ rm -rf /tmp/state
 mkdir -p /tmp/state
 fresh_state
 : > /tmp/log/api
-orc=$(run --skip agents /src/openhands/profiles/common.json /src/openhands/profiles/orc.json)
-printf '%s\n' "$orc" | grep -Fxq 'agents skipped'
+orc=$(run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json)
 printf '%s\n' "$orc" | grep -Fq 'secrets applied: LITELLM_API'
 printf '%s\n' "$orc" | grep -Fq 'mcp_servers applied: litellm-tools, openaiDeveloperDocs'
 printf '%s\n' "$orc" | grep -Fq 'skills applied: agent-sandbox-deploy'
