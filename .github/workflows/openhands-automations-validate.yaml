@@ -1,0 +1,27 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: OpenHands automations validate
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/openhands-automations-validate.yaml
+      - openhands/automations/**
+
+permissions:
+  contents: read
+
+jobs:
+  specs:
+    name: deterministic checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Validate automation specs
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash openhands/automations/tests/spec.Tests.sh
+          shellcheck openhands/automations/tests/spec.Tests.sh

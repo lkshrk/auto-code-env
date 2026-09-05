@@ -68,14 +68,116 @@ worker/build-wsl.sh 1.2.3 amd64 dist
 Only `openhands-worker-v*` tags release artifacts. Native GitHub runners build
 amd64 and arm64 separately; no QEMU emulation is accepted. The release has the
 two `.wsl` files, the matching `install.ps1`, `firewall.ps1`, `keepalive.ps1`,
-the in-distro `openhands-overlay` tool, and a combined `checksums.txt` covering
-all six, and GHCR has immutable
+`setup.ps1`, `update.ps1`, the shared `common.ps1` helpers, the in-distro
+`openhands-overlay` tool, every settings profile as `profile-<name>.json`, and a
+combined `checksums.txt` covering all of them, and GHCR has immutable
 `ghcr.io/lkshrk/openhands-worker:<version>` manifest with both architectures,
 SBOM, and provenance.
 
 An arm64 Linux build proves native Linux build compatibility only. It is not a
 Windows-on-Arm WSL runtime proof. Publication gate: native amd64 CI and real Windows import
 must both pass before release. Windows-on-Arm remains a separate runtime gate.
+
+## One-command setup and update
+
+`setup.ps1` and `update.ps1` drive everything the next two sections describe by
+hand. Both read one operator-owned host configuration, download every release
+asset they need, verify each one against `checksums.txt` from the same release
+before it is used, and drive `openhands-overlay` inside the distribution. Both
+require elevated PowerShell. Both dot-source `common.ps1`, so take all three
+from the same release:
+`https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/setup.ps1`,
+`https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/update.ps1`,
+and `common.ps1` beside them.
+
+The configuration lives at `%ProgramData%\openhands-worker\worker.json` unless
+`-Config` says otherwise. It is host-specific and never committed. `distro`
+defaults to `openhands-worker`, `arch` is auto-detected, `release` may be a tag
+or `latest`, and every other key is mandatory. `profile` is either a release
+asset name, an HTTPS URL, or a local path; a release asset is downloaded and
+verified like every other asset.
+
+`profileCommon` is optional and names the shared profile release asset, default
+`profile-common.json`. It is applied only when `checksums.txt` of the resolved
+release lists it, so a host pinned to an older release that predates the shared
+profile keeps working with its host profile alone. When it is present, both
+setup and update stage it at `/etc/openhands/profile-common.json` and pass it to
+`openhands-overlay settings` before the host profile, so the host profile wins on
+every key it sets.
+
+This is the towerr configuration:
+
+```json
+{
+  "distro": "openhands-worker",
+  "release": "latest",
+  "remoteAddresses": ["10.254.0.10", "10.254.0.11", "10.254.0.99", "192.168.63.57"],
+  "vault": { "url": "https://vlt.h-cloud.io", "email": "agent-worker@harke.me" },
+  "items": {
+    "crt": "2924548c-ec74-4fd3-9181-b303cd574dbb",
+    "key": "a9e6c601-77b3-47b6-980d-493743b7d7da",
+    "api": "b9ba25a8-0b4f-45ef-9236-2504c2ba807c",
+    "pat": "28226043-0a70-4d54-bfb8-592086a319c0",
+    "ca": "cf9ec766-c260-4e7d-abe0-3299745b57b4"
+  },
+  "origins": ["https://orc.ai.h-cloud.lan"],
+  "profile": "profile-towerr.json",
+  "profileCommon": "profile-common.json"
+}
+```
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 -Release latest
+```
+
+`setup.ps1` resolves the release, verifies the assets, refuses to touch an
+existing distribution unless `-Replace` is passed, runs `install.ps1`,
+`firewall.ps1`, and `keepalive.ps1`, then pushes the release `openhands-overlay`
+and the settings profile into the distribution and runs `ca`, `secrets`,
+`github`, `origin`, `enable`, `settings`, `verify`, and `status` in that order.
+`enable` precedes `settings` because the profile is applied through the running
+backend at `http://127.0.0.1:8000`. `-Replace` delegates to `update.ps1 -Force`.
+
+`update.ps1` compares `/etc/openhands/release` with the target version and stops
+at "already at" unless `-Force` is passed; a missing marker counts as older than
+every release, and a newer installed version is refused without `-Force`. It
+exports the agent state with `openhands-overlay state export`, imports the new
+image as `openhands-worker-next`, waits for that distribution to finish booting,
+and provisions that staging distribution. The wait polls
+`systemctl is-system-running` in the staging distribution every two seconds for
+up to 120 seconds and continues on `running` or `degraded`, because a freshly
+imported distribution answers the first overlay call before systemd has finished
+starting nginx and the backend.
+completely. The old distribution is terminated only when the staging one is
+ready to bind TCP/443, and it is unregistered only after the staging
+distribution has passed `enable`, `settings`, and `verify`. The swap then
+renames the staging distribution by writing the `DistributionName` value under
+`HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss\{guid}`, which avoids
+a multi-gigabyte export and re-import. Any failure before the unregister removes
+`openhands-worker-next`, restarts the old distribution, and exits non-zero, so
+the worker either updates or stays exactly as it was. Afterwards `keepalive.ps1`
+and `firewall.ps1` re-run, and `enable` and `status` confirm the result. The
+state archive of the last run is kept in `%TEMP%\openhands-worker`.
+
+`update.ps1 -Schedule` registers a hidden weekly scheduled task for the current
+user that runs `update.ps1 -Release latest` against the same `worker.json`, and
+exits without updating. The task runs with the highest available privileges
+because the update needs the same elevation an interactive run needs.
+
+Security notes. The Vaultwarden master password is read once with `Read-Host
+-AsSecureString` (or supplied as a `-VaultPassword` SecureString) and stored
+DPAPI-protected as an `Export-Clixml` `PSCredential` at
+`%LOCALAPPDATA%\openhands-worker\vault.cred`, so only the same Windows user on
+the same machine can decrypt it. It reaches the distribution only on stdin of
+`wsl.exe ... openhands-overlay <command> --password-stdin`, written as exact
+bytes through a redirected `System.Diagnostics.Process` stream; it is never a
+command-line argument and never written unencrypted. The state archive is moved
+the same way: `state export` is captured from a redirected stdout stream to a
+file and `state import` is fed from a file stream, so no PowerShell pipeline
+re-encodes the bytes. Every asset, including the settings profile and the
+`.wsl` image, is checked against `checksums.txt` before it is used, and a
+mismatch aborts before any state changes.
 
 ## Windows import and host overlay
 
@@ -154,9 +256,11 @@ Keepalive, elevated PowerShell. WSL idle-stops a distribution about ten seconds
 after the last `wsl.exe` session ends, taking nginx and the backend with it.
 `keepalive.ps1` from the same release,
 `https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/keepalive.ps1`,
-registers a hidden scheduled task for the current user that runs
-`wsl.exe -d openhands-worker --user root --exec /bin/sleep infinity` at logon
-with no execution time limit and starts it immediately. The host must log the
+registers a scheduled task for the current user that runs
+`wsl.exe -d openhands-worker --user root --exec /bin/sleep infinity` inside a
+hidden PowerShell host at logon, with no execution time limit, and starts it
+immediately. No console window exists to close. Re-running the script stops the
+previous instance first, so a replaced distro is held by a fresh session. The host must log the
 operator on (or auto-logon) for the worker to come back after a reboot.
 
 ```powershell
@@ -211,6 +315,203 @@ only needed if `secrets` has not configured `rbw` yet.
 wsl.exe -d openhands-worker -u root -- openhands-overlay github --pat-id <uuid>
 ```
 
+Unattended runs replace the interactive prompt. `secrets`, `github`, `ca`, and
+`settings` accept `--password-stdin`, which reads the Vaultwarden master
+password as one line from stdin. Nothing else changes: the password still lives
+only in the root-owned tmpfs file for the duration of the transient unit, and an
+empty password is refused.
+
+```powershell
+$password | wsl.exe -d openhands-worker -u root -- openhands-overlay settings --file /etc/openhands/towerr.json --password-stdin
+```
+
+`openhands-overlay settings --file <profile>.json` applies a declarative
+per-backend profile to the local Agent Canvas backend through the ingress at
+`http://127.0.0.1:8000`, authenticating with the
+`/etc/credstore/local_backend_api_key` value in the `X-Session-API-Key` header.
+Repository profiles live in `openhands/profiles/`, documented by
+`openhands/profiles/README.md`. `openhands/profiles/common.json` holds what every
+host shares and `openhands/profiles/towerr.json` holds what is specific to one
+host. Every section is optional:
+
+| Section | Effect |
+|---|---|
+| `llm` | `model`, `base_url`, `api_key_item` through `PATCH /api/settings` |
+| `agent` | `kind`, `acp_server`, `acp_command`, `acp_model` through the same PATCH |
+| `secrets` | one `PUT /api/settings/secrets` per named secret |
+| `skills` | `POST /api/skills/install` for a skill that is not installed yet |
+| `mcp_servers` | `POST /api/settings/mcp/<key>` for a new server, `PATCH /api/settings/mcp/<key>` for one that drifted |
+| `git_sync` | `PUT /api/automation/v1/git-sync/config` |
+| `agents` | a root `apm.yml` for omni plus `omni agents sync` |
+
+### Profile layering
+
+`--file` may be repeated, and the files are layered left to right:
+
+```sh
+openhands-overlay settings --file /etc/openhands/profile-common.json --file /etc/openhands/profile.json
+```
+
+`llm`, `agent`, `git_sync`, and `agents` merge per key, so a later file overrides
+only the keys it sets and inherits the rest. `secrets` merges by secret name,
+`mcp_servers` by server key, and `skills` by `repo_path`; in all three a later
+file replaces the entry that shares a key and adds the ones that do not. Every
+file is validated on its own before the merge, and cross-section references are
+checked on the merged result, so an `mcp_servers` header that names a secret
+declared in an earlier file resolves while one that names an undeclared secret is
+refused.
+
+The release publishes each `openhands/profiles/*.json` as `profile-<name>.json`,
+so `common.json` ships as `profile-common.json` and `towerr.json` as
+`profile-towerr.json`.
+
+### mcp_servers
+
+Each key is one MCP server on the OpenHands agent. A remote server sets `url` and
+may set `headers`; a stdio server sets `command` and may set `args`. The two
+shapes are mutually exclusive. A header value is either a literal string or
+`{"secret": "NAME"}`, which resolves to the Canvas secret of that name, so the
+material stays in the vault and reaches the header without ever being written
+into a profile:
+
+```json
+{
+  "secrets": { "LITELLM_API": { "item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57" } },
+  "mcp_servers": {
+    "litellm-tools": {
+      "url": "https://api.ai.h-cloud.lan/mcp/",
+      "headers": { "x-litellm-api-key": { "secret": "LITELLM_API" } }
+    },
+    "openaiDeveloperDocs": { "url": "https://developers.openai.com/mcp" }
+  }
+}
+```
+
+The overlay reads `agent_settings.mcp_config` from `GET /api/settings` with
+`X-Expose-Secrets: plaintext` and writes only the difference: a server the
+backend does not know is created with `POST /api/settings/mcp/<key>`, one whose
+url, transport, headers, command, or args drifted is corrected with a sparse
+`PATCH /api/settings/mcp/<key>`, and one that already matches is left alone.
+Servers the backend holds but the profile does not name are never touched.
+
+### agents
+
+The `agents` section names the APM package that owns the agent's plugins, and
+which harnesses they deploy to:
+
+```json
+{
+  "agents": {
+    "repo": "lkshrk/dotfiles",
+    "ref": "main",
+    "path": "apm/ai-plugins",
+    "targets": ["claude", "codex"]
+  }
+}
+```
+
+`repo` is an `owner/name` shorthand or an absolute HTTPS git URL, `path` a
+relative path inside it, and `targets` a non-empty list of harness names. The
+overlay renders those four values into the omni root manifest at
+`/home/agent/.config/omni/apm.yml`, which depends on the shared package and
+declares the targets:
+
+```yaml
+name: openhands-worker
+version: 1.0.0
+dependencies:
+  apm:
+  - git: lkshrk/dotfiles
+    path: apm/ai-plugins
+    ref: main
+targets:
+- claude
+- codex
+```
+
+This is the same layout the user's Macs run, so the worker and the workstations
+converge on one shared package. The shared `ai-plugins` package declares no
+targets of its own; the root manifest owns that choice.
+
+The overlay then runs `omni agents sync` in `/home/agent`. Both steps run as the
+`agent` user through `runuser`, with `HOME=/home/agent` and
+`/home/agent/.local/bin` on `PATH`, so nothing the agent later runs is
+root-owned. The manifest is rewritten only when its content differs, and the
+apply prints `agents applied: synced` or `agents unchanged` plus the number of
+targets. `omni agents sync` is the reconciliation and runs either way; it is
+idempotent through omni's own lock and needs no confirmation flag.
+
+`omni agents sync` shells out to `apm`, so it fails with
+`apm executable not found` unless `apm` is on the agent's `PATH`. The image
+therefore pins `apm-cli` to `0.29.0`, installed with `uv tool install` into
+`/home/agent/.local/share/uv/tools` with its entry point at
+`/home/agent/.local/bin/apm`; the smoke stage asserts that version. Without the
+pin omni would resolve some other version through its own provider.
+
+`omni agents sync` installs the global APM workspace under `/home/agent/.apm`
+(`apm.yml`, `apm_modules/`, `apm.lock.yaml`), records its template state under
+`/home/agent/.local/state/omni`, and deploys the resolved primitives into
+`/home/agent/.claude` (skills, agents, commands, hooks, `settings.json`) and
+`/home/agent/.codex` (agents, hooks, `config.toml`). Those two directories are
+already part of `state export`, so a distribution swap carries them across and
+the next sync reconciles whatever changed upstream.
+
+### How the pieces connect
+
+`apm/ai-plugins/apm.yml` in the dotfiles repository is the single source of truth
+for agent plugins, MCP servers, and LSP servers. `omni agents sync` deploys them
+into `/home/agent/.claude` and `/home/agent/.codex`, where the ACP subprocesses
+(Claude Code and Codex) read them. Its remote MCP entries reference credentials
+by environment variable, for example `${env:LITELLM_API}`.
+
+`LITELLM_API` is declared once in `openhands/profiles/common.json` and applied as
+a Canvas secret. Canvas secrets are exported into the environment of the ACP
+subprocesses, which is what resolves `${env:LITELLM_API}` for the plugins omni
+deployed. The same secret is resolved a second time, in the overlay, into the
+`x-litellm-api-key` header of the `litellm-tools` entry in `mcp_servers`, which
+is what gives the OpenHands agent itself the same LiteLLM tools. One vault item
+therefore reaches both consumers, and neither the profile nor the dotfiles
+repository ever holds the key.
+
+`GH_TOKEN` follows the same route for a different purpose. It is declared in the
+host profile, resolved from the worker's GitHub PAT vault item, and reaches the
+ACP subprocess environment, so `gh` and direct GitHub API calls work inside a
+conversation. Git over HTTPS does not need it; that already works through the
+credential store `openhands-overlay github` installs.
+
+Every `*_item` value is a Vaultwarden item UUID. All of them are fetched inside
+one transient vault session, staged in a root-only tmpfs directory, used, and
+deleted. Unknown keys and non-UUID item ids are refused, so a profile carrying a
+`TODO` placeholder documents its shape without applying anything. The tool reads
+current state before each write and skips any value that already matches, so a
+second run changes nothing. Secret values are never printed; each section prints
+one line.
+
+The LAN gateway `api.ai.h-cloud.lan` presents a certificate issued by the LAN
+CA, so the worker must trust that CA before `llm.base_url` is reachable.
+`openhands-overlay ca --item <uuid>` fetches the PEM certificate from the vault
+item's notes, installs it as
+`/usr/local/share/ca-certificates/openhands-lan-ca.crt` (`root:root`, mode
+`0644`), and runs `update-ca-certificates`.
+
+`openhands-overlay state export` writes a gzip tar of `/home/agent/.openhands`,
+`.claude`, `.codex`, `.git-credentials`, `.gitconfig`, and
+`/var/lib/openhands/overlay` to stdout with `--numeric-owner` and nothing else;
+progress goes to stderr. `/home/agent/.claude` and `.codex` carry what
+`omni agents sync` deployed, and `/var/lib/openhands/overlay` carries the
+git-sync token digest, so a replacement distribution does not rewrite a token
+that has not changed.
+`openhands-overlay state import` reads that tar from stdin, extracts it under
+`/`, restores `agent:agent` ownership with the `0700` directory and `0600`
+credential modes under `/home/agent`, and restores `root:root` with `0700` on
+`/var/lib/openhands/overlay` and `0600` on the token digest. That is the supported way to move agent authentication onto a
+replacement distribution.
+
+```powershell
+wsl.exe -d openhands-worker -u root -- openhands-overlay state export > worker-state.tar.gz
+wsl.exe -d openhands-worker -u root -- openhands-overlay state import < worker-state.tar.gz
+```
+
 Every image carries `/etc/openhands/release` with `openhands-worker <version>`
 (`ci-<sha>` for validation builds, `dev` for untagged local builds), stamped
 through the `OPENHANDS_WORKER_VERSION` build argument. `openhands-overlay
@@ -223,6 +524,14 @@ OpenHands/automation#422). The WSL image ships `openhands-run-prune.timer`,
 enabled by `openhands-overlay enable`, which removes run directories older than
 24 hours every hour as `agent`. Drop it once the image carries an
 `openhands-automation` with `AUTOMATION_WORKSPACE_RETENTION_SECONDS`.
+
+Before proposing outbound restrictions, measure what the worker actually
+talks to: `openhands-overlay egress --minutes 30` samples established TCP
+connections from `/proc/net/tcp` every few seconds and prints one line per
+destination and port with a sample count, reverse name, and `lan` or
+`internet` scope. Loopback and link-local are excluded. Run it while real
+Claude Code and Codex tasks execute so the allowlist comes from observed
+traffic.
 
 `openhands-overlay verify` checks files, ownership, modes, that the private
 key matches the certificate, and `nginx -t`. `openhands-overlay enable`

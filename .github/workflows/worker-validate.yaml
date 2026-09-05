@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/worker-validate.yaml
       - .github/workflows/worker-release.yaml
+      - openhands/profiles/**
       - worker/**
 
 permissions:
@@ -18,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Run deterministic validation
         shell: bash
@@ -40,6 +41,18 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
             pwsh -NoProfile -File worker/tests/keepalive.Tests.ps1
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File worker/tests/setup.Tests.ps1
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File worker/tests/update.Tests.ps1
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File worker/tests/compat.Tests.ps1
           find worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
           shellcheck worker/rootfs/usr/local/sbin/openhands-overlay worker/rootfs-oci/usr/local/sbin/container-entrypoint
 
@@ -58,10 +71,10 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Validate build definition
         run: bash worker/tests/image.Tests.sh

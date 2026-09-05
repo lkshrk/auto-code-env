@@ -1,0 +1,16 @@
+{
+  "vars": {
+    "DRY_RUN": "true",
+    "MAX_UPGRADES_PER_RUN": "3"
+  },
+  "expect": [
+    "^\\S+\\s+\\S+ -> \\S+\\s+(would-apply|would-ask|skipped:\\S+)",
+    "(?i)\\btotal\\b"
+  ],
+  "forbid": [
+    "(?i)\\bpushed\\b",
+    "(?i)\\bissue #\\d+ (opened|created)\\b",
+    "(?i)\\bapplied\\b(?! this run)",
+    "ghp_[A-Za-z0-9]{20,}"
+  ]
+}

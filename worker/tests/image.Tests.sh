@@ -65,12 +65,34 @@ assert(dockerignore == [
   'releases/download/openhands-worker-v<version>/install.ps1',
   'releases/download/openhands-worker-v<version>/firewall.ps1',
   'releases/download/openhands-worker-v<version>/keepalive.ps1',
+  'releases/download/openhands-worker-v<version>/setup.ps1',
+  'releases/download/openhands-worker-v<version>/update.ps1',
   'releases/download/openhands-worker-v<version>/openhands-overlay',
   'idle-stops',
   'openhands-overlay secrets',
   'openhands-overlay enable',
   'openhands-overlay origin',
   'openhands-overlay github',
+  'openhands-overlay egress',
+  'openhands-overlay settings',
+  'openhands-overlay state',
+  'openhands-overlay ca',
+  '--password-stdin',
+  'openhands/profiles/',
+  'One-command setup and update',
+  'setup.ps1',
+  'update.ps1',
+  'common.ps1',
+  'worker.json',
+  'profile-towerr.json',
+  'vault.cred',
+  '-Schedule',
+  '-Replace',
+  'DPAPI',
+  'openhands-worker-next',
+  'DistributionName',
+  'X-Session-API-Key',
+  '/usr/local/share/ca-certificates/openhands-lan-ca.crt',
   'openhands-run-prune.timer',
   'automation-runs',
   '/etc/openhands/release',
@@ -102,7 +124,13 @@ assert(dockerignore == [
   'Windows-on-Arm',
   'PR #16635',
   'OpenHands issue #16217',
-  'Publication gate: native amd64 CI and real Windows import'
+  'Publication gate: native amd64 CI and real Windows import',
+  'profile-common.json',
+  'profileCommon',
+  'mcp_servers',
+  'omni agents sync',
+  'apm.yml',
+  'is-system-running'
 ].each do |phrase|
   assert(readme.include?(phrase), "README must document #{phrase.inspect}")
 end
@@ -114,8 +142,9 @@ native_matrix = [
 assert(trigger(validation).dig('pull_request', 'paths') == [
   '.github/workflows/worker-validate.yaml',
   '.github/workflows/worker-release.yaml',
+  'openhands/profiles/**',
   'worker/**'
-], 'validation paths must be worker-only')
+], 'validation paths must cover the worker and its released profiles')
 assert(validation['permissions'] == { 'contents' => 'read' }, 'validation permissions must be read-only')
 validate = validation.fetch('jobs').fetch('validate')
 assert(validate.dig('strategy', 'matrix', 'include') == native_matrix, 'validation must use exact native matrix')
@@ -126,7 +155,8 @@ assert(validation_export.include?('build-wsl.sh'), 'validation must export WSL i
 checks = validation.fetch('jobs').fetch('checks-amd64')
 assert(checks['runs-on'] == 'ubuntu-24.04', 'deterministic checks must run on amd64')
 checks_run = run(checks, 'Run deterministic validation')
-%w[provision.Tests.sh runtime.Tests.sh image.Tests.sh overlay.Tests.sh install.Tests.ps1 firewall.Tests.ps1 keepalive.Tests.ps1].each do |test|
+%w[provision.Tests.sh runtime.Tests.sh image.Tests.sh overlay.Tests.sh install.Tests.ps1 firewall.Tests.ps1
+   keepalive.Tests.ps1 setup.Tests.ps1 update.Tests.ps1 compat.Tests.ps1].each do |test|
   assert(checks_run.include?(test), "deterministic checks must run #{test}")
 end
 assert(checks_run.match?(%r{mcr\.microsoft\.com/powershell@sha256:[0-9a-f]{64}}), 'PowerShell test image must be digest-pinned')
@@ -182,8 +212,19 @@ assert(prepare.include?('gh release upload "$tag" --clobber'), 'draft asset uplo
 assert(prepare.include?('cp worker/windows/install.ps1 release/install.ps1'), 'release must stage the installer from the tagged tree')
 assert(prepare.include?('cp worker/windows/firewall.ps1 release/firewall.ps1'), 'release must stage the firewall script from the tagged tree')
 assert(prepare.include?('cp worker/windows/keepalive.ps1 release/keepalive.ps1'), 'release must stage the keepalive script from the tagged tree')
+assert(prepare.include?('cp worker/windows/common.ps1 release/common.ps1'), 'release must stage the shared host helpers from the tagged tree')
+assert(prepare.include?('cp worker/windows/setup.ps1 release/setup.ps1'), 'release must stage the setup script from the tagged tree')
+assert(prepare.include?('cp worker/windows/update.ps1 release/update.ps1'), 'release must stage the update script from the tagged tree')
 assert(prepare.include?('cp worker/rootfs/usr/local/sbin/openhands-overlay release/openhands-overlay'), 'release must stage the overlay tool from the tagged tree')
-assert(prepare.include?('sha256sum install.ps1 firewall.ps1 keepalive.ps1 openhands-overlay >> checksums.txt'), 'release checksums must cover every host script and the overlay tool')
+assert(prepare.include?('for source in openhands/profiles/*.json; do'), 'release must stage every settings profile from the tagged tree')
+assert(prepare.include?('asset="profile-$(basename "$source")"'), 'each settings profile must be published as profile-<name>.json')
+assert(prepare.include?('test "${#profiles[@]}" -gt 0'), 'release must refuse to publish without a settings profile')
+assert(prepare.include?('sha256sum install.ps1 firewall.ps1 keepalive.ps1 common.ps1 setup.ps1 update.ps1 openhands-overlay "${profiles[@]}" >> checksums.txt'), 'release checksums must cover every host script, the overlay tool, and every profile')
+assert(prepare.include?('"${profiles[@]/#/release/}"'), 'draft upload must include every staged profile')
+assert(prepare.scan(/"\$\{profiles\[@\]\}"/).length >= 2, 'profiles must be checksummed and verified like every other asset')
+['setup.ps1', 'update.ps1', 'common.ps1'].each do |script|
+  assert(prepare.scan(/"?#{Regexp.escape(script)}"?/).length >= 4, "#{script} must be uploaded and verified like every other asset")
+end
 assert(prepare.scan(/"?openhands-overlay"?/).length >= 4, 'overlay tool must be uploaded and verified like every other asset')
 assert(prepare.scan(/"?keepalive\.ps1"?/).length >= 4, 'keepalive script must be uploaded and verified like every other asset')
 assert(prepare.scan(/"?firewall\.ps1"?/).length >= 4, 'firewall script must be uploaded and verified like every other asset')

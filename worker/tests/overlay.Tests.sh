@@ -4,18 +4,19 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 overlay="$repo_root/worker/rootfs/usr/local/sbin/openhands-overlay"
-fixture_image=auto-code-env-wsl-overlay-fixture:ubuntu-26.04
+fixture_image=auto-code-env-wsl-overlay-fixture:ubuntu-26.04-python3
 
 test -f "$overlay"
 grep -Fq 'LoadCredential=rbw_master:' "$overlay"
 grep -Fq 'rbw purge' "$overlay"
 grep -Fq 'systemd-ask-password --echo=no' "$overlay"
+grep -Fq -- '--password-stdin' "$overlay"
 if grep -Eq 'echo .*\$OVERLAY_|printf .*tls\.key' "$overlay"; then exit 1; fi
 
 if ! docker image inspect "$fixture_image" >/dev/null 2>&1; then
   printf '%s\n' \
     'FROM ubuntu:26.04' \
-    'RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*' |
+    'RUN apt-get update && apt-get install -y --no-install-recommends openssl python3 && rm -rf /var/lib/apt/lists/*' |
     docker build --quiet --tag "$fixture_image" -
 fi
 
@@ -23,7 +24,7 @@ script=$(cat <<'INNER'
 set -euo pipefail
 umask 022
 shim=/tmp/shim
-mkdir -p "$shim" /tmp/log /usr/local/libexec /etc/nginx && chmod 1777 /tmp/log
+mkdir -p "$shim" /tmp/log /usr/local/libexec /etc/nginx && chmod 1777 /tmp/log && touch /tmp/log/omni /tmp/log/git && chmod 666 /tmp/log/omni /tmp/log/git
 install -m 0755 /src/worker/rootfs/usr/local/sbin/openhands-overlay /usr/local/sbin/openhands-overlay
 userdel -r ubuntu 2>/dev/null || true; useradd -m -u 1000 -s /bin/bash agent
 mkdir -p /etc/openhands && printf 'openhands-worker 9.9.9-test\n' > /etc/openhands/release
@@ -53,6 +54,11 @@ case "$1" in
       "get --field notes 33333333-3333-3333-3333-333333333333") cat /tmp/other.key ;;
       "get 44444444-4444-4444-4444-444444444444") cat /tmp/fixture.api; echo ;;
       "get 55555555-5555-5555-5555-555555555555") printf 'ghp_FIXTURETOKEN0000000000000000000000\n' ;;
+      "get 66666666-6666-6666-6666-666666666666") printf 'sk-llm-FIXTUREKEY111111111111\n' ;;
+      "get 77777777-7777-7777-7777-777777777777") printf 'sk-ant-FIXTUREANTHROPIC22222\n' ;;
+      "get 88888888-8888-8888-8888-888888888888") printf 'ghs_FIXTUREGITSYNCTOKEN33333\n' ;;
+      "get --field notes 99999999-9999-9999-9999-999999999999") cat /tmp/fixture.crt ;;
+      "get --field notes aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa") printf 'not a certificate\n' ;;
       *) echo "unknown item $*" >&2; exit 1 ;;
     esac ;;
   *) echo "unexpected rbw $*" >&2; exit 1 ;;
@@ -95,6 +101,11 @@ cat > "$shim/git" <<'EOF'
 echo "git $*" >> /tmp/log/git
 EOF
 
+cat > "$shim/omni" <<'EOF'
+#!/bin/sh
+echo "omni $* user=$(id -un) dir=$(pwd) home=$HOME path=$PATH" >> /tmp/log/omni
+EOF
+
 cat > "$shim/systemctl" <<'EOF'
 #!/bin/sh
 echo "systemctl $*" >> /tmp/log/systemctl
@@ -104,6 +115,158 @@ case "$1" in
   *) exit 1 ;;
 esac
 EOF
+cat > "$shim/update-ca-certificates" <<'EOF'
+#!/bin/sh
+echo "update-ca-certificates $*" >> /tmp/log/update-ca-certificates
+test -r /usr/local/share/ca-certificates/openhands-lan-ca.crt
+EOF
+
+cat > "$shim/curl" <<'EOF'
+#!/usr/bin/python3
+import json
+import os
+import sys
+
+STATE = "/tmp/api/state.json"
+LOG = "/tmp/log/curl"
+BODIES = "/tmp/log/curl-bodies"
+
+arguments = sys.argv[1:]
+config = method = url = output = None
+headers = []
+body = None
+index = 0
+while index < len(arguments):
+    flag = arguments[index]
+    if flag == "--config":
+        config = arguments[index + 1]
+    elif flag == "--request":
+        method = arguments[index + 1]
+    elif flag == "--url":
+        url = arguments[index + 1]
+    elif flag == "--output":
+        output = arguments[index + 1]
+    elif flag == "--header":
+        headers.append(arguments[index + 1])
+    elif flag == "--data-binary":
+        body = json.load(open(arguments[index + 1][1:]))
+    elif flag == "--write-out":
+        pass
+    else:
+        sys.stderr.write("unexpected curl argument %s\n" % flag)
+        raise SystemExit(2)
+    index += 2
+
+expected = open("/etc/credstore/local_backend_api_key").read().strip()
+if 'header = "X-Session-API-Key: %s"' % expected not in open(config).read():
+    sys.stderr.write("curl config is missing the session API key header\n")
+    raise SystemExit(3)
+for argument in arguments:
+    if expected in argument:
+        sys.stderr.write("session API key reached the curl argv\n")
+        raise SystemExit(4)
+
+prefix = "http://127.0.0.1:8000"
+if not url.startswith(prefix):
+    sys.stderr.write("unexpected url %s\n" % url)
+    raise SystemExit(5)
+path = url[len(prefix):]
+
+with open(LOG, "a") as handle:
+    handle.write("%s %s\n" % (method, path))
+if body is not None:
+    with open(BODIES, "a") as handle:
+        handle.write("%s %s %s\n" % (method, path, json.dumps(body, sort_keys=True)))
+
+state = json.load(open(STATE))
+
+
+def merge(destination, source):
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(destination.get(key), dict):
+            merge(destination[key], value)
+        else:
+            destination[key] = value
+
+
+def settings_response(expose):
+    agent = json.loads(json.dumps(state["agent_settings"]))
+    if expose != "plaintext" and "llm" in agent and "api_key" in agent["llm"]:
+        agent["llm"]["api_key"] = "**********"
+    return {"agent_settings": agent, "llm_api_key_is_set": True}
+
+
+expose = None
+for header in headers:
+    if header.lower().startswith("x-expose-secrets:"):
+        expose = header.split(":", 1)[1].strip()
+
+code = "200"
+payload = ""
+if method == "GET" and path == "/api/settings":
+    payload = json.dumps(settings_response(expose))
+elif method == "PATCH" and path == "/api/settings":
+    merge(state["agent_settings"], body["agent_settings_diff"])
+    payload = json.dumps(settings_response(None))
+elif method == "GET" and path.startswith("/api/settings/secrets/"):
+    name = path.rsplit("/", 1)[1]
+    if name in state["secrets"]:
+        payload = state["secrets"][name]
+    else:
+        code = "404"
+        payload = json.dumps({"detail": "Secret not found"})
+elif method == "PUT" and path == "/api/settings/secrets":
+    state["secrets"][body["name"]] = body["value"]
+    payload = json.dumps({"name": body["name"]})
+elif method == "POST" and path.startswith("/api/settings/mcp/"):
+    name = path.rsplit("/", 1)[1]
+    servers = state["agent_settings"].setdefault("mcp_config", {})
+    if name in servers:
+        code = "409"
+        payload = json.dumps({"detail": "MCP server '%s' already exists" % name})
+    else:
+        entry = dict(body)
+        entry.setdefault("enabled", True)
+        servers[name] = entry
+        code = "201"
+        payload = json.dumps(settings_response(None))
+elif method == "PATCH" and path.startswith("/api/settings/mcp/"):
+    name = path.rsplit("/", 1)[1]
+    servers = state["agent_settings"].setdefault("mcp_config", {})
+    if name not in servers:
+        code = "404"
+        payload = json.dumps({"detail": "MCP server '%s' was not found" % name})
+    else:
+        merge(servers[name], body)
+        payload = json.dumps(settings_response(None))
+elif method == "GET" and path == "/api/skills/installed":
+    payload = json.dumps({"skills": state["skills"]})
+elif method == "POST" and path == "/api/skills/install":
+    entry = {
+        "name": (body.get("repo_path") or body["source"]).rsplit("/", 1)[-1],
+        "source": body["source"],
+        "repo_path": body.get("repo_path"),
+        "ref": body.get("ref"),
+    }
+    state["skills"].append(entry)
+    payload = json.dumps(entry)
+elif method == "GET" and path == "/api/automation/v1/git-sync/status":
+    payload = json.dumps(state["git_sync"])
+elif method == "PUT" and path == "/api/automation/v1/git-sync/config":
+    if "token" in body:
+        state["git_sync_token"] = body["token"]
+    merge(state["git_sync"], {k: v for k, v in body.items() if k != "token"})
+    payload = json.dumps(state["git_sync"])
+else:
+    sys.stderr.write("unexpected request %s %s\n" % (method, path))
+    raise SystemExit(6)
+
+json.dump(state, open(STATE, "w"))
+with open(output, "w") as handle:
+    handle.write(payload)
+sys.stdout.write(code)
+EOF
+
 chmod 0755 "$shim"/*
 export PATH="$shim:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -172,6 +335,311 @@ run secrets --vault-url https://vault.example --email a@b \
   --api-id 44444444-4444-4444-4444-444444444444 >/dev/null 2>/tmp/mismatch || true
 grep -Fq 'private key does not match certificate' /tmp/mismatch
 if run enable >/dev/null 2>&1; then echo 'enable must refuse a mismatched key'; exit 1; fi
+cat > "$shim/systemd-ask-password" <<'EOF'
+#!/bin/sh
+echo 'systemd-ask-password must not run with --password-stdin' >&2
+exit 1
+EOF
+chmod 0755 "$shim/systemd-ask-password"
+
+if printf '' | run github --pat-id 55555555-5555-5555-5555-555555555555 --password-stdin >/dev/null 2>&1; then echo 'empty stdin password must be rejected'; exit 1; fi
+
+printf 'hunter2' | run secrets --password-stdin \
+  --crt-id 11111111-1111-1111-1111-111111111111 \
+  --key-id 22222222-2222-2222-2222-222222222222 \
+  --api-id 44444444-4444-4444-4444-444444444444 | grep -Fq 'overlay verified'
+cmp -s /tmp/fixture.key /etc/nginx/tls/tls.key
+rm -f /home/agent/.git-credentials
+printf 'hunter2' | run github --pat-id 55555555-5555-5555-5555-555555555555 --password-stdin | grep -Fq 'github credential installed for agent'
+grep -Fxq 'https://x-access-token:ghp_FIXTURETOKEN0000000000000000000000@github.com' /home/agent/.git-credentials
+
+mkdir -p /tmp/api
+cat > /tmp/api/state.json <<'EOF'
+{
+  "agent_settings": {
+    "agent_kind": "openhands",
+    "llm": {"model": "stale/model", "base_url": "https://stale.example/v1", "api_key": "stale-key"},
+    "mcp_config": {}
+  },
+  "secrets": {},
+  "skills": [],
+  "git_sync": {"enabled": false, "repo_url": "", "branch": "common", "path": "common/automations", "interval_seconds": 900}
+}
+EOF
+
+cat > /tmp/common.json <<'EOF'
+{
+  "llm": {
+    "model": "common/model",
+    "base_url": "https://common.example/v1"
+  },
+  "secrets": {
+    "ANTHROPIC_API_KEY": {"item": "77777777-7777-7777-7777-777777777777"},
+    "LITELLM_API": {"item": "66666666-6666-6666-6666-666666666666"}
+  },
+  "skills": [
+    {
+      "source": "https://github.com/lkshrk/auto-code-env.git",
+      "ref": "common",
+      "repo_path": "openhands/skills/agent-sandbox-deploy"
+    },
+    {
+      "source": "https://github.com/lkshrk/auto-code-env.git",
+      "ref": "main",
+      "repo_path": "openhands/skills/common-only"
+    }
+  ],
+  "mcp_servers": {
+    "litellm-tools": {
+      "url": "https://api.ai.h-cloud.lan/mcp/",
+      "headers": {"x-litellm-api-key": {"secret": "LITELLM_API"}}
+    },
+    "openaiDeveloperDocs": {"url": "https://developers.openai.com/mcp"},
+    "local-notes": {"command": "notes-mcp", "args": ["--stdio"]}
+  },
+  "agents": {
+    "repo": "lkshrk/dotfiles",
+    "ref": "main",
+    "path": "apm/ai-plugins",
+    "targets": ["claude", "codex"]
+  },
+  "git_sync": {
+    "repo_url": "https://github.com/lkshrk/auto-code-env.git",
+    "branch": "common",
+    "path": "common/automations",
+    "interval_seconds": 900
+  }
+}
+EOF
+
+cat > /tmp/profile.json <<'EOF'
+{
+  "llm": {
+    "model": "openai/gpt-5.6-sol",
+    "base_url": "https://api.ai.h-cloud.lan/v1",
+    "api_key_item": "66666666-6666-6666-6666-666666666666"
+  },
+  "agent": {
+    "kind": "acp",
+    "acp_server": "claude-code",
+    "acp_command": "/home/agent/.local/bin/claude-agent-acp",
+    "acp_model": null
+  },
+  "skills": [{
+    "source": "https://github.com/lkshrk/auto-code-env.git",
+    "ref": "main",
+    "repo_path": "openhands/skills/agent-sandbox-deploy"
+  }],
+  "git_sync": {
+    "repo_url": "https://github.com/lkshrk/auto-code-env.git",
+    "branch": "main",
+    "path": "openhands/automations/towerr",
+    "token_item": "88888888-8888-8888-8888-888888888888",
+    "interval_seconds": 0
+  }
+}
+EOF
+
+if printf 'hunter2' | run settings --file /src/openhands/profiles/towerr.json --password-stdin >/dev/null 2>&1; then echo 'placeholder item id must be rejected'; exit 1; fi
+printf '{"nope": {}}' > /tmp/bad-section.json
+if printf 'hunter2' | run settings --file /tmp/bad-section.json --password-stdin >/dev/null 2>&1; then echo 'unknown section must be rejected'; exit 1; fi
+printf '{"llm": {"model": "m", "flavour": "x"}}' > /tmp/bad-key.json
+if printf 'hunter2' | run settings --file /tmp/bad-key.json --password-stdin >/dev/null 2>&1; then echo 'unknown key must be rejected'; exit 1; fi
+printf '{"agent": {"kind": "openhands", "acp_server": "codex"}}' > /tmp/bad-kind.json
+if printf 'hunter2' | run settings --file /tmp/bad-kind.json --password-stdin >/dev/null 2>&1; then echo 'acp keys require agent.kind acp'; exit 1; fi
+printf '{"mcp_servers": {"x": {"url": "https://x.example", "headers": {"h": {"secret": "MISSING"}}}}}' > /tmp/bad-mcp-secret.json
+if printf 'hunter2' | run settings --file /tmp/bad-mcp-secret.json --password-stdin >/dev/null 2>&1; then echo 'an undeclared MCP header secret must be rejected'; exit 1; fi
+printf '{"mcp_servers": {"x": {}}}' > /tmp/bad-mcp-empty.json
+if printf 'hunter2' | run settings --file /tmp/bad-mcp-empty.json --password-stdin >/dev/null 2>&1; then echo 'an MCP server without url or command must be rejected'; exit 1; fi
+printf '{"mcp_servers": {"x": {"url": "https://x.example", "command": "y"}}}' > /tmp/bad-mcp-mixed.json
+if printf 'hunter2' | run settings --file /tmp/bad-mcp-mixed.json --password-stdin >/dev/null 2>&1; then echo 'an MCP server mixing url and command must be rejected'; exit 1; fi
+printf '{"agents": {"repo": "lkshrk/dotfiles", "path": "/etc", "targets": ["claude"]}}' > /tmp/bad-agents-path.json
+if printf 'hunter2' | run settings --file /tmp/bad-agents-path.json --password-stdin >/dev/null 2>&1; then echo 'an absolute agents.path must be rejected'; exit 1; fi
+printf '{"agents": {"repo": "git@github.com:lkshrk/dotfiles.git", "targets": ["claude"]}}' > /tmp/bad-agents-repo.json
+if printf 'hunter2' | run settings --file /tmp/bad-agents-repo.json --password-stdin >/dev/null 2>&1; then echo 'an SSH agents.repo must be rejected'; exit 1; fi
+printf '{"agents": {"repo": "lkshrk/dotfiles", "targets": []}}' > /tmp/bad-agents-targets.json
+if printf 'hunter2' | run settings --file /tmp/bad-agents-targets.json --password-stdin >/dev/null 2>&1; then echo 'an empty agents.targets must be rejected'; exit 1; fi
+printf '{"agents": {"repo": "lkshrk/dotfiles", "targets": ["Claude Code"]}}' > /tmp/bad-agents-target.json
+if printf 'hunter2' | run settings --file /tmp/bad-agents-target.json --password-stdin >/dev/null 2>&1; then echo 'a non-harness agents.targets entry must be rejected'; exit 1; fi
+if run settings --password-stdin >/dev/null 2>&1; then echo 'settings requires at least one --file'; exit 1; fi
+test ! -e /tmp/log/curl
+
+applied=$(printf 'hunter2' | run settings --file /tmp/common.json --file /tmp/profile.json --password-stdin)
+printf '%s\n' "$applied" | grep -Fq 'settings applied: acp_command, acp_server, agent_kind, llm'
+printf '%s\n' "$applied" | grep -Fq 'secrets applied: ANTHROPIC_API_KEY, LITELLM_API'
+printf '%s\n' "$applied" | grep -Fq 'mcp_servers applied: litellm-tools, local-notes, openaiDeveloperDocs'
+printf '%s\n' "$applied" | grep -Fq 'skills applied: agent-sandbox-deploy, common-only'
+printf '%s\n' "$applied" | grep -Fq 'git_sync applied: branch, interval_seconds, path, repo_url, token'
+printf '%s\n' "$applied" | grep -Fxq 'agents applied: synced'
+printf '%s\n' "$applied" | grep -Fxq 'agents targets: 2'
+if printf '%s\n' "$applied" | grep -Eq 'sk-llm|sk-ant|ghs_'; then echo 'secret leaked to stdout'; exit 1; fi
+test ! -e /run/openhands-overlay
+test ! -e /run/openhands-rbw-master
+grep -Fxq 'PATCH /api/settings' /tmp/log/curl
+grep -Fxq 'PUT /api/settings/secrets' /tmp/log/curl
+grep -Fxq 'POST /api/settings/mcp/litellm-tools' /tmp/log/curl
+grep -Fxq 'POST /api/settings/mcp/openaiDeveloperDocs' /tmp/log/curl
+grep -Fxq 'POST /api/settings/mcp/local-notes' /tmp/log/curl
+grep -Fxq 'POST /api/skills/install' /tmp/log/curl
+grep -Fxq 'PUT /api/automation/v1/git-sync/config' /tmp/log/curl
+test "$(grep -c '^GET /api/settings$' /tmp/log/curl)" = 1
+test "$(stat -c '%U:%G %a' /var/lib/openhands/overlay/git-sync-token.sha256)" = 'root:root 600'
+grep -Fq 'omni agents sync user=agent dir=/home/agent home=/home/agent' /tmp/log/omni
+grep -Fq 'path=/home/agent/.local/bin:' /tmp/log/omni
+test "$(grep -c '^omni ' /tmp/log/omni)" = 1
+if grep -Ev '^omni agents sync ' /tmp/log/omni; then echo 'only omni agents sync may run'; exit 1; fi
+test "$(stat -c '%U:%G %a' /home/agent/.config/omni/apm.yml)" = 'agent:agent 644'
+test "$(stat -c '%U:%G %a' /home/agent/.config/omni)" = 'agent:agent 755'
+cat > /tmp/expected-apm.yml <<'EOF'
+name: openhands-worker
+version: 1.0.0
+dependencies:
+  apm:
+  - git: lkshrk/dotfiles
+    path: apm/ai-plugins
+    ref: main
+targets:
+- claude
+- codex
+EOF
+cmp /tmp/expected-apm.yml /home/agent/.config/omni/apm.yml
+python3 - <<'PY'
+import json
+state = json.load(open('/tmp/api/state.json'))
+agent = state['agent_settings']
+assert agent['agent_kind'] == 'acp', agent
+assert agent['acp_server'] == 'claude-code', agent
+assert agent['acp_command'] == ['/home/agent/.local/bin/claude-agent-acp'], agent
+assert agent['llm']['model'] == 'openai/gpt-5.6-sol', agent
+assert agent['llm']['base_url'] == 'https://api.ai.h-cloud.lan/v1', agent
+assert agent['llm']['api_key'] == 'sk-llm-FIXTUREKEY111111111111', agent
+servers = agent['mcp_config']
+assert sorted(servers) == ['litellm-tools', 'local-notes', 'openaiDeveloperDocs'], servers
+assert servers['litellm-tools'] == {
+    'transport': 'http',
+    'url': 'https://api.ai.h-cloud.lan/mcp/',
+    'headers': {'x-litellm-api-key': 'sk-llm-FIXTUREKEY111111111111'},
+    'enabled': True,
+}, servers['litellm-tools']
+assert servers['openaiDeveloperDocs'] == {
+    'transport': 'http',
+    'url': 'https://developers.openai.com/mcp',
+    'enabled': True,
+}, servers['openaiDeveloperDocs']
+assert servers['local-notes'] == {
+    'transport': 'stdio',
+    'command': 'notes-mcp',
+    'args': ['--stdio'],
+    'enabled': True,
+}, servers['local-notes']
+assert state['secrets']['ANTHROPIC_API_KEY'] == 'sk-ant-FIXTUREANTHROPIC22222', state
+assert state['secrets']['LITELLM_API'] == 'sk-llm-FIXTUREKEY111111111111', state
+assert state['git_sync_token'] == 'ghs_FIXTUREGITSYNCTOKEN33333', state
+assert state['git_sync']['path'] == 'openhands/automations/towerr', state
+assert state['git_sync']['branch'] == 'main', state
+assert state['git_sync']['interval_seconds'] == 0, state
+paths = sorted(entry['repo_path'] for entry in state['skills'])
+assert paths == ['openhands/skills/agent-sandbox-deploy', 'openhands/skills/common-only'], state['skills']
+refs = dict((entry['repo_path'], entry['ref']) for entry in state['skills'])
+assert refs['openhands/skills/agent-sandbox-deploy'] == 'main', refs
+assert refs['openhands/skills/common-only'] == 'main', refs
+PY
+
+: > /tmp/log/curl
+: > /tmp/log/omni
+repeated=$(printf 'hunter2' | run settings --file /tmp/common.json --file /tmp/profile.json --password-stdin)
+printf '%s\n' "$repeated" | grep -Fq 'settings unchanged'
+printf '%s\n' "$repeated" | grep -Fq 'secrets applied: none changed'
+printf '%s\n' "$repeated" | grep -Fq 'mcp_servers applied: none changed'
+printf '%s\n' "$repeated" | grep -Fq 'skills applied: none changed'
+printf '%s\n' "$repeated" | grep -Fq 'git_sync unchanged'
+if grep -Eq '^(PATCH|PUT|POST) ' /tmp/log/curl; then echo 'second run must not write'; exit 1; fi
+grep -Fxq 'GET /api/settings' /tmp/log/curl
+printf '%s\n' "$repeated" | grep -Fxq 'agents unchanged'
+printf '%s\n' "$repeated" | grep -Fxq 'agents targets: 2'
+grep -Fq 'omni agents sync user=agent dir=/home/agent' /tmp/log/omni
+cmp /tmp/expected-apm.yml /home/agent/.config/omni/apm.yml
+
+: > /tmp/log/omni
+printf 'stale\n' > /home/agent/.config/omni/apm.yml
+drifted=$(printf 'hunter2' | run settings --file /tmp/common.json --file /tmp/profile.json --password-stdin)
+printf '%s\n' "$drifted" | grep -Fxq 'agents applied: synced'
+cmp /tmp/expected-apm.yml /home/agent/.config/omni/apm.yml
+test "$(stat -c '%U:%G %a' /home/agent/.config/omni/apm.yml)" = 'agent:agent 644'
+grep -Fq 'omni agents sync' /tmp/log/omni
+
+python3 - <<'PY'
+import json
+state = json.load(open('/tmp/api/state.json'))
+state['agent_settings']['mcp_config']['litellm-tools']['headers']['x-litellm-api-key'] = 'stale'
+json.dump(state, open('/tmp/api/state.json', 'w'))
+PY
+: > /tmp/log/curl
+rotated=$(printf 'hunter2' | run settings --file /tmp/common.json --file /tmp/profile.json --password-stdin)
+printf '%s\n' "$rotated" | grep -Fq 'mcp_servers applied: litellm-tools'
+grep -Fxq 'PATCH /api/settings/mcp/litellm-tools' /tmp/log/curl
+if grep -Fq 'POST /api/settings/mcp/' /tmp/log/curl; then echo 'an existing MCP server must be patched, not recreated'; exit 1; fi
+grep -Fq '"headers": {"x-litellm-api-key": "sk-llm-FIXTUREKEY111111111111"}' /tmp/log/curl-bodies
+
+ca_output=$(printf 'hunter2' | run ca --item 99999999-9999-9999-9999-999999999999 --password-stdin)
+printf '%s\n' "$ca_output" | grep -Fq 'ca installed /usr/local/share/ca-certificates/openhands-lan-ca.crt'
+test "$(stat -c '%U:%G %a' /usr/local/share/ca-certificates/openhands-lan-ca.crt)" = 'root:root 644'
+cmp -s /tmp/fixture.crt /usr/local/share/ca-certificates/openhands-lan-ca.crt
+grep -Fq 'update-ca-certificates' /tmp/log/update-ca-certificates
+if printf 'hunter2' | run ca --item aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa --password-stdin >/dev/null 2>&1; then echo 'non-PEM CA item must be rejected'; exit 1; fi
+cmp -s /tmp/fixture.crt /usr/local/share/ca-certificates/openhands-lan-ca.crt
+
+install -d -o agent -g agent -m 0700 /home/agent/.openhands /home/agent/.claude /home/agent/.codex
+printf 'canvas-state\n' > /home/agent/.openhands/settings.json
+printf 'claude-state\n' > /home/agent/.claude/.credentials.json
+printf 'codex-state\n' > /home/agent/.codex/auth.json
+printf '[user]\n' > /home/agent/.gitconfig
+chown -R agent:agent /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/.gitconfig
+token_digest=$(cat /var/lib/openhands/overlay/git-sync-token.sha256)
+run state export > /tmp/state.tar.gz 2>/tmp/state.err
+grep -Fq 'export /home/agent/.openhands' /tmp/state.err
+grep -Fq 'export /var/lib/openhands/overlay' /tmp/state.err
+tar -tzf /tmp/state.tar.gz > /tmp/state.list
+grep -Fxq 'home/agent/.git-credentials' /tmp/state.list
+grep -Fxq 'home/agent/.gitconfig' /tmp/state.list
+grep -Fxq 'var/lib/openhands/overlay/git-sync-token.sha256' /tmp/state.list
+rm -rf /home/agent/.openhands /home/agent/.claude /home/agent/.codex /home/agent/.git-credentials /home/agent/.gitconfig /var/lib/openhands/overlay
+run state import < /tmp/state.tar.gz | grep -Fq 'state imported'
+test "$(cat /home/agent/.openhands/settings.json)" = 'canvas-state'
+test "$(cat /home/agent/.codex/auth.json)" = 'codex-state'
+test "$(stat -c '%U:%G %a' /home/agent/.openhands)" = 'agent:agent 700'
+test "$(stat -c '%U:%G %a' /home/agent/.claude)" = 'agent:agent 700'
+test "$(stat -c '%U:%G %a' /home/agent/.codex)" = 'agent:agent 700'
+test "$(stat -c '%U:%G %a' /home/agent/.git-credentials)" = 'agent:agent 600'
+test "$(stat -c '%U:%G %a' /var/lib/openhands/overlay)" = 'root:root 700'
+test "$(stat -c '%U:%G %a' /var/lib/openhands/overlay/git-sync-token.sha256)" = 'root:root 600'
+test "$(cat /var/lib/openhands/overlay/git-sync-token.sha256)" = "$token_digest"
+grep -Fxq 'https://x-access-token:ghp_FIXTURETOKEN0000000000000000000000@github.com' /home/agent/.git-credentials
+rm -rf /home/agent/.openhands /home/agent/.claude /home/agent/.codex
+mv /home/agent/.git-credentials /tmp/kept.credentials
+mv /home/agent/.gitconfig /tmp/kept.gitconfig
+mv /var/lib/openhands/overlay /tmp/kept.overlay
+if run state export >/dev/null 2>&1; then echo 'export must fail without state'; exit 1; fi
+mv /tmp/kept.credentials /home/agent/.git-credentials
+mv /tmp/kept.gitconfig /home/agent/.gitconfig
+mv /tmp/kept.overlay /var/lib/openhands/overlay
+
+cat > /tmp/tcp-fixture <<'EOF'
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:1F40 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 100 0 0 10 0
+   1: C314A8C0:D431 08080808:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+   2: C314A8C0:D432 08080808:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+   3: C314A8C0:D433 0100007F:1F40 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+   4: C314A8C0:D434 0200A8C0:0035 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+   5: 0000000000000000FFFF0000C314A8C0:D435 0000000000000000FFFF00008C52768D:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 1 0000000000000000 20 4 30 10 -1
+EOF
+egress_out=$(run egress --from /tmp/tcp-fixture)
+printf '%s\n' "$egress_out" | grep -Eq '^internet 8\.8\.8\.8 443 2 ' || { echo "expected 8.8.8.8:443 sampled twice"; printf '%s\n' "$egress_out"; exit 1; }
+printf '%s\n' "$egress_out" | grep -Eq '^lan 192\.168\.0\.2 53 1 '
+printf '%s\n' "$egress_out" | grep -Eq '^internet 141\.118\.82\.140 443 1 '
+if printf '%s\n' "$egress_out" | grep -q '127\.0\.0\.1'; then echo 'loopback must be excluded'; exit 1; fi
+test "$(printf '%s\n' "$egress_out" | grep -c '^\(lan\|internet\) ')" = 3
+if run egress --minutes x >/dev/null 2>&1; then echo 'non-integer minutes must be rejected'; exit 1; fi
 echo 'overlay tests passed'
 INNER
 )

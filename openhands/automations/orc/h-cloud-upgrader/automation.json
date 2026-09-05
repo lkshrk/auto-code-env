@@ -1,0 +1,18 @@
+{
+  "name": "h-cloud-upgrader",
+  "model": "claude-opus-5",
+  "timeout": 43200,
+  "keep_alive": false,
+  "enabled": true,
+  "trigger": {
+    "type": "cron",
+    "schedule": "0 3 * * *",
+    "timezone": "Europe/Berlin"
+  },
+  "vars": {
+    "GITOPS_REPO": "lkshrk/h-cloud",
+    "MAX_UPGRADES_PER_RUN": "0",
+    "HEALTH_TIMEOUT_MINUTES": "10",
+    "DRY_RUN": "false"
+  }
+}

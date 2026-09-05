@@ -1,0 +1,25 @@
+{
+  "llm": {
+    "model": "openai/gpt-5.6-sol",
+    "base_url": "https://api.ai.h-cloud.lan/v1",
+    "api_key_item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57"
+  },
+  "agent": {
+    "kind": "acp",
+    "acp_server": "claude-code",
+    "acp_command": "/home/agent/.local/bin/claude-agent-acp",
+    "acp_model": null
+  },
+  "secrets": {
+    "GH_TOKEN": {
+      "item": "28226043-0a70-4d54-bfb8-592086a319c0"
+    }
+  },
+  "git_sync": {
+    "repo_url": "https://github.com/lkshrk/auto-code-env.git",
+    "branch": "main",
+    "path": "openhands/automations/towerr",
+    "token_item": "28226043-0a70-4d54-bfb8-592086a319c0",
+    "interval_seconds": 0
+  }
+}
