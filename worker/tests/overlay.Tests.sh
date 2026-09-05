@@ -24,7 +24,7 @@ script=$(cat <<'INNER'
 set -euo pipefail
 umask 022
 shim=/tmp/shim
-mkdir -p "$shim" /tmp/log /usr/local/libexec /etc/nginx && chmod 1777 /tmp/log
+mkdir -p "$shim" /tmp/log /usr/local/libexec /etc/nginx && chmod 1777 /tmp/log && touch /tmp/log/omni /tmp/log/git && chmod 666 /tmp/log/omni /tmp/log/git
 install -m 0755 /src/worker/rootfs/usr/local/sbin/openhands-overlay /usr/local/sbin/openhands-overlay
 userdel -r ubuntu 2>/dev/null || true; useradd -m -u 1000 -s /bin/bash agent
 mkdir -p /etc/openhands && printf 'openhands-worker 9.9.9-test\n' > /etc/openhands/release
