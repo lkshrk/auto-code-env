@@ -45,11 +45,15 @@ tag would not have been enough.
 
 Verifying `install.ps1` against a digest published on the same release page
 proves nothing, because whoever could replace the assets could replace that
-digest too. Get it from the git tag instead, which is bound to a commit:
+digest too. Get it from the git tag instead, which is bound to a commit. From a
+clone of `lkshrk/auto-code-env`, once the tag exists:
 
 ```sh
 git show coder-worker-v2.0.0:coder-worker/windows/install.ps1 | sha256sum
 ```
+
+`fatal: invalid object name` there means the wrong checkout or an unreleased
+tag, not tampering.
 
 `-ReleaseTag` selects another release and then requires `-ChecksumsSha256`,
 since the embedded digest only covers the pinned one. `-OverlayPath`

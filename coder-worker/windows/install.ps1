@@ -27,7 +27,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $DefaultRelease = "coder-worker-v2.0.0"
-$DefaultChecksumsSha256 = "b63dce13fb8590202820c5b13d9abe74895dfb006c4fb1b37bc6dad220c796d9"
+$DefaultChecksumsSha256 = "cf58a0999ce8c8ddd1cd43fa6b2d3235147892642d326b2dad60c28c4bc64f64"
 $ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
 $TlsPort = 2376
@@ -313,7 +313,7 @@ function Get-ReleaseAssetUri {
         [Parameter(Mandatory)][string]$Asset
     )
 
-    if ($Tag -notmatch '^coder-worker-v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') {
+    if ($Tag -cnotmatch '^coder-worker-v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') {
         throw "Release tag '$Tag' is not a coder-worker release tag."
     }
     if ($Asset -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
