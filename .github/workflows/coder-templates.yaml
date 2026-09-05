@@ -9,10 +9,14 @@ on:
     paths:
       - coder/templates/*.tf
       - coder/templates/**/*.tf
+      - coder/templates/*/backend
+      - coder/templates/backends/*.tf
   pull_request:
     paths:
       - coder/templates/*.tf
       - coder/templates/**/*.tf
+      - coder/templates/*/backend
+      - coder/templates/backends/*.tf
   workflow_dispatch:
 
 concurrency:
@@ -56,13 +60,14 @@ jobs:
           fi
 
           # If shared Coder bootstrap changed, validate/push every template.
-          if echo "$changed" | grep -Eq "^$TEMPLATE_DIR/(common\.tf|shared/|tests/)"; then
+          if echo "$changed" | grep -Eq "^$TEMPLATE_DIR/(common\.tf|shared/|tests/|backends/)"; then
             dirs=$(find "$TEMPLATE_DIR" -mindepth 2 -maxdepth 2 -name main.tf -exec dirname {} \; | sort)
           else
             dirs=$(
               echo "$changed" | while IFS= read -r file; do
                 case "$file" in
-                  "$TEMPLATE_DIR"/*/*.tf) dirname "$file" ;;
+                  "$TEMPLATE_DIR"/backends/*) ;;
+                  "$TEMPLATE_DIR"/*/*.tf | "$TEMPLATE_DIR"/*/backend) dirname "$file" ;;
                 esac
               done | sort -u
             )
@@ -100,6 +105,12 @@ jobs:
             tmpdir=$(mktemp -d)
             cp "$TEMPLATE_DIR/common.tf" "$tmpdir/common.tf"
             cp -R "$TEMPLATE_DIR/shared" "$tmpdir/shared"
+            backend=kubernetes
+            if [ -f "$dir/backend" ]; then
+              cp "$dir/backend" "$tmpdir/backend"
+              backend=$(tr -d '[:space:]' < "$dir/backend")
+            fi
+            cp "$TEMPLATE_DIR/backends/$backend.tf" "$tmpdir/"
             cp "$dir"/*.tf "$tmpdir/"
             terraform -chdir="$tmpdir" fmt -check -diff
             terraform -chdir="$tmpdir" init -backend=false -input=false
@@ -136,6 +147,12 @@ jobs:
             tmpdir=$(mktemp -d)
             cp "$TEMPLATE_DIR/common.tf" "$tmpdir/common.tf"
             cp -R "$TEMPLATE_DIR/shared" "$tmpdir/shared"
+            backend=kubernetes
+            if [ -f "$dir/backend" ]; then
+              cp "$dir/backend" "$tmpdir/backend"
+              backend=$(tr -d '[:space:]' < "$dir/backend")
+            fi
+            cp "$TEMPLATE_DIR/backends/$backend.tf" "$tmpdir/"
             cp "$dir"/*.tf "$tmpdir/"
             coder templates push "$name" --directory "$tmpdir" --yes
             rm -rf "$tmpdir"
