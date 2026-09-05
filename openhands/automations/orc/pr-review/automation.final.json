@@ -1,6 +1,6 @@
 {
   "name": "pr-review",
-  "model": "gpt-5.6-sol",
+  "model": "gpt-6-astra",
   "timeout": 900,
   "keep_alive": false,
   "enabled": true,
