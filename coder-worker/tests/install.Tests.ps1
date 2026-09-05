@@ -141,6 +141,9 @@ Assert-Equal $false (Test-ProfileValue -Key "DOCKER_PORT" -Value "2375") "the pl
 Assert-Equal $false (Test-ProfileValue -Key "VAULT_URL" -Value "http://vlt.h-cloud.io") "a plain HTTP vault URL is refused"
 Assert-Equal $false (Test-ProfileValue -Key "FIREWALL_REMOTE_ADDRESSES" -Value "Any") "an Any firewall source is refused"
 Assert-Equal $true (Test-ProfileValue -Key "FIREWALL_REMOTE_ADDRESSES" -Value "10.254.0.10,10.254.0.11") "a node address list is accepted"
+foreach ($bad in "999.999.999.999", "10.254.0.256", "10.254.0.10/33", "10.254.0.10/99", "10.254.0.10,300.1.1.1") {
+    Assert-Equal $false (Test-ProfileValue -Key "FIREWALL_REMOTE_ADDRESSES" -Value $bad) "an out-of-range address is refused: $bad"
+}
 Write-Host "PASS: the host profile carries no credentials"
 
 $committed = Read-CoderWorkerProfile -Lines ([string[]][IO.File]::ReadAllLines($profilePath))

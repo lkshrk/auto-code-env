@@ -221,7 +221,11 @@ function Test-ProfileValue {
         "VAULT_EMAIL" { return [bool]($Value -cmatch '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$') }
         { $_ -ceq "VAULT_FOLDER" -or $_ -cmatch '^VAULT_ITEM_' } { return [bool]($Value -cmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$') }
         "DOCKER_PORT" { return [bool]($Value -ceq "$Port") }
-        "FIREWALL_REMOTE_ADDRESSES" { return [bool]($Value -cmatch '^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?(,[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?)*$') }
+        "FIREWALL_REMOTE_ADDRESSES" {
+            $octet = '(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+            $address = "$octet(\.$octet){3}(/([0-9]|[1-2][0-9]|3[0-2]))?"
+            return [bool]($Value -cmatch "^$address(,$address)*$")
+        }
     }
     return $false
 }
