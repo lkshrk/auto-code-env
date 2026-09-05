@@ -7,14 +7,77 @@ only changes when it is pushed. This repository is that source of truth and
 
 ```text
 coder/templates/
-  common.tf              shared parameters, agent, modules, bootstrap, pod
+  common.tf              shared parameters, agent, modules, bootstrap
+  backends/<name>.tf     providers, storage, and workspace resources
   shared/                scripts copied next to every template
   tests/                 static tests for shared/
   <template>/main.tf     per-template parameters and presets
+  <template>/backend     backend marker, absent means kubernetes
 ```
 
-Templates: `civora`, `gitops`, `go`, `hermes`, `lua`, `monorepo`, `python`,
-`routivo`, `sveltekit`, `ts`. The directory name is the Coder template name.
+Templates: `civora`, `desktop`, `gitops`, `go`, `hermes`, `lua`, `monorepo`,
+`python`, `routivo`, `sveltekit`, `ts`. The directory name is the Coder
+template name.
+
+## Backends
+
+`common.tf` is backend-neutral. It holds the shared parameters, the agent, the
+Coder modules, the bootstrap, and the `coder` provider configuration.
+Everything that actually creates a workspace lives in `backends/<name>.tf`:
+the backend's provider, its storage, the workspace itself, and the
+docker-in-docker sidecar. Terraform accepts only one `required_providers`
+block per module, so that block lives in each backend file and declares `coder`
+alongside the backend's own provider.
+
+A template picks its backend with a one-line `backend` file next to its
+`main.tf`. No marker means `kubernetes`. CI copies exactly one backend file
+into the build directory, so a template never sees the other backend's
+providers.
+
+The seam between the two halves is `local.backend_bootstrap`: every backend
+file defines it and `common.tf` interpolates it into the agent startup script
+at a fixed position. The Kubernetes backend writes the in-cluster kubeconfig
+there; the Docker backend defines it empty. Backend files may read the shared
+locals from `common.tf`; `common.tf` must never reference a backend resource.
+
+## Desktop backend
+
+The `desktop` template runs workspaces as Docker containers in a WSL2
+distribution on the Windows desktop instead of as pods in the cluster. The
+provisioner reaches that host's Docker API over mutual TLS.
+
+- `docker_host` (template variable, default `tcp://172.16.20.195:2376`) is the
+  daemon endpoint.
+- `docker_cert_path` (default `/etc/coder/docker-tls`) is the directory in the
+  coderd pod holding `ca.pem`, `cert.pem`, and `key.pem`. h-cloud mounts the
+  `coder-docker-tls` Secret there read-only.
+- The provider sets `disable_docker_daemon_check = true`, so template import
+  and `coder templates push` never contact the desktop. Only workspace start,
+  stop, and delete do.
+- With the desktop asleep or the distro stopped those three operations fail
+  with a provider connection error and leave no partial state. Clear the
+  workspace record with `coder delete --orphan <workspace>`; its containers and
+  volumes stay on the desktop until it comes back. Template pushes keep working
+  throughout.
+- The home volume carries `ignore_changes = all` and outlives a workspace
+  delete, matching the upstream registry template. Reclaim it on the desktop.
+- `/etc/ssl/lan/lan-ca.pem` is bind-mounted read-only from the distro for
+  `OMNI_OTEL_CA_PATH`, and the workspace images must already be pulled there.
+- With docker-in-docker enabled the workspace joins a private network with a
+  `docker:27-dind` sibling reachable as `docker`, TLS on
+  (`DOCKER_TLS_CERTDIR=/certs`); the workspace reads the generated client
+  certificate from the shared `/certs` volume.
+
+Desktop workspaces get none of the cluster-held secrets: no
+`coder-workspace-secrets` (`LITELLM_API`, `GH_TOKEN`, `GITHUB_TOKEN`,
+`GITHUB_PERSONAL_ACCESS_TOKEN`), no `<template>-workspace-env`, and no
+service-account token or kubeconfig. `gh` and github-mcp-server are
+unauthenticated there unless the user adds a Coder user secret. Per-user Claude
+and Codex credentials already come from Coder user secrets and work unchanged.
+
+A project that should be startable on both backends needs a preset on its
+Kubernetes stack template and a second one on `desktop`. They are separate
+templates and nothing keeps the two preset lists in sync.
 
 ## CI
 
@@ -22,10 +85,12 @@ Templates: `civora`, `gitops`, `go`, `hermes`, `lua`, `monorepo`, `python`,
 `workflow_dispatch`.
 
 - It resolves the changed template directories from the diff. A change to
-  `common.tf`, `shared/`, or `tests/` selects every template; a
+  `common.tf`, `shared/`, `tests/`, or `backends/` selects every template; a
   `workflow_dispatch` run does the same.
 - For each selected template it builds a temporary directory holding
-  `common.tf`, `shared/`, and the template's `*.tf`, then runs
+  `common.tf`, `shared/`, the template's `backend` marker, the
+  `backends/<backend>.tf` that marker names, and the template's `*.tf`, then
+  runs
   `terraform fmt -check -diff`, `terraform init -backend=false`, and
   `terraform validate`. Terraform is installed at a pinned version with its
   SHA256 verified against HashiCorp's checksum file.
@@ -46,10 +111,16 @@ bash coder/templates/tests/prepare-dotfiles.sh
 
 for dir in coder/templates/*/; do
   name=$(basename "$dir")
-  case "$name" in shared|tests) continue ;; esac
+  case "$name" in backends|shared|tests) continue ;; esac
   tmpdir=$(mktemp -d)
   cp coder/templates/common.tf "$tmpdir/common.tf"
   cp -R coder/templates/shared "$tmpdir/shared"
+  backend=kubernetes
+  if [ -f "$dir/backend" ]; then
+    cp "$dir/backend" "$tmpdir/backend"
+    backend=$(tr -d '[:space:]' < "$dir/backend")
+  fi
+  cp "coder/templates/backends/$backend.tf" "$tmpdir/"
   cp "$dir"/*.tf "$tmpdir/"
   terraform -chdir="$tmpdir" fmt -check -diff
   terraform -chdir="$tmpdir" init -backend=false -input=false
@@ -60,7 +131,8 @@ done
 
 ## Cluster contract
 
-The templates provision into the h-cloud cluster, which must keep providing:
+The `kubernetes` backend provisions into the h-cloud cluster, which must keep
+providing:
 
 - Namespace `coder`. Every workspace pod and home PVC is created there,
   whatever the template.
