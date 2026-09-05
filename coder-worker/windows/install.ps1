@@ -27,7 +27,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $DefaultRelease = "coder-worker-v2.0.0"
-$DefaultChecksumsSha256 = "9b32282f778c55059652fd2b5a854e8102c8d9dbc75023d518872376a89073b5"
+$DefaultChecksumsSha256 = "b63dce13fb8590202820c5b13d9abe74895dfb006c4fb1b37bc6dad220c796d9"
 $ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
 $TlsPort = 2376

@@ -8,6 +8,8 @@ on:
       - .github/workflows/coder-worker-release.yaml
       - .github/workflows/coder-worker-validate.yaml
       - coder-worker/**
+      - worker/windows/firewall.ps1
+      - worker/windows/keepalive.ps1
 
 permissions:
   contents: read

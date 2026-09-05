@@ -4,7 +4,7 @@ DISTRO_NAME=coder-worker
 UBUNTU_DISTRIBUTION=Ubuntu-26.04
 
 VAULT_URL=https://vlt.h-cloud.io
-VAULT_EMAIL=dev@harke.me
+VAULT_EMAIL=vault@harke.me
 VAULT_FOLDER=Server
 VAULT_ITEM_CA=coder-worker docker ca
 VAULT_ITEM_SERVER_CERT=coder-worker docker server cert
