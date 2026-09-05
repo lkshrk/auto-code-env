@@ -27,6 +27,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $DefaultRelease = "coder-worker-v2.0.0"
+$DefaultChecksumsSha256 = "9b32282f778c55059652fd2b5a854e8102c8d9dbc75023d518872376a89073b5"
 $ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
 $TlsPort = 2376
@@ -582,21 +583,26 @@ try {
         if (-not [Uri]::TryCreate($uri, [UriKind]::Absolute, [ref]$parsed) -or $parsed.Scheme -cne "https") {
             throw "The release base URI must be absolute HTTPS."
         }
+        $expected = $ChecksumsSha256
+        if ([string]::IsNullOrWhiteSpace($expected)) {
+            if ($tag -cne $DefaultRelease) {
+                throw "-ChecksumsSha256 is required with -ReleaseTag; the embedded digest only covers $DefaultRelease."
+            }
+            $expected = $DefaultChecksumsSha256
+        }
+        if ($expected -notmatch '^[0-9A-Fa-f]{64}$') {
+            throw "ChecksumsSha256 must be a 64-character hexadecimal SHA-256 value."
+        }
         Invoke-WebRequest -Uri $parsed -OutFile $destination -UseBasicParsing
-        if (-not [string]::IsNullOrWhiteSpace($ChecksumsSha256)) {
-            if ($ChecksumsSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
-                throw "ChecksumsSha256 must be a 64-character hexadecimal SHA-256 value."
-            }
-            $stream = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-            try {
-                $actual = Get-FileSha256 -Stream $stream
-            }
-            finally {
-                $stream.Dispose()
-            }
-            if ($actual -ine $ChecksumsSha256) {
-                throw "checksums.txt SHA-256 does not match ChecksumsSha256."
-            }
+        $stream = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try {
+            $actual = Get-FileSha256 -Stream $stream
+        }
+        finally {
+            $stream.Dispose()
+        }
+        if ($actual -ine $expected) {
+            throw "checksums.txt SHA-256 does not match the expected digest."
         }
         $script:checksums = Get-ChecksumMap -Lines ([string[]][IO.File]::ReadAllLines($destination))
         return $script:checksums
@@ -639,7 +645,7 @@ try {
         }
         else {
             $ProfilePath = Get-Artifact -Label "Profile" -Asset "host-$HostProfile.profile" `
-                -Destination (Join-Path $stage "profile")
+                -Destination (Join-Path $stage "downloaded.profile")
         }
     }
     $settings = Read-CoderWorkerProfile -Lines ([string[]][IO.File]::ReadAllLines($ProfilePath))

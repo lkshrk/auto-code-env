@@ -37,9 +37,22 @@ rule goes on before the distribution exists, so 2376 is never briefly open to
 the LAN. The second asks for the Vaultwarden master password, fetches the trust
 material, verifies it and starts Docker. Nothing else is prompted for or typed.
 
-`install.ps1` is the trust anchor: check its SHA-256 against the release page
-before running it. `-ChecksumsSha256` pins `checksums.txt` too, for a fully
-offline chain of custody. `-ReleaseTag` selects another release; `-OverlayPath`
+`install.ps1` is the trust anchor. It embeds `$DefaultChecksumsSha256`, the
+digest of its release's `checksums.txt`, and refuses that file unless it
+matches, so no artifact is ever trusted on the strength of an HTTPS fetch alone.
+GitHub lets release assets be replaced on an existing tag, so pinning only the
+tag would not have been enough.
+
+Verifying `install.ps1` against a digest published on the same release page
+proves nothing, because whoever could replace the assets could replace that
+digest too. Get it from the git tag instead, which is bound to a commit:
+
+```sh
+git show coder-worker-v2.0.0:coder-worker/windows/install.ps1 | sha256sum
+```
+
+`-ReleaseTag` selects another release and then requires `-ChecksumsSha256`,
+since the embedded digest only covers the pinned one. `-OverlayPath`
 or `-OverlayUri` with `-OverlaySha256`, and likewise `-Firewall*`,
 `-Keepalive*`, `-Rootfs*`, supply an artifact by hand with a mandatory checksum;
 `-SkipFirewall` and `-SkipKeepalive` skip a step deliberately, and skipping the
@@ -185,13 +198,19 @@ Nothing uses a `latest` tag.
 
 ## Releasing
 
-Tag `coder-worker-v<version>`. The workflow refuses it unless `$DefaultRelease`
-in `install.ps1` and `RELEASE_VERSION` in the overlay both equal the tag, so a
-published `install.ps1` always points at the release containing it. Both are
-bumped by hand in the tagged commit; CI rewrites nothing. The workflow runs
-every test, then publishes `install.ps1`, the overlay, `firewall.ps1`,
-`keepalive.ps1`, `gen-docker-tls.sh` and each host profile as
-`host-<name>.profile`, with a `checksums.txt` it verifies before upload.
+`coder-worker/scripts/release-checksums.sh --out DIR` assembles the release and
+prints the digest of its `checksums.txt`. CI runs the same script, so there is
+one implementation and no drift. To cut a release, run it, put the digest in
+`$DefaultChecksumsSha256`, bump `$DefaultRelease` and `RELEASE_VERSION` to the
+new version in the same commit, then tag `coder-worker-v<version>`. CI rewrites
+nothing; it refuses the tag unless all three constants already agree with what
+it assembles.
+
+`checksums.txt` covers the overlay, `firewall.ps1`, `keepalive.ps1`,
+`gen-docker-tls.sh` and each host profile as `host-<name>.profile`.
+`install.ps1` is published alongside them but deliberately left out of it: it
+embeds that file's digest, so covering it too would be circular. Its own digest
+is published as `install.ps1.sha256`, which is a convenience, not an anchor.
 
 ## Verification
 
@@ -218,6 +237,8 @@ build before calling the backend done.
 |---|---|
 | `no vault item is named "..."` | The item was renamed, or `VAULT_FOLDER` does not match |
 | `N vault items are named "..."` | Duplicates in that folder; delete one or pass `--ca-id` and friends |
+| `checksums.txt SHA-256 does not match the expected digest` | The release assets changed, or `$DefaultChecksumsSha256` is stale. Do not bypass it; verify the release |
+| `<profile> is missing DOCKER_PORT` | A required profile key was dropped; both parsers require the same set |
 | `missing profile /etc/coder-worker/profile` | The distribution predates the profile; reinstall on a fresh one, or pass `--profile` |
 | `... exists but no LAN root CA is configured` | `VAULT_ITEM_LAN_CA` was dropped; remove the stale `lan-ca.pem` |
 | `refusing to replace non-regular file .../lan-ca.pem` | Docker created a bind-mount directory; remove it, then rerun `secrets` |
@@ -227,12 +248,13 @@ build before calling the backend done.
 ## Tests
 
 ```sh
+bash coder-worker/tests/release.Tests.sh
 bash coder-worker/tests/profile.Tests.sh
 bash coder-worker/tests/install.Tests.sh
 bash coder-worker/tests/overlay.Tests.sh
 bash coder-worker/tests/gen-docker-tls.Tests.sh
 pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1
-shellcheck coder-worker/scripts/gen-docker-tls.sh coder-worker/wsl/coder-worker-overlay \
+shellcheck coder-worker/scripts/*.sh coder-worker/wsl/coder-worker-overlay \
   coder-worker/tests/*.sh
 ```
 

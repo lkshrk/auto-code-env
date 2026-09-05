@@ -24,6 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash coder-worker/tests/release.Tests.sh
           bash coder-worker/tests/profile.Tests.sh
           bash coder-worker/tests/install.Tests.sh
           bash coder-worker/tests/overlay.Tests.sh

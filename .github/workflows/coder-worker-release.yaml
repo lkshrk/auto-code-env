@@ -43,6 +43,7 @@ jobs:
           test "$tag_commit" = "$GITHUB_SHA"
           grep -Fxq "\$DefaultRelease = \"$tag\"" coder-worker/windows/install.ps1
           grep -Fxq "readonly RELEASE_VERSION=$VERSION" coder-worker/wsl/coder-worker-overlay
+          bash coder-worker/tests/release.Tests.sh
           bash coder-worker/tests/profile.Tests.sh
           bash coder-worker/tests/install.Tests.sh
           bash coder-worker/tests/overlay.Tests.sh
@@ -56,33 +57,24 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
 
-      - name: Assemble and verify release assets
+      - name: Assemble assets and gate on the embedded checksums digest
         shell: bash
         run: |
           set -euo pipefail
-          mkdir release
-          cp coder-worker/windows/install.ps1 release/install.ps1
-          cp coder-worker/wsl/coder-worker-overlay release/coder-worker-overlay
-          cp coder-worker/scripts/gen-docker-tls.sh release/gen-docker-tls.sh
-          cp worker/windows/firewall.ps1 release/firewall.ps1
-          cp worker/windows/keepalive.ps1 release/keepalive.ps1
-          assets=(install.ps1 coder-worker-overlay gen-docker-tls.sh firewall.ps1 keepalive.ps1)
-          for source in coder-worker/hosts/*.profile; do
-            test -f "$source"
-            asset="host-$(basename "$source")"
-            cp "$source" "release/$asset"
-            assets+=("$asset")
-          done
-          test "${#assets[@]}" -gt 5
-          (cd release && sha256sum "${assets[@]}" > checksums.txt)
-          (cd release && sha256sum -c checksums.txt)
-          printf '%s\n' "${assets[@]}" checksums.txt > "$RUNNER_TEMP/assets.txt"
+          release="$RUNNER_TEMP/release"
+          digest=$(bash coder-worker/scripts/release-checksums.sh --out "$release")
+          if ! grep -Fxq "\$DefaultChecksumsSha256 = \"$digest\"" coder-worker/windows/install.ps1; then
+            echo "::error::install.ps1 must embed \$DefaultChecksumsSha256 = \"$digest\""
+            exit 1
+          fi
+          (cd "$release" && ls -1) > "$RUNNER_TEMP/assets.txt"
 
       - name: Publish immutable release
         shell: bash
         run: |
           set -euo pipefail
           tag=$RELEASE_TAG
+          release="$RUNNER_TEMP/release"
           mapfile -t assets < "$RUNNER_TEMP/assets.txt"
           release_json="$RUNNER_TEMP/release.json"
           release_error="$RUNNER_TEMP/release-error.log"
@@ -102,12 +94,12 @@ jobs:
           release_draft=$(jq -r '.isDraft' "$release_json")
           case "$release_draft" in
             true)
-              gh release upload "$tag" --clobber "${assets[@]/#/release/}"
+              gh release upload "$tag" --clobber "${assets[@]/#/$release/}"
               gh release edit "$tag" --draft=false
               ;;
             false)
               for asset in "${assets[@]}"; do
-                digest="sha256:$(sha256sum "release/$asset" | awk '{print $1}')"
+                digest="sha256:$(sha256sum "$release/$asset" | awk '{print $1}')"
                 jq -e --arg asset "$asset" --arg digest "$digest" \
                   '.assets[] | select(.name == $asset and .state == "uploaded" and .digest == $digest)' \
                   "$release_json" >/dev/null

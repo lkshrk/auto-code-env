@@ -76,11 +76,16 @@ $defaultRelease = $Matches["tag"]
 if ($source -notmatch '(?m)^\$ReleaseBaseUri = "https://') {
     throw "install.ps1 must fetch release assets over HTTPS."
 }
+if ($source -notmatch '(?m)^\$DefaultChecksumsSha256 = "(?<digest>[0-9a-f]{64})"$') {
+    throw "install.ps1 must embed the SHA-256 of its release's checksums.txt."
+}
+$defaultChecksumsSha256 = $Matches["digest"]
 foreach ($name in "Set-WslMirroredNetworking", "Test-DistributionName", "Test-WslDistributionRegistered",
     "Test-UbuntuRelease", "Test-Sha256Digest", "Test-WslVersionSupported", "Get-WslExecutablePath",
     "Get-FileSha256", "Get-StagedArtifact", "Get-DistributionInstallArguments",
     "Test-ProfileKeySecretShaped", "Test-ProfileValueSecretShaped", "Test-ProfileValue",
-    "Read-CoderWorkerProfile", "Get-ChecksumMap", "Get-ReleaseAssetUri") {
+    "Read-CoderWorkerProfile", "Get-ChecksumMap", "Get-ReleaseAssetUri",
+    "Get-ReleaseChecksums", "Get-Artifact") {
     Invoke-Expression (Import-ScriptFunction -Path $scriptPath -Name $name)
 }
 
@@ -173,6 +178,85 @@ Assert-ThrowsMessage { Get-ReleaseAssetUri -BaseUri "https://example" -Tag "code
     "is not valid" "a traversing asset name is refused"
 Get-ReleaseAssetUri -BaseUri "https://example" -Tag $defaultRelease -Asset "checksums.txt" | Out-Null
 Write-Host "PASS: pinned release asset URIs"
+
+$fetch = Join-Path ([IO.Path]::GetTempPath()) ("coder-worker-fetch-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $fetch | Out-Null
+try {
+    $ReleaseBaseUri = "https://example/download"
+    $DefaultRelease = "coder-worker-v2.0.0"
+    $stage = $fetch
+    $script:downloads = 0
+    $script:body = ("a" * 64) + "  coder-worker-overlay`n"
+    $script:staged = $null
+    $script:checksums = $null
+    $script:requested = ""
+
+    function Invoke-WebRequest {
+        param($Uri, $OutFile, [switch]$UseBasicParsing)
+        $script:downloads++
+        $script:requested = "$Uri"
+        [IO.File]::WriteAllText($OutFile, $script:body)
+    }
+    function Get-StagedArtifact {
+        param($Label, $Path, $Uri, $Sha256, $Destination)
+        $script:staged = [pscustomobject]@{ Label = $Label; Path = $Path; Uri = $Uri; Sha256 = $Sha256 }
+        return $Destination
+    }
+    $stream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($script:body))
+    try { $bodyDigest = Get-FileSha256 -Stream $stream } finally { $stream.Dispose() }
+
+    $tag = $DefaultRelease
+    $ChecksumsSha256 = ""
+    $DefaultChecksumsSha256 = $bodyDigest
+    $map = Get-ReleaseChecksums
+    Assert-Equal 1 $script:downloads "checksums.txt is downloaded once"
+    Assert-Equal "https://example/download/coder-worker-v2.0.0/checksums.txt" $script:requested "checksums.txt comes from the pinned tag"
+    Assert-Equal ("a" * 64) $map["coder-worker-overlay"] "the overlay digest is read from checksums.txt"
+    Get-ReleaseChecksums | Out-Null
+    Assert-Equal 1 $script:downloads "a second call reuses the cached map"
+
+    $script:checksums = $null
+    $DefaultChecksumsSha256 = "b" * 64
+    Assert-ThrowsMessage { Get-ReleaseChecksums } "does not match the expected digest" `
+        "a checksums.txt that fails the embedded digest is refused"
+    $script:checksums = $null
+    $DefaultChecksumsSha256 = "not a digest"
+    Assert-ThrowsMessage { Get-ReleaseChecksums } "64-character hexadecimal" "a malformed embedded digest is refused"
+    $script:checksums = $null
+    $DefaultChecksumsSha256 = $bodyDigest
+    $ChecksumsSha256 = "c" * 64
+    Assert-ThrowsMessage { Get-ReleaseChecksums } "does not match the expected digest" `
+        "an explicit ChecksumsSha256 overrides the embedded one"
+    $script:checksums = $null
+    $ChecksumsSha256 = ""
+    $tag = "coder-worker-v9.9.9"
+    Assert-ThrowsMessage { Get-ReleaseChecksums } "ChecksumsSha256 is required with -ReleaseTag" `
+        "another release tag may not reuse the embedded digest"
+    Write-Host "PASS: checksums.txt is never trusted without a digest known before the download"
+
+    $tag = $DefaultRelease
+    $script:checksums = $null
+    Get-Artifact -Label "Overlay" -Asset "coder-worker-overlay" -Destination (Join-Path $fetch "out") | Out-Null
+    Assert-Equal "https://example/download/coder-worker-v2.0.0/coder-worker-overlay" $script:staged.Uri "the artifact URI is built from the pinned tag"
+    Assert-Equal ("a" * 64) $script:staged.Sha256 "the artifact digest comes from checksums.txt"
+    Assert-ThrowsMessage { Get-Artifact -Label "Firewall" -Asset "firewall.ps1" -Destination (Join-Path $fetch "out") } `
+        "has no entry for 'firewall.ps1'" "an artifact missing from checksums.txt is refused"
+
+    $script:staged = $null
+    $script:downloads = 0
+    Get-Artifact -Label "Overlay" -Asset "coder-worker-overlay" -Path "C:\local\overlay" -Sha256 ("e" * 64) `
+        -Destination (Join-Path $fetch "out") | Out-Null
+    Assert-Equal "C:\local\overlay" $script:staged.Path "a local path is passed through untouched"
+    Assert-Equal ("e" * 64) $script:staged.Sha256 "a local path keeps its explicit checksum"
+    Assert-Equal 0 $script:downloads "a local path never downloads checksums.txt"
+    Write-Host "PASS: release artifacts resolve to a pinned URI and a checksums.txt digest"
+}
+finally {
+    Remove-Item -LiteralPath $fetch -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:\Invoke-WebRequest -ErrorAction SilentlyContinue
+    Remove-Item -Path Function:\Get-StagedArtifact -ErrorAction SilentlyContinue
+}
+Invoke-Expression (Import-ScriptFunction -Path $scriptPath -Name "Get-StagedArtifact")
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("coder-worker-tests-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $work | Out-Null
