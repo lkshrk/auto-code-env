@@ -203,6 +203,8 @@ if ($MyInvocation.InvocationName -ne ".") {
     $profilePath = Resolve-WorkerProfilePath -ProfileAsset $configuration.Profile -Directory (Join-Path $root $tag) -Download $download
     Write-Host "Verified $($assets.Paths.Count) release assets of $tag against checksums.txt."
 
+    Copy-WorkerFileToDistribution -WslPath $wslPath -Distro $distro -Path $assets.Paths["openhands-overlay"] -Destination "/usr/local/sbin/openhands-overlay" -Mode "0755"
+    Write-Host "Refreshed openhands-overlay in '$distro' from $tag before exporting state."
     $statePath = Join-Path $root ("state-" + (Get-Date -Format "yyyyMMddHHmmss") + ".tar.gz")
     Invoke-WorkerOverlay -WslPath $wslPath -Distro $distro -Command @("state", "export") -OutputPath $statePath
     $entries = Test-WorkerStateArchive -Path $statePath -ListArchive {

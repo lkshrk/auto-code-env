@@ -369,7 +369,7 @@ function Get-WorkerOverlayArguments {
         throw "Distribution name '$Distro' is not valid."
     }
     $arguments = New-Object 'System.Collections.Generic.List[string]'
-    $arguments.AddRange([string[]]@("--distribution", $Distro, "--user", "root", "--exec", "openhands-overlay"))
+    $arguments.AddRange([string[]]@("--distribution", $Distro, "--user", "root", "--exec", "/usr/local/sbin/openhands-overlay"))
     $arguments.AddRange([string[]]$Command)
     if ($PasswordStdin) {
         $arguments.Add("--password-stdin")
