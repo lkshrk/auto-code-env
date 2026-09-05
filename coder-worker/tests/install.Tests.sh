@@ -13,8 +13,8 @@ grep -Eq "^readonly DOCKER_CE_VERSION='5:[0-9.]+-[0-9]+~ubuntu\.[0-9.]+~[a-z]+'$
 grep -Eq "^readonly CONTAINERD_VERSION='[0-9.]+-[0-9]+~ubuntu\.[0-9.]+~[a-z]+'$" "$overlay"
 grep -Eq '^readonly RBW_PACKAGE_VERSION=[0-9.]+-[0-9]+$' "$overlay"
 if grep -Eq ':latest|=latest| latest$' "$overlay"; then echo 'the overlay must not use a latest tag'; exit 1; fi
-if grep -Fn 2375 "$overlay" | grep -Fqv PLAINTEXT_PORT; then
-  echo 'the overlay may mention 2375 only as the plaintext port it refuses'; exit 1
+if grep -n 2375 "$overlay" | grep -qvE '^[0-9]+:readonly PLAINTEXT_PORT=2375$'; then
+  echo 'the overlay may mention 2375 only as the plaintext port constant it refuses'; exit 1
 fi
 grep -Fq '%U:%G %04a' "$overlay"
 

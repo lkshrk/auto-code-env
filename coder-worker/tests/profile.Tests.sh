@@ -87,6 +87,17 @@ refuse 'an Any firewall source' 'invalid value for FIREWALL_REMOTE_ADDRESSES'
 sed 's|^DISTRO_NAME=.*|DISTRO NAME=coder-worker|' "$good" > /tmp/bad.env
 refuse 'a line that is not NAME=value' 'is not NAME=value'
 
+for required in DISTRO_NAME UBUNTU_DISTRIBUTION VAULT_URL VAULT_EMAIL VAULT_ITEM_CA \
+  VAULT_ITEM_SERVER_CERT VAULT_ITEM_SERVER_KEY DOCKER_PORT FIREWALL_REMOTE_ADDRESSES; do
+  grep -v "^$required=" "$good" > /tmp/bad.env
+  refuse "a profile without $required" "is missing $required"
+done
+
+for bad in 999.999.999.999 10.254.0.256 10.254.0 10.254.0.10/33 10.254.0.10,300.1.1.1; do
+  sed "s|^FIREWALL_REMOTE_ADDRESSES=.*|FIREWALL_REMOTE_ADDRESSES=$bad|" "$good" > /tmp/bad.env
+  refuse "the firewall source $bad" 'invalid value for FIREWALL_REMOTE_ADDRESSES'
+done
+
 ln -sf "$good" /tmp/link.env
 if bash "$overlay" install --profile /tmp/link.env > /tmp/link.log 2>&1; then
   echo 'the profile parser followed a symbolic link'; exit 1

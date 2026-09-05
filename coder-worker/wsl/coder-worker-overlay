@@ -59,6 +59,18 @@ readonly -a PROFILE_KEYS=(
     DOCKER_PORT
     FIREWALL_REMOTE_ADDRESSES
 )
+readonly -a PROFILE_REQUIRED_KEYS=(
+    DISTRO_NAME
+    UBUNTU_DISTRIBUTION
+    VAULT_URL
+    VAULT_EMAIL
+    VAULT_ITEM_CA
+    VAULT_ITEM_SERVER_CERT
+    VAULT_ITEM_SERVER_KEY
+    DOCKER_PORT
+    FIREWALL_REMOTE_ADDRESSES
+)
+readonly UUID_PATTERN='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
 self_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 self_name=$(basename -- "${BASH_SOURCE[0]}")
@@ -93,7 +105,7 @@ require_root() {
 }
 
 is_uuid() {
-    [[ $1 =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+    [[ $1 =~ $UUID_PATTERN ]]
 }
 
 profile_key_known() {
@@ -128,7 +140,7 @@ profile_value_secret_shaped() {
 }
 
 profile_value_valid() {
-    local key=$1 value=$2
+    local key=$1 value=$2 octet address
     case $key in
         DISTRO_NAME|UBUNTU_DISTRIBUTION)
             [[ $value =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ;;
@@ -143,7 +155,9 @@ profile_value_valid() {
         DOCKER_PORT)
             [ "$value" = "$TLS_PORT" ] ;;
         FIREWALL_REMOTE_ADDRESSES)
-            [[ $value =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?(,[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?)*$ ]] ;;
+            octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+            address="$octet(\.$octet){3}(/([0-9]|[1-2][0-9]|3[0-2]))?"
+            [[ $value =~ ^$address(,$address)*$ ]] ;;
         *) return 1 ;;
     esac
 }
@@ -170,6 +184,9 @@ load_profile() {
         profile_value_valid "$key" "$value" || fail "$path line $number has an invalid value for $key"
         profile_values[$key]=$value
     done < "$path"
+    for key in "${PROFILE_REQUIRED_KEYS[@]}"; do
+        [ -n "${profile_values[$key]+set}" ] || fail "$path is missing $key"
+    done
 }
 
 profile_get() {
@@ -280,6 +297,7 @@ secrets() {
     vault_run \
         "OVERLAY_CA=$ca" "OVERLAY_CRT=$crt" "OVERLAY_KEY=$key" "OVERLAY_LAN_CA=$lan_ca" \
         "OVERLAY_ENV=$env" "OVERLAY_FOLDER=$folder" "OVERLAY_INDEX=$VAULT_INDEX" \
+        "OVERLAY_UUID_PATTERN=$UUID_PATTERN" \
         "OVERLAY_TLS_DIRECTORY=$TLS_DIRECTORY" "OVERLAY_LAN_CA_DIRECTORY=$LAN_CA_DIRECTORY" \
         "OVERLAY_CONFIG_DIRECTORY=$CONFIG_DIRECTORY" \
         "OVERLAY_CA_CERTIFICATE=$CA_CERTIFICATE" "OVERLAY_SERVER_CERTIFICATE=$SERVER_CERTIFICATE" \
@@ -304,6 +322,7 @@ secrets() {
                 entry_name=${rest%%"$tab"*}
                 entry_folder=${rest#*"$tab"}
                 case $entry_folder in *"$tab"*) continue ;; esac
+                printf %s "$entry_id" | grep -Eq "$OVERLAY_UUID_PATTERN" || continue
                 [ "$entry_name" = "$wanted" ] || continue
                 [ "$entry_folder" = "$OVERLAY_FOLDER" ] || continue
                 found=$entry_id

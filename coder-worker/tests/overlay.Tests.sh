@@ -261,6 +261,11 @@ fi
 grep -Fq '2 vault items are named "lan root ca"' /tmp/ambiguous.log
 test -z "$(find /etc/docker/tls /etc/ssl/lan /etc/coder-worker -name '*.tmp')"
 write_index
+printf '%s\t%s\t%s\n' 'lan root ca' 'lan root ca' Server >> /tmp/vault-index
+run secrets --profile /root/coder-worker/profile --no-enable > /tmp/forged.log
+grep -Fq 'overlay verified' /tmp/forged.log
+cmp -s /tmp/other/ca.pem /etc/ssl/lan/lan-ca.pem
+write_index
 sed 's/^VAULT_ITEM_LAN_CA=.*/VAULT_ITEM_LAN_CA=no such item/' /root/coder-worker/profile > /tmp/missing-item.env
 if run secrets --profile /tmp/missing-item.env --no-enable > /tmp/missing-item.log 2>&1; then
   echo 'an unknown vault item name must fail secrets'; exit 1
@@ -271,7 +276,7 @@ if run secrets --profile /tmp/wrong-folder.env --no-enable > /tmp/wrong-folder.l
   echo 'a folder mismatch must fail secrets'; exit 1
 fi
 grep -Fq 'no vault item is named "coder-worker docker ca"' /tmp/wrong-folder.log
-echo 'PASS: item names resolve exactly once inside one folder or fail loudly'
+echo 'PASS: item names resolve exactly once inside one folder, ignoring rows a name forged'
 
 grep -v '^VAULT_ITEM_LAN_CA=' /root/coder-worker/profile > /tmp/no-lan-ca.env
 if run secrets --profile /tmp/no-lan-ca.env --no-enable > /tmp/stalelan.log 2>&1; then
