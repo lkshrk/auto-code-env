@@ -1,6 +1,6 @@
 {
   "llm": {
-    "model": "openai/gpt-6-astra",
+    "model": "openai/gpt-5.6-sol",
     "base_url": "https://api.ai.h-cloud.lan/v1",
     "api_key_item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57"
   },
