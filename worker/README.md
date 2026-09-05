@@ -68,14 +68,100 @@ worker/build-wsl.sh 1.2.3 amd64 dist
 Only `openhands-worker-v*` tags release artifacts. Native GitHub runners build
 amd64 and arm64 separately; no QEMU emulation is accepted. The release has the
 two `.wsl` files, the matching `install.ps1`, `firewall.ps1`, `keepalive.ps1`,
-the in-distro `openhands-overlay` tool, and a combined `checksums.txt` covering
-all six, and GHCR has immutable
+`setup.ps1`, `update.ps1`, the shared `common.ps1` helpers, the in-distro
+`openhands-overlay` tool, every settings profile as `profile-<name>.json`, and a
+combined `checksums.txt` covering all of them, and GHCR has immutable
 `ghcr.io/lkshrk/openhands-worker:<version>` manifest with both architectures,
 SBOM, and provenance.
 
 An arm64 Linux build proves native Linux build compatibility only. It is not a
 Windows-on-Arm WSL runtime proof. Publication gate: native amd64 CI and real Windows import
 must both pass before release. Windows-on-Arm remains a separate runtime gate.
+
+## One-command setup and update
+
+`setup.ps1` and `update.ps1` drive everything the next two sections describe by
+hand. Both read one operator-owned host configuration, download every release
+asset they need, verify each one against `checksums.txt` from the same release
+before it is used, and drive `openhands-overlay` inside the distribution. Both
+require elevated PowerShell. Both dot-source `common.ps1`, so take all three
+from the same release:
+`https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/setup.ps1`,
+`https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/update.ps1`,
+and `common.ps1` beside them.
+
+The configuration lives at `%ProgramData%\openhands-worker\worker.json` unless
+`-Config` says otherwise. It is host-specific and never committed. `distro`
+defaults to `openhands-worker`, `arch` is auto-detected, `release` may be a tag
+or `latest`, and every other key is mandatory. `profile` is either a release
+asset name, an HTTPS URL, or a local path; a release asset is downloaded and
+verified like every other asset. This is the towerr configuration:
+
+```json
+{
+  "distro": "openhands-worker",
+  "release": "latest",
+  "remoteAddresses": ["10.254.0.10", "10.254.0.11", "10.254.0.99", "192.168.63.57"],
+  "vault": { "url": "https://vlt.h-cloud.io", "email": "agent-worker@harke.me" },
+  "items": {
+    "crt": "2924548c-ec74-4fd3-9181-b303cd574dbb",
+    "key": "a9e6c601-77b3-47b6-980d-493743b7d7da",
+    "api": "b9ba25a8-0b4f-45ef-9236-2504c2ba807c",
+    "pat": "28226043-0a70-4d54-bfb8-592086a319c0",
+    "ca": "cf9ec766-c260-4e7d-abe0-3299745b57b4"
+  },
+  "origins": ["https://orc.ai.h-cloud.lan"],
+  "profile": "profile-towerr.json"
+}
+```
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 -Release latest
+```
+
+`setup.ps1` resolves the release, verifies the assets, refuses to touch an
+existing distribution unless `-Replace` is passed, runs `install.ps1`,
+`firewall.ps1`, and `keepalive.ps1`, then pushes the release `openhands-overlay`
+and the settings profile into the distribution and runs `ca`, `secrets`,
+`github`, `origin`, `enable`, `settings`, `verify`, and `status` in that order.
+`enable` precedes `settings` because the profile is applied through the running
+backend at `http://127.0.0.1:8000`. `-Replace` delegates to `update.ps1 -Force`.
+
+`update.ps1` compares `/etc/openhands/release` with the target version and stops
+at "already at" unless `-Force` is passed; a missing marker counts as older than
+every release, and a newer installed version is refused without `-Force`. It
+exports the agent state with `openhands-overlay state export`, imports the new
+image as `openhands-worker-next`, and provisions that staging distribution
+completely. The old distribution is terminated only when the staging one is
+ready to bind TCP/443, and it is unregistered only after the staging
+distribution has passed `enable`, `settings`, and `verify`. The swap then
+renames the staging distribution by writing the `DistributionName` value under
+`HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss\{guid}`, which avoids
+a multi-gigabyte export and re-import. Any failure before the unregister removes
+`openhands-worker-next`, restarts the old distribution, and exits non-zero, so
+the worker either updates or stays exactly as it was. Afterwards `keepalive.ps1`
+and `firewall.ps1` re-run, and `enable` and `status` confirm the result. The
+state archive of the last run is kept in `%TEMP%\openhands-worker`.
+
+`update.ps1 -Schedule` registers a hidden weekly scheduled task for the current
+user that runs `update.ps1 -Release latest` against the same `worker.json`, and
+exits without updating. The task runs with the highest available privileges
+because the update needs the same elevation an interactive run needs.
+
+Security notes. The Vaultwarden master password is read once with `Read-Host
+-AsSecureString` (or supplied as a `-VaultPassword` SecureString) and stored
+DPAPI-protected as an `Export-Clixml` `PSCredential` at
+`%LOCALAPPDATA%\openhands-worker\vault.cred`, so only the same Windows user on
+the same machine can decrypt it. It reaches the distribution only on stdin of
+`wsl.exe ... openhands-overlay <command> --password-stdin`, written as exact
+bytes through a redirected `System.Diagnostics.Process` stream; it is never a
+command-line argument and never written unencrypted. The state archive is moved
+the same way: `state export` is captured from a redirected stdout stream to a
+file and `state import` is fed from a file stream, so no PowerShell pipeline
+re-encodes the bytes. Every asset, including the settings profile and the
+`.wsl` image, is checked against `checksums.txt` before it is used, and a
+mismatch aborts before any state changes.
 
 ## Windows import and host overlay
 

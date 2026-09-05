@@ -147,10 +147,21 @@ jobs:
           cp worker/windows/install.ps1 release/install.ps1
           cp worker/windows/firewall.ps1 release/firewall.ps1
           cp worker/windows/keepalive.ps1 release/keepalive.ps1
+          cp worker/windows/common.ps1 release/common.ps1
+          cp worker/windows/setup.ps1 release/setup.ps1
+          cp worker/windows/update.ps1 release/update.ps1
           cp worker/rootfs/usr/local/sbin/openhands-overlay release/openhands-overlay
+          profiles=()
+          for source in openhands/profiles/*.json; do
+            test -f "$source"
+            asset="profile-$(basename "$source")"
+            cp "$source" "release/$asset"
+            profiles+=("$asset")
+          done
+          test "${#profiles[@]}" -gt 0
           cat release/openhands-worker-"${VERSION}"-amd64.wsl.sha256 \
             release/openhands-worker-"${VERSION}"-arm64.wsl.sha256 > release/checksums.txt
-          (cd release && sha256sum install.ps1 firewall.ps1 keepalive.ps1 openhands-overlay >> checksums.txt)
+          (cd release && sha256sum install.ps1 firewall.ps1 keepalive.ps1 common.ps1 setup.ps1 update.ps1 openhands-overlay "${profiles[@]}" >> checksums.txt)
           (cd release && sha256sum -c checksums.txt)
           release_json="$RUNNER_TEMP/release.json"
           release_error="$RUNNER_TEMP/release-error.log"
@@ -176,7 +187,11 @@ jobs:
                 release/install.ps1 \
                 release/firewall.ps1 \
                 release/keepalive.ps1 \
+                release/common.ps1 \
+                release/setup.ps1 \
+                release/update.ps1 \
                 release/openhands-overlay \
+                "${profiles[@]/#/release/}" \
                 release/checksums.txt
               ;;
             false)
@@ -186,7 +201,11 @@ jobs:
                 install.ps1 \
                 firewall.ps1 \
                 keepalive.ps1 \
+                common.ps1 \
+                setup.ps1 \
+                update.ps1 \
                 openhands-overlay \
+                "${profiles[@]}" \
                 checksums.txt; do
                 digest="sha256:$(sha256sum "release/$asset" | awk '{print $1}')"
                 jq -e --arg asset "$asset" --arg digest "$digest" \

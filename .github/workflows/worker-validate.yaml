@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/worker-validate.yaml
       - .github/workflows/worker-release.yaml
+      - openhands/profiles/**
       - worker/**
 
 permissions:
@@ -40,6 +41,14 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
             pwsh -NoProfile -File worker/tests/keepalive.Tests.ps1
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File worker/tests/setup.Tests.ps1
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File worker/tests/update.Tests.ps1
           find worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
           shellcheck worker/rootfs/usr/local/sbin/openhands-overlay worker/rootfs-oci/usr/local/sbin/container-entrypoint
 
