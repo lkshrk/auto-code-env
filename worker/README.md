@@ -257,9 +257,11 @@ after the last `wsl.exe` session ends, taking nginx and the backend with it.
 `keepalive.ps1` from the same release,
 `https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/keepalive.ps1`,
 registers a scheduled task for the current user that runs
-`wsl.exe -d openhands-worker --user root --exec /bin/sleep infinity` inside a
-hidden PowerShell host at logon, with no execution time limit, and starts it
-immediately. No console window exists to close. Re-running the script stops the
+`wsl.exe -d openhands-worker --user root --exec /bin/sleep infinity` through a
+`wscript.exe` launcher (`%ProgramData%\openhands-worker\keepalive-<distro>.vbs`,
+window style 0) at logon, with no execution time limit, and starts it
+immediately. No console window exists to close; a hidden PowerShell host was
+not enough under Task Scheduler. Re-running the script stops the
 previous instance first, so a replaced distro is held by a fresh session. The host must log the
 operator on (or auto-logon) for the worker to come back after a reboot.
 
