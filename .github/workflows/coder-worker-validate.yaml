@@ -1,0 +1,34 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Coder worker validate
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/coder-worker-validate.yaml
+      - coder-worker/**
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: deterministic checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Run deterministic validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash coder-worker/tests/setup.Tests.sh
+          bash coder-worker/tests/overlay.Tests.sh
+          bash coder-worker/tests/gen-docker-tls.Tests.sh
+          docker run --rm --platform linux/amd64 \
+            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
+            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
+            pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1
+          find coder-worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
+          shellcheck coder-worker/wsl/coder-worker-overlay

@@ -177,6 +177,12 @@ wsl.exe -d openhands-worker -u root -- openhands-overlay secrets --vault-url htt
 wsl.exe -d openhands-worker -u root -- openhands-overlay enable
 ```
 
+The `rbw` credential pinentry that `provision.sh` writes to
+`/usr/local/libexec/openhands-rbw-pinentry` is duplicated by `coder-worker`,
+which writes the same program under its own name. Both installers ship as
+standalone release assets, so neither can depend on a shared file; change the
+program in both places.
+
 `openhands-overlay` ships inside the image and as a release asset,
 `https://github.com/lkshrk/auto-code-env/releases/download/openhands-worker-v<version>/openhands-overlay`,
 so an installed distro can take a newer tool without re-import: download as
