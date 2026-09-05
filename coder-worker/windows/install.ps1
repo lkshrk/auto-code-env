@@ -1,23 +1,37 @@
 [CmdletBinding()]
 param(
-    [string]$DistroName = "coder-worker",
-    [string]$UbuntuDistribution = "Ubuntu-26.04",
+    [string]$HostProfile,
+    [string]$ProfilePath,
+    [string]$ReleaseTag,
+    [string]$ChecksumsSha256,
+    [string]$DistroName,
+    [string]$UbuntuDistribution,
     [string]$Location,
-    [string]$SetupScriptPath,
-    [string]$SetupScriptUri,
-    [string]$SetupScriptSha256,
     [string]$OverlayPath,
     [string]$OverlayUri,
     [string]$OverlaySha256,
+    [string]$FirewallPath,
+    [string]$FirewallUri,
+    [string]$FirewallSha256,
+    [string]$KeepalivePath,
+    [string]$KeepaliveUri,
+    [string]$KeepaliveSha256,
     [string]$RootfsPath,
     [string]$RootfsUri,
-    [string]$RootfsSha256
+    [string]$RootfsSha256,
+    [switch]$SkipFirewall,
+    [switch]$SkipKeepalive
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+$DefaultRelease = "coder-worker-v2.0.0"
+$ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
+$TlsPort = 2376
+$FirewallRuleName = "coder-worker-docker"
+$FirewallRuleDisplayName = "Coder worker Docker"
 
 # Duplicated from worker/windows/install.ps1: both installers ship as standalone release assets.
 function Set-WslMirroredNetworking {
@@ -172,6 +186,135 @@ function Test-DistributionName {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Name)
 
     return [bool]($Name -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+}
+
+function Test-ProfileKeySecretShaped {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Key)
+
+    if ($Key -cmatch '^VAULT_ITEM_') {
+        return $false
+    }
+    return [bool]($Key -cmatch 'PASSWORD|PASSWD|SECRET|TOKEN|CREDENTIAL|PRIVATE|PASSPHRASE|APIKEY|^KEY_|_KEY$|_KEY_')
+}
+
+function Test-ProfileValueSecretShaped {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+
+    if ($Value -cmatch '-----BEGIN' -or $Value -cmatch '^(ghp_|github_pat_|sk-)') {
+        return $true
+    }
+    return [bool]($Value -cmatch '[A-Za-z0-9+/=_-]{40,}')
+}
+
+function Test-ProfileValue {
+    param(
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Value,
+        [int]$Port = 2376
+    )
+
+    switch -CaseSensitive ($Key) {
+        { $_ -cin @("DISTRO_NAME", "UBUNTU_DISTRIBUTION") } { return [bool]($Value -cmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') }
+        "VHD_LOCATION" { return [bool]($Value -cmatch '^[A-Za-z]:\\[^"<>|*?]{0,200}$') }
+        "VAULT_URL" { return [bool]($Value -cmatch '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$') }
+        "VAULT_EMAIL" { return [bool]($Value -cmatch '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$') }
+        { $_ -ceq "VAULT_FOLDER" -or $_ -cmatch '^VAULT_ITEM_' } { return [bool]($Value -cmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$') }
+        "DOCKER_PORT" { return [bool]($Value -ceq "$Port") }
+        "FIREWALL_REMOTE_ADDRESSES" { return [bool]($Value -cmatch '^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?(,[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?)*$') }
+    }
+    return $false
+}
+
+function Read-CoderWorkerProfile {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines)
+
+    $known = @(
+        "DISTRO_NAME", "UBUNTU_DISTRIBUTION", "VHD_LOCATION",
+        "VAULT_URL", "VAULT_EMAIL", "VAULT_FOLDER",
+        "VAULT_ITEM_CA", "VAULT_ITEM_SERVER_CERT", "VAULT_ITEM_SERVER_KEY",
+        "VAULT_ITEM_LAN_CA", "VAULT_ITEM_WORKSPACE_ENV",
+        "DOCKER_PORT", "FIREWALL_REMOTE_ADDRESSES"
+    )
+    $required = @(
+        "DISTRO_NAME", "UBUNTU_DISTRIBUTION", "VAULT_URL", "VAULT_EMAIL",
+        "VAULT_ITEM_CA", "VAULT_ITEM_SERVER_CERT", "VAULT_ITEM_SERVER_KEY",
+        "DOCKER_PORT", "FIREWALL_REMOTE_ADDRESSES"
+    )
+    $profileValues = @{}
+    for ($index = 0; $index -lt $Lines.Count; $index++) {
+        $number = $index + 1
+        $line = $Lines[$index] -replace "`r$", ""
+        if ($line -eq "" -or $line.StartsWith("#")) {
+            continue
+        }
+        if ($line -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+            throw "Profile line ${number} is not NAME=value."
+        }
+        $key = $Matches[1]
+        $value = $Matches[2]
+        if (Test-ProfileKeySecretShaped -Key $key) {
+            throw "Profile line ${number} names a secret; the profile carries no credentials."
+        }
+        if ($known -cnotcontains $key) {
+            throw "Profile line ${number} has unknown key ${key}."
+        }
+        if ($profileValues.ContainsKey($key)) {
+            throw "Profile line ${number} repeats ${key}."
+        }
+        if (Test-ProfileValueSecretShaped -Value $value) {
+            throw "Profile line ${number} looks like a credential; the profile carries no credentials."
+        }
+        if (-not (Test-ProfileValue -Key $key -Value $value)) {
+            throw "Profile line ${number} has an invalid value for ${key}."
+        }
+        $profileValues[$key] = $value
+    }
+    foreach ($key in $required) {
+        if (-not $profileValues.ContainsKey($key)) {
+            throw "Profile is missing ${key}."
+        }
+    }
+    return $profileValues
+}
+
+function Get-ChecksumMap {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines)
+
+    $map = @{}
+    foreach ($raw in $Lines) {
+        $line = $raw -replace "`r$", ""
+        if ($line -eq "") {
+            continue
+        }
+        if ($line -notmatch '^(?<digest>[0-9A-Fa-f]{64})[ ][ *](?<name>[^\\/]+)$') {
+            throw "'$line' is not a sha256sum line."
+        }
+        $name = $Matches["name"]
+        if ($name -eq "." -or $name -eq ".." -or $map.ContainsKey($name)) {
+            throw "checksums.txt names '$name' more than once or unsafely."
+        }
+        $map[$name] = $Matches["digest"].ToLowerInvariant()
+    }
+    if ($map.Count -eq 0) {
+        throw "checksums.txt is empty."
+    }
+    return $map
+}
+
+function Get-ReleaseAssetUri {
+    param(
+        [Parameter(Mandatory)][string]$BaseUri,
+        [Parameter(Mandatory)][string]$Tag,
+        [Parameter(Mandatory)][string]$Asset
+    )
+
+    if ($Tag -notmatch '^coder-worker-v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') {
+        throw "Release tag '$Tag' is not a coder-worker release tag."
+    }
+    if ($Asset -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+        throw "Release asset name '$Asset' is not valid."
+    }
+    return "$BaseUri/$Tag/$Asset"
 }
 
 function Test-WslDistributionRegistered {
@@ -374,7 +517,8 @@ function Copy-FileIntoDistribution {
 function Assert-WslDistributionIdentity {
     param(
         [Parameter(Mandatory)][string]$WslPath,
-        [Parameter(Mandatory)][string]$Name
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Version
     )
 
     $uid = Invoke-Wsl -WslPath $WslPath -Arguments @("--distribution", $Name, "--user", "root", "--exec", "id", "-u") `
@@ -385,8 +529,8 @@ function Assert-WslDistributionIdentity {
 
     $release = Invoke-Wsl -WslPath $WslPath -Arguments @("--distribution", $Name, "--user", "root", "--exec", "cat", "/etc/os-release") `
         -FailureMessage "Unable to read the release identity for WSL distribution '$Name'."
-    if (-not (Test-UbuntuRelease -Output $release -Version "26.04")) {
-        throw "WSL distribution '$Name' is not Ubuntu 26.04."
+    if (-not (Test-UbuntuRelease -Output $release -Version $Version)) {
+        throw "WSL distribution '$Name' is not Ubuntu $Version."
     }
 }
 
@@ -422,75 +566,198 @@ function Assert-WslPrerequisites {
     return $wslPath
 }
 
-if (-not (Test-DistributionName -Name $DistroName)) {
-    throw "Distribution name '$DistroName' is not valid."
-}
-if (-not (Test-DistributionName -Name $UbuntuDistribution)) {
-    throw "Ubuntu distribution name '$UbuntuDistribution' is not valid."
-}
-$wslPath = Assert-WslPrerequisites
-
-$configPath = Join-Path $env:USERPROFILE ".wslconfig"
-$result = Set-WslMirroredNetworking -Path $configPath
-if ($result.Changed) {
-    & $wslPath --shutdown
-    if ($LASTEXITCODE -ne 0) {
-        Restore-WslConfig -Path $configPath -BackupPath $result.BackupPath
-        throw "WSL configuration changed, but WSL shutdown failed."
-    }
-}
-
-$registered = Invoke-Wsl -WslPath $wslPath -Arguments @("--list", "--quiet") `
-    -FailureMessage "Unable to list installed WSL distributions."
-if (Test-WslDistributionRegistered -Output $registered -Name $DistroName) {
-    Write-Host "WSL distribution '$DistroName' already exists."
-    return
-}
-
 $stage = Join-Path ([IO.Path]::GetTempPath()) ("coder-worker-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $stage | Out-Null
 try {
-    New-Item -ItemType Directory -Path $stage | Out-Null
-    $setupScript = Get-StagedArtifact -Label "SetupScript" -Path $SetupScriptPath -Uri $SetupScriptUri `
-        -Sha256 $SetupScriptSha256 -Destination (Join-Path $stage "setup.sh")
-    $overlay = Get-StagedArtifact -Label "Overlay" -Path $OverlayPath -Uri $OverlayUri `
-        -Sha256 $OverlaySha256 -Destination (Join-Path $stage "coder-worker-overlay")
-    $rootfs = $null
-    if (-not [string]::IsNullOrWhiteSpace($RootfsPath) -or -not [string]::IsNullOrWhiteSpace($RootfsUri)) {
-        $rootfs = Get-StagedArtifact -Label "Rootfs" -Path $RootfsPath -Uri $RootfsUri `
-            -Sha256 $RootfsSha256 -Destination (Join-Path $stage "rootfs.tar.gz")
+    $tag = if ([string]::IsNullOrWhiteSpace($ReleaseTag)) { $DefaultRelease } else { $ReleaseTag }
+    $checksums = $null
+
+    function Get-ReleaseChecksums {
+        if ($null -ne $script:checksums) {
+            return $script:checksums
+        }
+        $destination = Join-Path $stage "checksums.txt"
+        $uri = Get-ReleaseAssetUri -BaseUri $ReleaseBaseUri -Tag $tag -Asset "checksums.txt"
+        $parsed = $null
+        if (-not [Uri]::TryCreate($uri, [UriKind]::Absolute, [ref]$parsed) -or $parsed.Scheme -cne "https") {
+            throw "The release base URI must be absolute HTTPS."
+        }
+        Invoke-WebRequest -Uri $parsed -OutFile $destination -UseBasicParsing
+        if (-not [string]::IsNullOrWhiteSpace($ChecksumsSha256)) {
+            if ($ChecksumsSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
+                throw "ChecksumsSha256 must be a 64-character hexadecimal SHA-256 value."
+            }
+            $stream = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            try {
+                $actual = Get-FileSha256 -Stream $stream
+            }
+            finally {
+                $stream.Dispose()
+            }
+            if ($actual -ine $ChecksumsSha256) {
+                throw "checksums.txt SHA-256 does not match ChecksumsSha256."
+            }
+        }
+        $script:checksums = Get-ChecksumMap -Lines ([string[]][IO.File]::ReadAllLines($destination))
+        return $script:checksums
     }
 
-    $installArguments = Get-DistributionInstallArguments -Name $DistroName -Flavor $UbuntuDistribution `
-        -Location $Location -RootfsPath $rootfs
-    Invoke-Wsl -WslPath $wslPath -Arguments $installArguments `
-        -FailureMessage "Unable to install WSL distribution '$DistroName'. If '$UbuntuDistribution' is unavailable on this host, rerun with -RootfsPath or -RootfsUri, -RootfsSha256 and -Location." | Out-Null
+    function Get-Artifact {
+        param(
+            [Parameter(Mandatory)][string]$Label,
+            [Parameter(Mandatory)][string]$Asset,
+            [AllowEmptyString()][AllowNull()][string]$Path,
+            [AllowEmptyString()][AllowNull()][string]$Uri,
+            [AllowEmptyString()][AllowNull()][string]$Sha256,
+            [Parameter(Mandatory)][string]$Destination
+        )
+
+        if ([string]::IsNullOrWhiteSpace($Path) -and [string]::IsNullOrWhiteSpace($Uri)) {
+            $map = Get-ReleaseChecksums
+            if (-not $map.ContainsKey($Asset)) {
+                throw "checksums.txt for '$tag' has no entry for '$Asset'."
+            }
+            $Uri = Get-ReleaseAssetUri -BaseUri $ReleaseBaseUri -Tag $tag -Asset $Asset
+            $Sha256 = $map[$Asset]
+        }
+        return Get-StagedArtifact -Label $Label -Path $Path -Uri $Uri -Sha256 $Sha256 -Destination $Destination
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ProfilePath) -and -not [string]::IsNullOrWhiteSpace($HostProfile)) {
+        throw "Specify exactly one of -ProfilePath or -HostProfile."
+    }
+    if ([string]::IsNullOrWhiteSpace($ProfilePath)) {
+        if ([string]::IsNullOrWhiteSpace($HostProfile)) {
+            throw "Specify -HostProfile <name> (see coder-worker/hosts) or -ProfilePath <file>."
+        }
+        if (-not (Test-DistributionName -Name $HostProfile)) {
+            throw "Host profile name '$HostProfile' is not valid."
+        }
+        $repositoryProfile = Join-Path $PSScriptRoot (Join-Path ".." (Join-Path "hosts" "$HostProfile.profile"))
+        if (Test-Path -LiteralPath $repositoryProfile -PathType Leaf) {
+            $ProfilePath = $repositoryProfile
+        }
+        else {
+            $ProfilePath = Get-Artifact -Label "Profile" -Asset "host-$HostProfile.profile" `
+                -Destination (Join-Path $stage "profile")
+        }
+    }
+    $settings = Read-CoderWorkerProfile -Lines ([string[]][IO.File]::ReadAllLines($ProfilePath))
+
+    if ([string]::IsNullOrWhiteSpace($DistroName)) { $DistroName = $settings["DISTRO_NAME"] }
+    if ([string]::IsNullOrWhiteSpace($UbuntuDistribution)) { $UbuntuDistribution = $settings["UBUNTU_DISTRIBUTION"] }
+    if ([string]::IsNullOrWhiteSpace($Location) -and $settings.ContainsKey("VHD_LOCATION")) { $Location = $settings["VHD_LOCATION"] }
+    $ubuntuVersion = $UbuntuDistribution -replace '^Ubuntu-', ''
+    $dockerPort = [int]$settings["DOCKER_PORT"]
+    $remoteAddresses = $settings["FIREWALL_REMOTE_ADDRESSES"]
+
+    if (-not (Test-DistributionName -Name $DistroName)) {
+        throw "Distribution name '$DistroName' is not valid."
+    }
+    if (-not (Test-DistributionName -Name $UbuntuDistribution)) {
+        throw "Ubuntu distribution name '$UbuntuDistribution' is not valid."
+    }
+    if ($dockerPort -ne $TlsPort) {
+        throw "DOCKER_PORT must be $TlsPort."
+    }
+
+    $wslPath = Assert-WslPrerequisites
+
+    $configPath = Join-Path $env:USERPROFILE ".wslconfig"
+    $result = Set-WslMirroredNetworking -Path $configPath
+    if ($result.Changed) {
+        & $wslPath --shutdown
+        if ($LASTEXITCODE -ne 0) {
+            Restore-WslConfig -Path $configPath -BackupPath $result.BackupPath
+            throw "WSL configuration changed, but WSL shutdown failed."
+        }
+    }
+
+    if ($SkipFirewall) {
+        Write-Host "Skipping the firewall rule: TCP/$dockerPort is not restricted by this run."
+    }
+    else {
+        $firewall = Get-Artifact -Label "Firewall" -Asset "firewall.ps1" -Path $FirewallPath -Uri $FirewallUri `
+            -Sha256 $FirewallSha256 -Destination (Join-Path $stage "firewall.ps1")
+        & $firewall -RuleName $FirewallRuleName -RuleDisplayName $FirewallRuleDisplayName `
+            -Port $dockerPort -RemoteAddresses $remoteAddresses
+    }
 
     $registered = Invoke-Wsl -WslPath $wslPath -Arguments @("--list", "--quiet") `
-        -FailureMessage "Unable to verify WSL distribution registration."
-    if (-not (Test-WslDistributionRegistered -Output $registered -Name $DistroName)) {
-        throw "WSL distribution '$DistroName' was not registered."
+        -FailureMessage "Unable to list installed WSL distributions."
+    if (Test-WslDistributionRegistered -Output $registered -Name $DistroName) {
+        Write-Host "WSL distribution '$DistroName' already exists; leaving it untouched."
     }
-
-    Invoke-Wsl -WslPath $wslPath -Arguments @("--manage", $DistroName, "--set-sparse", "true") `
-        -FailureMessage "Unable to mark WSL distribution '$DistroName' sparse." | Out-Null
-    Write-Host "Coder worker stage 1 completed: '$DistroName' registered."
-
-    Assert-WslDistributionIdentity -WslPath $wslPath -Name $DistroName
-    Invoke-Wsl -WslPath $wslPath -Arguments @("--distribution", $DistroName, "--user", "root", "--exec", "/bin/mkdir", "-p", $StageRoot) `
-        -FailureMessage "Unable to create '$StageRoot' inside WSL distribution '$DistroName'." | Out-Null
-    Copy-FileIntoDistribution -WslPath $wslPath -Name $DistroName -Source $setupScript -Target "$StageRoot/setup.sh" -Sha256 $SetupScriptSha256
-    Copy-FileIntoDistribution -WslPath $wslPath -Name $DistroName -Source $overlay -Target "$StageRoot/coder-worker-overlay" -Sha256 $OverlaySha256
-    Write-Host "Coder worker stage 2 completed: setup script and overlay staged."
-
-    foreach ($pass in 1, 2) {
-        & $wslPath --distribution $DistroName --user root --exec /bin/bash "$StageRoot/setup.sh"
-        if ($LASTEXITCODE -ne 0) {
-            throw "Setup pass $pass failed inside WSL distribution '$DistroName'."
+    else {
+        $overlay = Get-Artifact -Label "Overlay" -Asset "coder-worker-overlay" -Path $OverlayPath -Uri $OverlayUri `
+            -Sha256 $OverlaySha256 -Destination (Join-Path $stage "coder-worker-overlay")
+        $overlayStream = [IO.File]::Open($overlay, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try {
+            $overlayDigest = Get-FileSha256 -Stream $overlayStream
         }
-        Invoke-Wsl -WslPath $wslPath -Arguments @("--terminate", $DistroName) `
-            -FailureMessage "Unable to terminate WSL distribution '$DistroName'." | Out-Null
+        finally {
+            $overlayStream.Dispose()
+        }
+
+        $stagedProfile = Join-Path $stage "profile"
+        [IO.File]::Copy((Get-Item -LiteralPath $ProfilePath -Force).FullName, $stagedProfile, $true)
+        $profileStream = [IO.File]::Open($stagedProfile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try {
+            $profileDigest = Get-FileSha256 -Stream $profileStream
+        }
+        finally {
+            $profileStream.Dispose()
+        }
+
+        $rootfs = $null
+        if (-not [string]::IsNullOrWhiteSpace($RootfsPath) -or -not [string]::IsNullOrWhiteSpace($RootfsUri)) {
+            $rootfs = Get-StagedArtifact -Label "Rootfs" -Path $RootfsPath -Uri $RootfsUri `
+                -Sha256 $RootfsSha256 -Destination (Join-Path $stage "rootfs.tar.gz")
+        }
+
+        $installArguments = Get-DistributionInstallArguments -Name $DistroName -Flavor $UbuntuDistribution `
+            -Location $Location -RootfsPath $rootfs
+        Invoke-Wsl -WslPath $wslPath -Arguments $installArguments `
+            -FailureMessage "Unable to install WSL distribution '$DistroName'. If '$UbuntuDistribution' is unavailable on this host, rerun with -RootfsPath or -RootfsUri, -RootfsSha256 and a VHD_LOCATION." | Out-Null
+
+        $registered = Invoke-Wsl -WslPath $wslPath -Arguments @("--list", "--quiet") `
+            -FailureMessage "Unable to verify WSL distribution registration."
+        if (-not (Test-WslDistributionRegistered -Output $registered -Name $DistroName)) {
+            throw "WSL distribution '$DistroName' was not registered."
+        }
+
+        Invoke-Wsl -WslPath $wslPath -Arguments @("--manage", $DistroName, "--set-sparse", "true") `
+            -FailureMessage "Unable to mark WSL distribution '$DistroName' sparse." | Out-Null
+        Write-Host "Coder worker stage 1 completed: '$DistroName' registered."
+
+        Assert-WslDistributionIdentity -WslPath $wslPath -Name $DistroName -Version $ubuntuVersion
+        Invoke-Wsl -WslPath $wslPath -Arguments @("--distribution", $DistroName, "--user", "root", "--exec", "/bin/mkdir", "-p", $StageRoot) `
+            -FailureMessage "Unable to create '$StageRoot' inside WSL distribution '$DistroName'." | Out-Null
+        Copy-FileIntoDistribution -WslPath $wslPath -Name $DistroName -Source $overlay -Target "$StageRoot/coder-worker-overlay" -Sha256 $overlayDigest
+        Copy-FileIntoDistribution -WslPath $wslPath -Name $DistroName -Source $stagedProfile -Target "$StageRoot/profile" -Sha256 $profileDigest
+        Write-Host "Coder worker stage 2 completed: overlay and host profile staged."
+
+        foreach ($pass in 1, 2) {
+            & $wslPath --distribution $DistroName --user root --exec /bin/bash "$StageRoot/coder-worker-overlay" install --profile "$StageRoot/profile"
+            if ($LASTEXITCODE -ne 0) {
+                throw "Setup pass $pass failed inside WSL distribution '$DistroName'."
+            }
+            Invoke-Wsl -WslPath $wslPath -Arguments @("--terminate", $DistroName) `
+                -FailureMessage "Unable to terminate WSL distribution '$DistroName'." | Out-Null
+        }
+        Write-Host "Coder worker stage 3 completed: docker installed and held down until TLS material exists."
     }
-    Write-Host "Coder worker stage 3 completed: docker installed and held down until TLS material exists."
+
+    if ($SkipKeepalive) {
+        Write-Host "Skipping the keepalive task: '$DistroName' will idle-stop between workspace builds."
+    }
+    else {
+        $keepalive = Get-Artifact -Label "Keepalive" -Asset "keepalive.ps1" -Path $KeepalivePath -Uri $KeepaliveUri `
+            -Sha256 $KeepaliveSha256 -Destination (Join-Path $stage "keepalive.ps1")
+        & $keepalive -DistroName $DistroName -TaskName "$DistroName-keepalive"
+    }
+
+    Write-Host "Run: wsl.exe -d $DistroName -u root -- coder-worker-overlay secrets"
 }
 finally {
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue

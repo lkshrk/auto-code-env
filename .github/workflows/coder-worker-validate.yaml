@@ -5,6 +5,7 @@ name: Coder worker validate
 on:
   pull_request:
     paths:
+      - .github/workflows/coder-worker-release.yaml
       - .github/workflows/coder-worker-validate.yaml
       - coder-worker/**
 
@@ -23,7 +24,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash coder-worker/tests/setup.Tests.sh
+          bash coder-worker/tests/profile.Tests.sh
+          bash coder-worker/tests/install.Tests.sh
           bash coder-worker/tests/overlay.Tests.sh
           bash coder-worker/tests/gen-docker-tls.Tests.sh
           docker run --rm --platform linux/amd64 \
