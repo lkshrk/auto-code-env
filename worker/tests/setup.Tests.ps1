@@ -62,7 +62,7 @@ $WorkerDistroPattern = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 foreach ($name in "Get-WorkerJsonMember", "ConvertTo-WorkerStringArray", "Read-WorkerConfig", "Get-WorkerVersionFromTag",
     "Select-WorkerReleaseTag", "Get-WorkerFileSha256", "Read-WorkerChecksums", "Assert-WorkerAsset", "Get-WorkerAssetUri",
     "Save-WorkerAsset", "Get-WorkerVaultCredential", "Save-WorkerVaultCredential", "Get-WorkerOverlayArguments",
-    "Get-WorkerPasswordBytes", "Invoke-WorkerProcess", "Invoke-WorkerOverlay", "Get-WorkerAssetNames",
+    "Get-WorkerPasswordBytes", "ConvertTo-WorkerArgument", "ConvertTo-WorkerCommandLine", "Invoke-WorkerProcess", "Invoke-WorkerOverlay", "Get-WorkerAssetNames",
     "Resolve-WorkerProfilePath", "Get-WorkerConfigPath", "Get-WorkerCredentialPath", "Invoke-WorkerProvision",
     "Invoke-WorkerActivation") {
     Invoke-Expression (Import-ScriptFunction -Path $commonPath -Name $name)
@@ -251,6 +251,13 @@ exit "${FAKE_WSL_EXIT:-0}"
     [IO.File]::WriteAllText($emitter, "#!/bin/sh`ncat `"$binaryPath`"`n")
     & chmod +x $emitter
     Invoke-WorkerProcess -FilePath $emitter -Arguments @() -OutputPath $outputPath | Out-Null
+
+    Assert-Equal "plain" (ConvertTo-WorkerArgument -Value "plain") "plain argument is not quoted"
+    Assert-Equal '"with space"' (ConvertTo-WorkerArgument -Value "with space") "spaces are quoted"
+    Assert-Equal '""' (ConvertTo-WorkerArgument -Value "") "empty argument becomes empty quotes"
+    Assert-Equal '"say \"hi\""' (ConvertTo-WorkerArgument -Value 'say "hi"') "embedded quotes are escaped"
+    Assert-Equal "-d openhands-worker --user root -- openhands-overlay secrets --password-stdin" (ConvertTo-WorkerCommandLine -Arguments @("-d", "openhands-worker", "--user", "root", "--", "openhands-overlay", "secrets", "--password-stdin")) "wsl arguments round-trip unquoted"
+    Write-Host "PASS: command line quoting for Windows PowerShell 5.1"
     Assert-Equal ([Convert]::ToBase64String($bytes)) ([Convert]::ToBase64String([IO.File]::ReadAllBytes($outputPath))) "redirected stdout is copied byte for byte"
     Write-Host "PASS: password on stdin and binary-safe transfer"
 

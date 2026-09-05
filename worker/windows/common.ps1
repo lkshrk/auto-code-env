@@ -393,6 +393,41 @@ function Get-WorkerPasswordBytes {
     }
 }
 
+function ConvertTo-WorkerArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    if ($Value -ne "" -and $Value -notmatch '[\s"]') {
+        return $Value
+    }
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    $backslashes = 0
+    foreach ($char in $Value.ToCharArray()) {
+        if ($char -eq '\') {
+            $backslashes++
+            continue
+        }
+        if ($char -eq '"') {
+            [void]$builder.Append('\' * ($backslashes * 2 + 1))
+            [void]$builder.Append('"')
+            $backslashes = 0
+            continue
+        }
+        [void]$builder.Append('\' * $backslashes)
+        [void]$builder.Append($char)
+        $backslashes = 0
+    }
+    [void]$builder.Append('\' * ($backslashes * 2))
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function ConvertTo-WorkerCommandLine {
+    param([AllowEmptyCollection()][string[]]$Arguments)
+
+    return (($Arguments | ForEach-Object { ConvertTo-WorkerArgument -Value $_ }) -join " ")
+}
+
 function Invoke-WorkerProcess {
     param(
         [Parameter(Mandatory)][string]$FilePath,
@@ -404,9 +439,7 @@ function Invoke-WorkerProcess {
 
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $FilePath
-    foreach ($argument in $Arguments) {
-        $info.ArgumentList.Add($argument)
-    }
+    $info.Arguments = ConvertTo-WorkerCommandLine -Arguments $Arguments
     $info.UseShellExecute = $false
     $info.RedirectStandardInput = ($null -ne $InputBytes -or -not [string]::IsNullOrEmpty($InputPath))
     $info.RedirectStandardOutput = -not [string]::IsNullOrEmpty($OutputPath)
