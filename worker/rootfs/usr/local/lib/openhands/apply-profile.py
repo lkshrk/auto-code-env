@@ -355,7 +355,7 @@ def secret_reader(directory):
             path = os.path.join(directory, name)
             try:
                 with open(path) as handle:
-                    cache[name] = handle.read()
+                    cache[name] = handle.read().strip()
             except OSError:
                 fail("missing material for secret %s at %s" % (name, path))
         return cache[name]

@@ -30,7 +30,7 @@ apply=/src/worker/rootfs/usr/local/lib/openhands/apply-profile.py
 
 printf 'session-key-fixture\n' > /tmp/api-key
 printf 'sk-llm-FIXTUREKEY111111111111' > /tmp/secrets/LLM_API_KEY
-printf 'sk-llm-FIXTUREKEY111111111111' > /tmp/secrets/LITELLM_API
+printf 'sk-llm-FIXTUREKEY111111111111\n' > /tmp/secrets/LITELLM_API
 printf 'sk-ant-FIXTUREANTHROPIC22222' > /tmp/secrets/ANTHROPIC_API_KEY
 printf 'ghs_FIXTUREGITSYNCTOKEN33333' > /tmp/secrets/GIT_SYNC_TOKEN
 
