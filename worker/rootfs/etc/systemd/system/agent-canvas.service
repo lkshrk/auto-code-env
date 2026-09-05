@@ -8,6 +8,12 @@ Type=simple
 User=agent
 Environment=HOME=/home/agent
 Environment=PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HTTP_PROXY=http://127.0.0.1:8888
+Environment=HTTPS_PROXY=http://127.0.0.1:8888
+Environment=http_proxy=http://127.0.0.1:8888
+Environment=https_proxy=http://127.0.0.1:8888
+Environment=NO_PROXY=localhost,127.0.0.1,::1,.h-cloud.lan,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+Environment=no_proxy=localhost,127.0.0.1,::1,.h-cloud.lan,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 LoadCredential=local_backend_api_key
 ExecStart=/bin/bash -eu -c 'credential="$$CREDENTIALS_DIRECTORY/local_backend_api_key"; test -r "$$credential"; LOCAL_BACKEND_API_KEY=$$(<"$$credential"); test -n "$$LOCAL_BACKEND_API_KEY"; export LOCAL_BACKEND_API_KEY; exec /home/agent/.local/bin/agent-canvas --public'
 Restart=on-failure

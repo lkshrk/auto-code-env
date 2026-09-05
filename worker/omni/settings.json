@@ -15,6 +15,8 @@
     "python3-minimal": { "providers": [{ "provider": "apt" }] },
     "python3": { "providers": [{ "provider": "apt" }] },
     "rbw": { "providers": [{ "provider": "apt", "package": "rbw=1.13.2-7" }] },
+    "nftables": { "providers": [{ "provider": "apt" }] },
+    "tinyproxy": { "providers": [{ "provider": "apt" }] },
     "agent-canvas": { "providers": [{ "provider": "npm", "package": "@openhands/agent-canvas@1.16.0" }] },
     "claude-agent-acp": { "providers": [{ "provider": "npm", "package": "@agentclientprotocol/claude-agent-acp@0.63.0" }] },
     "codex-acp": { "providers": [{ "provider": "npm", "package": "@agentclientprotocol/codex-acp@1.1.7" }] },
@@ -24,7 +26,7 @@
   "groups": [
     {
       "name": "openhands-system",
-      "tools": ["ca-certificates", "curl", "xz-utils", "git", "nginx", "python3-minimal", "python3", "rbw"]
+      "tools": ["ca-certificates", "curl", "xz-utils", "git", "nginx", "python3-minimal", "python3", "rbw", "nftables", "tinyproxy"]
     },
     {
       "name": "openhands-agent-no-scripts",

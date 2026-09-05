@@ -22,6 +22,7 @@ GIT_SYNC_TOKEN_STATE="$STATE_DIRECTORY/git-sync-token.sha256"
 APPLIER=/usr/local/lib/openhands/apply-profile.py
 STATE_PATHS='home/agent/.openhands home/agent/.claude home/agent/.codex home/agent/.git-credentials home/agent/.gitconfig var/lib/openhands/overlay'
 OMNI_MANIFEST=/home/agent/.config/omni/apm.yml
+EGRESS_FILTER=/etc/openhands/egress-filter
 PASSWORD_STDIN=0
 
 usage() {
@@ -37,6 +38,7 @@ usage: openhands-overlay secrets --vault-url URL --email EMAIL --crt-id UUID --k
        openhands-overlay enable
        openhands-overlay status
        openhands-overlay egress [--minutes N] [--interval SECONDS] [--from FILE]
+       openhands-overlay egress-policy [enforce|relax|status]
 
 Repeating --file layers profiles left to right: later files win per key, and
 map-shaped sections (skills, secrets, mcp_servers) are merged rather than
@@ -464,6 +466,34 @@ status() {
     done | sort -u
 }
 
+egress_policy() {
+    action=${1:-status}
+    [ $# -le 1 ] || usage
+    case $action in
+        enforce)
+            command -v nft >/dev/null 2>&1 || fail 'nft is required for the egress policy'
+            systemctl enable --now tinyproxy.service >/dev/null
+            systemctl enable --now openhands-egress.service >/dev/null
+            systemctl restart agent-canvas.service >/dev/null 2>&1 || true
+            echo 'egress policy: enforced'
+            ;;
+        relax)
+            systemctl disable --now openhands-egress.service >/dev/null 2>&1 || true
+            echo 'egress policy: relaxed'
+            ;;
+        status)
+            if systemctl is-active --quiet openhands-egress.service; then
+                echo 'egress policy: enforced'
+            else
+                echo 'egress policy: relaxed'
+            fi
+            printf 'proxy: %s\n' "$(systemctl is-active tinyproxy.service 2>/dev/null || echo unknown)"
+            printf 'allowlist entries: %s\n' "$(grep -Evc '^[[:space:]]*(#|$)' "$EGRESS_FILTER" 2>/dev/null || echo 0)"
+            ;;
+        *) usage ;;
+    esac
+}
+
 require_root
 trap cleanup EXIT INT TERM
 command=${1:-}
@@ -479,5 +509,6 @@ case $command in
     origin) origin "$@" ;;
     status) [ $# -eq 0 ] || usage; status ;;
     egress) egress "$@" ;;
+    egress-policy) egress_policy "$@" ;;
     *) usage ;;
 esac

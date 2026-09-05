@@ -1,0 +1,20 @@
+#!/usr/sbin/nft -f
+
+destroy table inet openhands_egress
+
+table inet openhands_egress {
+    chain output {
+        type filter hook output priority filter; policy accept;
+
+        meta skuid != "agent" accept
+        oifname "lo" accept
+
+        ip daddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } accept
+        ip6 daddr { ::1, fc00::/7, fe80::/10 } accept
+
+        udp dport 53 accept
+        tcp dport 53 accept
+
+        counter drop
+    }
+}

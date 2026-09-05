@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenHands agent egress policy
+After=network-pre.target tinyproxy.service
+Wants=network-pre.target
+Requires=tinyproxy.service
+Before=agent-canvas.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/openhands/egress.nft
+ExecStop=/usr/sbin/nft destroy table inet openhands_egress
+
+[Install]
+WantedBy=multi-user.target
