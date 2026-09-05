@@ -221,8 +221,9 @@ if ($MyInvocation.InvocationName -ne ".") {
         -InstallStaging { param($name) & $assets.Paths["install.ps1"] -DistroName $name -ImagePath $assets.Image -ImageSha256 $assets.ImageHash } `
         -ProvisionStaging {
             param($name)
+            Wait-WorkerSystemReady -WslPath $wslPath -Distro $name | Out-Null
             Invoke-WorkerProvision -Configuration $configuration -OverlayPath $assets.Paths["openhands-overlay"] `
-                -ProfilePath $profilePath -StatePath $statePath `
+                -ProfilePath $profilePath -CommonProfilePath $assets.CommonProfile -StatePath $statePath `
                 -CopyFile { param($source, $destination, $mode) Copy-WorkerFileToDistribution -WslPath $wslPath -Distro $name -Path $source -Destination $destination -Mode $mode } `
                 -Overlay {
                     param($command, $usePassword, $inputPath)
@@ -241,7 +242,7 @@ if ($MyInvocation.InvocationName -ne ".") {
         } `
         -ActivateStaging {
             param($name)
-            Invoke-WorkerActivation -Overlay {
+            Invoke-WorkerActivation -ProfilePaths (Get-WorkerGuestProfilePaths -CommonProfilePath $assets.CommonProfile) -Overlay {
                 param($command, $usePassword, $inputPath)
                 $parameters = @{ WslPath = $wslPath; Distro = $name; Command = $command }
                 if ($usePassword) { $parameters["Credential"] = $credential }

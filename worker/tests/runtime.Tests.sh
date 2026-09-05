@@ -67,6 +67,9 @@ grep -F 'OPENHANDS_IMAGE_BUILD=1' "$containerfile"
 grep -F 'worker/omni/settings.json /opt/openhands-build/omni/settings.json' "$containerfile"
 if grep -F 'apt-get install -y --no-install-recommends nginx' "$containerfile"; then exit 1; fi
 grep -F 'openhands-agent-server==1.44.0' "$containerfile"
+grep -F 'uv tool install apm-cli==0.29.0' "$containerfile"
+grep -F 'UV_TOOL_DIR=/home/agent/.local/share/uv/tools UV_TOOL_BIN_DIR=/home/agent/.local/bin' "$containerfile"
+grep -F "test \"\$(/usr/sbin/runuser -u agent -- /home/agent/.local/bin/apm --version)\" = 'Agent Package Manager (APM) CLI version 0.29.0'" "$containerfile"
 grep -F 'openhands-automation==1.9.0' "$containerfile"
 grep -F 'patch-agent-canvas-automation.mjs' "$containerfile"
 grep -F 'agent-canvas-ingress-smoke.mjs' "$containerfile"
@@ -107,6 +110,14 @@ grep -F 'PATCH", "/api/settings"' "$overlay"
 grep -F 'PUT", "/api/settings/secrets"' "$overlay"
 grep -F 'POST", "/api/skills/install"' "$overlay"
 grep -F 'PUT", "/api/automation/v1/git-sync/config"' "$overlay"
+grep -F 'POST", "/api/settings/mcp/%s"' "$overlay"
+grep -F 'PATCH", "/api/settings/mcp/%s"' "$overlay"
+grep -F 'X-Expose-Secrets: plaintext' "$overlay"
+grep -Fx 'OMNI_MANIFEST=/home/agent/.config/omni/apm.yml' "$overlay"
+grep -F 'agent_run "$AGENT_HOME" omni agents sync' "$overlay"
+grep -F 'PATH="$AGENT_HOME/.local/bin:$PATH"' "$overlay"
+grep -F 'runuser -u agent -- env HOME="$AGENT_HOME"' "$overlay"
+grep -F 'var/lib/openhands/overlay' "$overlay"
 grep -F 'GET", "/api/automation/v1/git-sync/status"' "$overlay"
 grep -F 'update-ca-certificates' "$overlay"
 grep -F 'tar --numeric-owner --create --gzip --file - --directory /' "$overlay"
@@ -114,7 +125,9 @@ grep -F 'tar --numeric-owner --extract --gzip --file - --directory /' "$overlay"
 for subcommand in 'ca) ca "$@" ;;' 'settings) settings "$@" ;;' 'state) state "$@" ;;'; do
   grep -F "$subcommand" "$overlay"
 done
-python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$repo_root/openhands/profiles/towerr.json"
+for profile in "$repo_root"/openhands/profiles/*.json; do
+  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$profile"
+done
 python3 - "$repo_root/openhands/profiles/towerr.json" <<'PY'
 import json, re, sys
 profile = json.load(open(sys.argv[1]))
@@ -124,10 +137,34 @@ assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 assert profile["agent"]["kind"] == "acp", profile["agent"]
 assert profile["agent"]["acp_server"] == "claude-code", profile["agent"]
 assert profile["agent"]["acp_command"] == "/home/agent/.local/bin/claude-agent-acp", profile["agent"]
-assert profile["skills"][0]["repo_path"] == "openhands/skills/agent-sandbox-deploy", profile["skills"]
+assert "skills" not in profile, "shared skills belong in common.json"
+assert "mcp_servers" not in profile, "shared MCP servers belong in common.json"
+assert "agents" not in profile, "the shared agents project belongs in common.json"
+assert profile["secrets"]["GH_TOKEN"]["item"] == "28226043-0a70-4d54-bfb8-592086a319c0", profile["secrets"]
+assert set(profile["secrets"]) == {"GH_TOKEN"}, profile["secrets"]
 assert profile["git_sync"]["path"] == "openhands/automations/towerr", profile["git_sync"]
 assert profile["git_sync"]["token_item"] == "28226043-0a70-4d54-bfb8-592086a319c0", profile["git_sync"]
 assert profile["git_sync"]["interval_seconds"] == 0, profile["git_sync"]
+PY
+python3 - "$repo_root/openhands/profiles/common.json" <<'PY'
+import json, re, sys
+profile = json.load(open(sys.argv[1]))
+assert set(profile) == {"secrets", "skills", "mcp_servers", "agents"}, sorted(profile)
+assert re.fullmatch(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    profile["secrets"]["LITELLM_API"]["item"],
+), profile["secrets"]
+assert profile["skills"][0]["repo_path"] == "openhands/skills/agent-sandbox-deploy", profile["skills"]
+litellm = profile["mcp_servers"]["litellm-tools"]
+assert litellm["url"] == "https://api.ai.h-cloud.lan/mcp/", litellm
+assert litellm["headers"]["x-litellm-api-key"] == {"secret": "LITELLM_API"}, litellm
+assert profile["mcp_servers"]["openaiDeveloperDocs"]["url"] == "https://developers.openai.com/mcp", profile["mcp_servers"]
+assert profile["agents"] == {
+    "repo": "lkshrk/dotfiles",
+    "ref": "main",
+    "path": "apm/ai-plugins",
+    "targets": ["claude", "codex"],
+}, profile["agents"]
 PY
 grep -Fx 'ARG OPENHANDS_WORKER_VERSION=dev' "$containerfile"
 grep -F 'printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release' "$containerfile"

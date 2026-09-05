@@ -113,6 +113,14 @@ function Read-WorkerConfig {
         throw "worker.json 'profile' is required."
     }
 
+    $profileCommon = [string](Get-WorkerJsonMember -Object $document -Name "profileCommon")
+    if ([string]::IsNullOrWhiteSpace($profileCommon)) {
+        $profileCommon = "profile-common.json"
+    }
+    if ($profileCommon -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\.json$') {
+        throw "worker.json 'profileCommon' must be a release asset name ending in .json."
+    }
+
     return [pscustomobject]@{
         Distro          = $distro
         Architecture    = $arch
@@ -124,6 +132,7 @@ function Read-WorkerConfig {
         VaultEmail      = $vaultEmail
         Items           = $resolvedItems
         Profile         = $profileValue
+        ProfileCommon   = $profileCommon
     }
 }
 
@@ -694,6 +703,79 @@ function Resolve-WorkerProfilePath {
     return (Get-Item -LiteralPath $ProfileAsset -Force).FullName
 }
 
+function Resolve-WorkerCommonProfileName {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$ProfileCommon,
+        [Parameter(Mandatory)][hashtable]$Checksums
+    )
+
+    if ($ProfileCommon -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\.json$') {
+        return ""
+    }
+    if (-not $Checksums.ContainsKey($ProfileCommon)) {
+        return ""
+    }
+    return $ProfileCommon
+}
+
+function Get-WorkerSettingsCommand {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$ProfilePaths)
+
+    if ($ProfilePaths.Count -eq 0) {
+        throw "At least one settings profile is required."
+    }
+    $arguments = New-Object 'System.Collections.Generic.List[string]'
+    $arguments.Add("settings")
+    foreach ($path in $ProfilePaths) {
+        if ($path -notmatch '^(/[A-Za-z0-9._-]+)+$') {
+            throw "Settings profile path '$path' must be absolute and free of shell metacharacters."
+        }
+        $arguments.Add("--file")
+        $arguments.Add($path)
+    }
+    return $arguments.ToArray()
+}
+
+function Wait-WorkerSystemReady {
+    param(
+        [Parameter(Mandatory)][string]$WslPath,
+        [Parameter(Mandatory)][string]$Distro,
+        [int]$TimeoutSeconds = 120,
+        [int]$IntervalSeconds = 2,
+        [scriptblock]$Probe,
+        [scriptblock]$Wait = { param($seconds) Start-Sleep -Seconds $seconds }
+    )
+
+    if ($Distro -notmatch $WorkerDistroPattern) {
+        throw "Distribution name '$Distro' is not valid."
+    }
+    if ($IntervalSeconds -le 0) {
+        throw "The readiness poll interval must be positive."
+    }
+    if ($null -eq $Probe) {
+        $Probe = {
+            param($path, $name)
+            & $path --distribution $name --user root --exec /usr/bin/systemctl is-system-running
+        }
+    }
+
+    $elapsed = 0
+    while ($true) {
+        $output = @(& $Probe $WslPath $Distro)
+        $state = ((($output -replace [string][char]0, "") -join "`n").Trim() -split "`n" | Select-Object -Last 1)
+        if ($null -eq $state) { $state = "" }
+        $state = ([string]$state).Trim()
+        if ($state -ceq "running" -or $state -ceq "degraded") {
+            return $state
+        }
+        if ($elapsed -ge $TimeoutSeconds) {
+            throw "WSL distribution '$Distro' did not finish booting within $TimeoutSeconds seconds; systemd reported '$state'."
+        }
+        & $Wait $IntervalSeconds
+        $elapsed += $IntervalSeconds
+    }
+}
+
 function Get-WorkerReleaseAssets {
     param(
         [Parameter(Mandatory)][pscustomobject]$Configuration,
@@ -719,13 +801,22 @@ function Get-WorkerReleaseAssets {
             -Directory $Directory -Download $Download -Checksums $checksums
     }
 
+    $commonName = Resolve-WorkerCommonProfileName -ProfileCommon $Configuration.ProfileCommon -Checksums $checksums
+    $commonPath = ""
+    if ($commonName -ne "") {
+        $commonPath = Save-WorkerAsset -Repository $Configuration.Repository -Tag $Tag -Name $commonName `
+            -Directory $Directory -Download $Download -Checksums $checksums
+        $resolved[$commonName] = $commonPath
+    }
+
     return [pscustomobject]@{
-        Directory = $Directory
-        Checksums = $checksums
-        Paths     = $resolved
-        Version   = $version
-        Image     = $resolved["openhands-worker-$version-$Architecture.wsl"]
-        ImageHash = $checksums["openhands-worker-$version-$Architecture.wsl"]
+        Directory     = $Directory
+        Checksums     = $checksums
+        Paths         = $resolved
+        Version       = $version
+        Image         = $resolved["openhands-worker-$version-$Architecture.wsl"]
+        ImageHash     = $checksums["openhands-worker-$version-$Architecture.wsl"]
+        CommonProfile = $commonPath
     }
 }
 
@@ -734,12 +825,16 @@ function Invoke-WorkerProvision {
         [Parameter(Mandatory)][pscustomobject]$Configuration,
         [Parameter(Mandatory)][string]$OverlayPath,
         [Parameter(Mandatory)][string]$ProfilePath,
+        [AllowNull()][AllowEmptyString()][string]$CommonProfilePath,
         [AllowNull()][AllowEmptyString()][string]$StatePath,
         [Parameter(Mandatory)][scriptblock]$CopyFile,
         [Parameter(Mandatory)][scriptblock]$Overlay
     )
 
     & $CopyFile $OverlayPath "/usr/local/sbin/openhands-overlay" "0755"
+    if (-not [string]::IsNullOrEmpty($CommonProfilePath)) {
+        & $CopyFile $CommonProfilePath "/etc/openhands/profile-common.json" "0600"
+    }
     & $CopyFile $ProfilePath "/etc/openhands/profile.json" "0600"
 
     & $Overlay @("ca", "--vault-url", $Configuration.VaultUrl, "--email", $Configuration.VaultEmail, "--item", $Configuration.Items["ca"]) $true $null
@@ -752,10 +847,24 @@ function Invoke-WorkerProvision {
     }
 }
 
+function Get-WorkerGuestProfilePaths {
+    param([AllowNull()][AllowEmptyString()][string]$CommonProfilePath)
+
+    $paths = New-Object 'System.Collections.Generic.List[string]'
+    if (-not [string]::IsNullOrEmpty($CommonProfilePath)) {
+        $paths.Add("/etc/openhands/profile-common.json")
+    }
+    $paths.Add("/etc/openhands/profile.json")
+    return $paths.ToArray()
+}
+
 function Invoke-WorkerActivation {
-    param([Parameter(Mandatory)][scriptblock]$Overlay)
+    param(
+        [Parameter(Mandatory)][scriptblock]$Overlay,
+        [string[]]$ProfilePaths = @("/etc/openhands/profile.json")
+    )
 
     & $Overlay @("enable") $false $null
-    & $Overlay @("settings", "--file", "/etc/openhands/profile.json") $true $null
+    & $Overlay (Get-WorkerSettingsCommand -ProfilePaths $ProfilePaths) $true $null
     & $Overlay @("verify") $false $null
 }

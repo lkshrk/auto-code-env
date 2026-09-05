@@ -67,10 +67,10 @@ if ($MyInvocation.InvocationName -ne ".") {
         Invoke-WorkerOverlay @parameters
     }
     Invoke-WorkerProvision -Configuration $configuration -OverlayPath $assets.Paths["openhands-overlay"] `
-        -ProfilePath $profilePath -StatePath $null `
+        -ProfilePath $profilePath -CommonProfilePath $assets.CommonProfile -StatePath $null `
         -CopyFile { param($source, $destination, $mode) Copy-WorkerFileToDistribution -WslPath $wslPath -Distro $configuration.Distro -Path $source -Destination $destination -Mode $mode } `
         -Overlay $overlay
-    Invoke-WorkerActivation -Overlay $overlay
+    Invoke-WorkerActivation -Overlay $overlay -ProfilePaths (Get-WorkerGuestProfilePaths -CommonProfilePath $assets.CommonProfile)
 
     Invoke-WorkerOverlay -WslPath $wslPath -Distro $configuration.Distro -Command @("status")
     Write-Host "Worker '$($configuration.Distro)' is installed from $tag and reachable from $($configuration.RemoteAddresses -join ', ')."
