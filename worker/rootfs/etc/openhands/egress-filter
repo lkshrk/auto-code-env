@@ -1,0 +1,25 @@
+# tinyproxy allowlist, extended regular expressions matched against the CONNECT host.
+# FilterDefaultDeny rejects anything absent here. Derive additions from
+# `openhands-overlay egress --minutes 30` rather than from guesswork.
+
+# Anthropic / Claude Code
+^api\.anthropic\.com$
+^statsig\.anthropic\.com$
+
+# OpenAI / Codex
+^api\.openai\.com$
+^auth\.openai\.com$
+^chatgpt\.com$
+^developers\.openai\.com$
+
+# GitHub
+^github\.com$
+^api\.github\.com$
+^codeload\.github\.com$
+^objects\.githubusercontent\.com$
+^raw\.githubusercontent\.com$
+
+# Package registries
+^registry\.npmjs\.org$
+^pypi\.org$
+^files\.pythonhosted\.org$

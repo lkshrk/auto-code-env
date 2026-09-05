@@ -571,6 +571,17 @@ destination and port with a sample count, reverse name, and `lan` or
 Claude Code and Codex tasks execute so the allowlist comes from observed
 traffic.
 
+Once measured, `openhands-overlay egress-policy enforce` turns the allowlist on:
+tinyproxy listens on `127.0.0.1:8888` with `FilterDefaultDeny`, so only hosts in
+`/etc/openhands/egress-filter` are reachable, and an nftables table drops any
+other outbound traffic from uid `agent`. DNS and RFC1918 destinations stay
+direct. `agent-canvas.service` carries `HTTPS_PROXY` and a `NO_PROXY` covering
+loopback, `.h-cloud.lan`, and the private ranges. `egress-policy relax` turns it
+off again and `egress-policy status` reports which state is active. Enforcement
+ships disabled; a tool that ignores proxy environment variables is blocked
+rather than degraded, so enable it on one host and re-measure before making it
+the default.
+
 `openhands-overlay verify` checks files, ownership, modes, that the private
 key matches the certificate, and `nginx -t`. `openhands-overlay enable`
 refuses to start anything until `verify` passes, then enables nginx and
