@@ -173,6 +173,12 @@ grep -F 'RELEASE_MARKER=/etc/openhands/release' "$overlay"
 grep -F 'VERSION="$version" docker buildx bake' "$repo_root/worker/build-wsl.sh"
 test "$(grep -c 'OPENHANDS_WORKER_VERSION = "${VERSION}"' "$repo_root/worker/docker-bake.hcl")" = 3
 grep -F '/etc/systemd/system/agent-canvas.service.d/10-overlay.conf' "$overlay"
+# A parameter default binds on every call, so a type missing on Windows
+# PowerShell 5.1 breaks callers that never needed the fallback.
+if grep -rn '= \[Runtime.InteropServices.RuntimeInformation\]' "$repo_root/worker/windows"; then
+  echo 'RuntimeInformation must not be a parameter default'
+  exit 1
+fi
 if grep -E 'RemoteAddress(es)? (Any|\*)' "$firewall"; then exit 1; fi
 if grep -F 'Set-NetFirewallHyperVRule' "$firewall"; then exit 1; fi
 grep -F -- '--exec /bin/sleep infinity' "$keepalive"
