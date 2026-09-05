@@ -114,11 +114,11 @@ for subcommand in 'ca) ca "$@" ;;' 'settings) settings "$@" ;;' 'state) state "$
 done
 python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$repo_root/openhands/profiles/towerr.json"
 python3 - "$repo_root/openhands/profiles/towerr.json" <<'PY'
-import json, sys
+import json, re, sys
 profile = json.load(open(sys.argv[1]))
 assert profile["llm"]["base_url"] == "https://api.ai.h-cloud.lan/v1", profile["llm"]
 assert profile["llm"]["model"] == "openai/gpt-5.6-sol", profile["llm"]
-assert profile["llm"]["api_key_item"] == "TODO", profile["llm"]
+assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", profile["llm"]["api_key_item"]), profile["llm"]
 assert profile["agent"]["kind"] == "acp", profile["agent"]
 assert profile["agent"]["acp_server"] == "claude-code", profile["agent"]
 assert profile["agent"]["acp_command"] == "/home/agent/.local/bin/claude-agent-acp", profile["agent"]
