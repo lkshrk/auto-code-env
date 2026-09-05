@@ -11,7 +11,6 @@ one run that posts at most one review.
 | `prompt.md` | The review policy the agent executes. Read on every run. |
 | `automation.json` | Request body for the API. Rollout variant, gated on a label. |
 | `automation.final.json` | Same, without the label gate. Every PR is reviewed. |
-| `apply.py` | Creates or updates the automation. Stdlib only. |
 
 ## How the policy composes
 
@@ -61,10 +60,10 @@ that SHA was already reviewed.
 ## Applying
 
 ```bash
-OPENHANDS_SESSION_API_KEY=... python3 openhands/automations/orc/pr-review/apply.py
+OPENHANDS_SESSION_API_KEY=... python3 openhands/automations/common/apply.py openhands/automations/orc/pr-review
 ```
 
-`apply.py` reads `automation.json`, injects `prompt.md` as the `prompt` field, then looks
+`common/apply.py` reads `automation.json`, injects `prompt.md` as the `prompt` field, then looks
 for an existing automation named `pr-review` via `GET /api/automation/v1`. It updates it
 with `PATCH /api/automation/v1/{id}` when found, otherwise creates it with
 `POST /api/automation/v1/preset/prompt`. The service rebuilds the preset tarball itself
@@ -72,5 +71,5 @@ whenever the prompt changes, so a re-apply is enough to roll out a policy edit.
 
 `OPENHANDS_URL` overrides the base URL, default
 `http://openhands.ai.svc.cluster.local:8000`. `--dry-run` prints the request body without
-calling the API. `--file openhands/automations/orc/pr-review/automation.final.json` applies the
+calling the API. `--file automation.final.json` applies the
 ungated variant once rollout is done.

@@ -11,7 +11,6 @@ operator answers instead of a silent change.
 |---|---|
 | `prompt.md` | The upgrade policy the agent executes. Placeholders are filled from `automation.json` `vars`. |
 | `automation.json` | Request body: cron trigger, model, timeout, and the `vars` block. |
-| `apply.py` | Creates or updates the automation. Stdlib only. |
 
 ## Behaviour per dependency
 
@@ -86,10 +85,10 @@ would need the automation service to run each job in its own sandbox pod.
 ## Applying
 
 ```bash
-OPENHANDS_AUTOMATION_API_KEY=... python3 openhands/automations/orc/h-cloud-upgrader/apply.py
+OPENHANDS_SESSION_API_KEY=... python3 openhands/automations/common/apply.py openhands/automations/orc/h-cloud-upgrader
 ```
 
-`apply.py` reads `automation.json`, renders `prompt.md` with the `vars` block, finds an
+`common/apply.py` reads `automation.json`, renders `prompt.md` with the `vars` block, finds an
 existing automation named `h-cloud-upgrader` via `GET /api/automation/v1`, and updates
 it (`PATCH`) or creates it (`POST /api/automation/v1/preset/prompt`). `--dry-run`
 prints the body. `OPENHANDS_URL` overrides the base URL, default
@@ -98,5 +97,5 @@ prints the body. `OPENHANDS_URL` overrides the base URL, default
 Trigger a run by hand:
 
 ```bash
-curl -X POST "$OPENHANDS_URL/api/automation/v1/<id>/dispatch" -H "Authorization: Bearer $OPENHANDS_AUTOMATION_API_KEY"
+curl -X POST "$OPENHANDS_URL/api/automation/v1/<id>/dispatch" -H "X-Session-API-Key: $OPENHANDS_SESSION_API_KEY"
 ```
