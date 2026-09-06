@@ -1,28 +1,93 @@
-#!/bin/sh
+#!/bin/bash
 # shellcheck disable=SC2016
-set -eu
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+set -euo pipefail
+umask 022
 
-PINENTRY=/usr/local/libexec/coder-worker-rbw-pinentry
-TLS_DIRECTORY=/etc/docker/tls
-CA_CERTIFICATE="$TLS_DIRECTORY/ca.pem"
-SERVER_CERTIFICATE="$TLS_DIRECTORY/server-cert.pem"
-SERVER_KEY="$TLS_DIRECTORY/server-key.pem"
-LAN_CA_DIRECTORY=/etc/ssl/lan
-LAN_CA="$LAN_CA_DIRECTORY/lan-ca.pem"
-DAEMON_CONFIG=/etc/docker/daemon.json
-CONFIG_DIRECTORY=/etc/coder-worker
-IMAGE_LIST="$CONFIG_DIRECTORY/images"
-RELEASE_MARKER="$CONFIG_DIRECTORY/release"
-WORKSPACE_ENV="$CONFIG_DIRECTORY/workspace.env"
-WORKSPACE_ENV_OWNER=1000:1000
-MASTER_PASSWORD_FILE=/run/coder-worker-rbw-master
-RBW_CONFIG=/root/.config/rbw/config.json
-TLS_PORT=2376
-PLAINTEXT_PORT=2375
+readonly RELEASE_VERSION=1.0.0
+readonly UBUNTU_CODENAME=resolute
+readonly UBUNTU_VERSION_ID=26.04
+readonly DOCKER_GPG_URL=https://download.docker.com/linux/ubuntu/gpg
+readonly DOCKER_GPG_SHA256=1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
+readonly DOCKER_REPOSITORY_URL=https://download.docker.com/linux/ubuntu
+readonly DOCKER_KEYRING=/etc/apt/keyrings/docker.asc
+readonly DOCKER_SOURCES=/etc/apt/sources.list.d/docker.sources
+readonly DOCKER_CE_VERSION='5:29.8.0-1~ubuntu.26.04~resolute'
+readonly DOCKER_CLI_VERSION='5:29.8.0-1~ubuntu.26.04~resolute'
+readonly CONTAINERD_VERSION='2.3.4-2~ubuntu.26.04~resolute'
+readonly RBW_PACKAGE_VERSION=1.13.2-7
+readonly TLS_DIRECTORY=/etc/docker/tls
+readonly CA_CERTIFICATE="$TLS_DIRECTORY/ca.pem"
+readonly SERVER_CERTIFICATE="$TLS_DIRECTORY/server-cert.pem"
+readonly SERVER_KEY="$TLS_DIRECTORY/server-key.pem"
+readonly LAN_CA_DIRECTORY=/etc/ssl/lan
+readonly LAN_CA="$LAN_CA_DIRECTORY/lan-ca.pem"
+readonly DAEMON_CONFIG=/etc/docker/daemon.json
+readonly DROPIN_DIRECTORY=/etc/systemd/system/docker.service.d
+readonly CONFIG_DIRECTORY=/etc/coder-worker
+readonly IMAGE_LIST="$CONFIG_DIRECTORY/images"
+readonly RELEASE_MARKER="$CONFIG_DIRECTORY/release"
+readonly WORKSPACE_ENV="$CONFIG_DIRECTORY/workspace.env"
+readonly PROFILE="$CONFIG_DIRECTORY/profile"
+readonly WORKSPACE_ENV_OWNER=1000:1000
+readonly MASTER_PASSWORD_FILE=/run/coder-worker-rbw-master
+readonly VAULT_INDEX=/run/coder-worker-vault-index
+readonly RBW_CONFIG=/root/.config/rbw/config.json
+readonly OVERLAY=/usr/local/sbin/coder-worker-overlay
+readonly PINENTRY_DIRECTORY=/usr/local/libexec
+readonly PINENTRY="$PINENTRY_DIRECTORY/coder-worker-rbw-pinentry"
+readonly TLS_PORT=2376
+readonly PLAINTEXT_PORT=2375
+readonly TAB=$'\t'
+readonly -a WORKSPACE_IMAGES=(
+    'codercom/enterprise-base:ubuntu'
+    'docker:29-dind'
+)
+readonly -a BASE_PACKAGES=(ca-certificates curl openssl python3 iproute2)
+readonly -a PROFILE_KEYS=(
+    DISTRO_NAME
+    UBUNTU_DISTRIBUTION
+    VHD_LOCATION
+    VAULT_URL
+    VAULT_EMAIL
+    VAULT_FOLDER
+    VAULT_ITEM_CA
+    VAULT_ITEM_SERVER_CERT
+    VAULT_ITEM_SERVER_KEY
+    VAULT_ITEM_LAN_CA
+    VAULT_ITEM_WORKSPACE_ENV
+    DOCKER_PORT
+    FIREWALL_REMOTE_ADDRESSES
+)
+readonly -a PROFILE_REQUIRED_KEYS=(
+    DISTRO_NAME
+    UBUNTU_DISTRIBUTION
+    VAULT_URL
+    VAULT_EMAIL
+    VAULT_ITEM_CA
+    VAULT_ITEM_SERVER_CERT
+    VAULT_ITEM_SERVER_KEY
+    DOCKER_PORT
+    FIREWALL_REMOTE_ADDRESSES
+)
+readonly UUID_PATTERN='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+self_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+self_name=$(basename -- "${BASH_SOURCE[0]}")
+readonly SELF="$self_directory/$self_name"
+needs_daemon_reload=0
+lan_ca_expected=auto
+declare -A profile_values=()
 
 usage() {
     cat >&2 <<'EOF'
-usage: coder-worker-overlay secrets --vault-url URL --email EMAIL --ca-id UUID --crt-id UUID --key-id UUID --lan-ca-id UUID [--env-id UUID]
+usage: coder-worker-overlay install [--profile FILE]
+       coder-worker-overlay secrets [--profile FILE] [--no-enable]
+                                    [--vault-url URL] [--email EMAIL] [--folder NAME]
+                                    [--ca-item NAME] [--crt-item NAME] [--key-item NAME]
+                                    [--lan-ca-item NAME] [--env-item NAME]
+                                    [--ca-id UUID] [--crt-id UUID] [--key-id UUID]
+                                    [--lan-ca-id UUID] [--env-id UUID]
        coder-worker-overlay verify
        coder-worker-overlay enable
        coder-worker-overlay status
@@ -40,18 +105,99 @@ require_root() {
 }
 
 is_uuid() {
-    printf '%s' "$1" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    [[ $1 =~ $UUID_PATTERN ]]
+}
+
+profile_key_known() {
+    local key
+    for key in "${PROFILE_KEYS[@]}"; do
+        [ "$key" = "$1" ] && return 0
+    done
+    return 1
+}
+
+profile_key_names_material() {
+    case $1 in
+        VAULT_ITEM_*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+profile_key_secret_shaped() {
+    profile_key_names_material "$1" && return 1
+    case $1 in
+        *PASSWORD*|*PASSWD*|*SECRET*|*TOKEN*|*CREDENTIAL*|*PRIVATE*|*PASSPHRASE*|*APIKEY*|KEY_*|*_KEY|*_KEY_*)
+            return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+profile_value_secret_shaped() {
+    case $1 in
+        *-----BEGIN*|ghp_*|github_pat_*|sk-*) return 0 ;;
+    esac
+    [[ $1 =~ [A-Za-z0-9+/=_-]{40,} ]]
+}
+
+profile_value_valid() {
+    local key=$1 value=$2 octet address
+    case $key in
+        DISTRO_NAME|UBUNTU_DISTRIBUTION)
+            [[ $value =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ;;
+        VHD_LOCATION)
+            [[ $value =~ ^[A-Za-z]:\\[^\"\<\>\|\*\?]{0,200}$ ]] ;;
+        VAULT_URL)
+            [[ $value =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$ ]] ;;
+        VAULT_EMAIL)
+            [[ $value =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] ;;
+        VAULT_FOLDER|VAULT_ITEM_*)
+            [[ $value =~ ^[A-Za-z0-9][A-Za-z0-9\ ._-]{0,127}$ ]] ;;
+        DOCKER_PORT)
+            [ "$value" = "$TLS_PORT" ] ;;
+        FIREWALL_REMOTE_ADDRESSES)
+            octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+            address="$octet(\.$octet){3}(/([0-9]|[1-2][0-9]|3[0-2]))?"
+            [[ $value =~ ^$address(,$address)*$ ]] ;;
+        *) return 1 ;;
+    esac
+}
+
+load_profile() {
+    local path=$1 line key value number=0
+    for key in "${!profile_values[@]}"; do
+        unset 'profile_values[$key]'
+    done
+    [ -e "$path" ] || fail "missing profile $path"
+    [ ! -L "$path" ] || fail "$path is a symbolic link"
+    [ -f "$path" ] || fail "$path is not a regular file"
+    while IFS= read -r line || [ -n "$line" ]; do
+        number=$((number + 1))
+        line=${line%$'\r'}
+        case $line in ''|'#'*) continue ;; esac
+        [[ $line =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || fail "$path line $number is not NAME=value"
+        key=${BASH_REMATCH[1]}
+        value=${BASH_REMATCH[2]}
+        profile_key_secret_shaped "$key" && fail "$path line $number names a secret; the profile carries no credentials"
+        profile_key_known "$key" || fail "$path line $number has unknown key $key"
+        [ -z "${profile_values[$key]+set}" ] || fail "$path line $number repeats $key"
+        profile_value_secret_shaped "$value" && fail "$path line $number looks like a credential; the profile carries no credentials"
+        profile_value_valid "$key" "$value" || fail "$path line $number has an invalid value for $key"
+        profile_values[$key]=$value
+    done < "$path"
+    for key in "${PROFILE_REQUIRED_KEYS[@]}"; do
+        [ -n "${profile_values[$key]+set}" ] || fail "$path is missing $key"
+    done
+}
+
+profile_get() {
+    printf '%s' "${profile_values[$1]-}"
 }
 
 configure_rbw() {
-    vault_url=$1 email=$2
-    if [ -z "$vault_url" ] && [ -z "$email" ]; then
-        [ -f "$RBW_CONFIG" ] || fail 'rbw is not configured yet; pass --vault-url and --email'
-        return
-    fi
+    local vault_url=$1 email=$2
     case $vault_url in https://*) ;; *) fail 'vault URL must be absolute HTTPS' ;; esac
     [ -n "$email" ] || fail 'email is required'
-    [ -x "$PINENTRY" ] || fail 'pinentry helper missing; run setup.sh first'
+    [ -x "$PINENTRY" ] || fail 'pinentry helper missing; run "coder-worker-overlay install" first'
     umask 077
     mkdir -p "$(dirname "$RBW_CONFIG")"
     rbw config set base_url "$vault_url"
@@ -62,35 +208,58 @@ configure_rbw() {
 
 # vault_run ENV... -- SCRIPT: runs SCRIPT as root in one transient unit with rbw unlocked.
 vault_run() {
-    set -- "$@"
-    env_args=""
+    local -a env_args=()
     while [ $# -gt 0 ]; do
         case $1 in
             --) shift; break ;;
-            *) env_args="$env_args -E $1"; shift ;;
+            *) env_args+=(-E "$1"); shift ;;
         esac
     done
     [ $# -eq 1 ] || fail 'vault_run needs exactly one script'
     umask 077
-    trap 'rm -f "$MASTER_PASSWORD_FILE"' EXIT INT TERM
+    trap 'rm -f "$MASTER_PASSWORD_FILE" "$VAULT_INDEX"' EXIT INT TERM
     systemd-ask-password --echo=no 'Vaultwarden master password:' | tr -d '\n' > "$MASTER_PASSWORD_FILE"
     [ -s "$MASTER_PASSWORD_FILE" ] || fail 'empty master password'
-    # shellcheck disable=SC2086
     systemd-run --quiet --pipe --wait --collect \
-        -E HOME=/root -E USER=root $env_args \
+        -E HOME=/root -E USER=root "${env_args[@]}" \
         -E OVERLAY_SCRIPT="$1" \
         -p "LoadCredential=rbw_master:$MASTER_PASSWORD_FILE" \
         /bin/sh -u -c 'umask 077; rbw login && rbw sync && sh -eu -c "$OVERLAY_SCRIPT"; rc=$?; rbw lock; rbw stop-agent; rbw purge; exit $rc'
-    rm -f "$MASTER_PASSWORD_FILE"
+    rm -f "$MASTER_PASSWORD_FILE" "$VAULT_INDEX"
     trap - EXIT INT TERM
 }
 
+resolve_item_argument() {
+    local label=$1 id=$2 name=$3
+    if [ -n "$id" ]; then
+        is_uuid "$id" || fail "--$label-id must be a lowercase UUID"
+        printf 'id:%s' "$id"
+        return
+    fi
+    [ -n "$name" ] || return 0
+    case $name in *"$TAB"*) fail "the $label vault item name must not contain a tab" ;; esac
+    printf 'name:%s' "$name"
+}
+
 secrets() {
-    vault_url='' email='' ca_id='' crt_id='' key_id='' lan_ca_id='' env_id=''
+    local profile_path=$PROFILE no_enable=0
+    local vault_url='' email='' folder=''
+    local ca_id='' crt_id='' key_id='' lan_ca_id='' env_id=''
+    local ca_item='' crt_item='' key_item='' lan_ca_item='' env_item=''
+    local ca crt key lan_ca env reference
+
     while [ $# -gt 0 ]; do
         case $1 in
+            --profile) profile_path=${2:-}; shift 2 ;;
+            --no-enable) no_enable=1; shift ;;
             --vault-url) vault_url=${2:-}; shift 2 ;;
             --email) email=${2:-}; shift 2 ;;
+            --folder) folder=${2:-}; shift 2 ;;
+            --ca-item) ca_item=${2:-}; shift 2 ;;
+            --crt-item) crt_item=${2:-}; shift 2 ;;
+            --key-item) key_item=${2:-}; shift 2 ;;
+            --lan-ca-item) lan_ca_item=${2:-}; shift 2 ;;
+            --env-item) env_item=${2:-}; shift 2 ;;
             --ca-id) ca_id=${2:-}; shift 2 ;;
             --crt-id) crt_id=${2:-}; shift 2 ;;
             --key-id) key_id=${2:-}; shift 2 ;;
@@ -99,24 +268,76 @@ secrets() {
             *) usage ;;
         esac
     done
-    for id in "$ca_id" "$crt_id" "$key_id" "$lan_ca_id"; do
-        is_uuid "$id" || fail 'item ids must be lowercase UUIDs'
+
+    if [ -e "$profile_path" ]; then
+        load_profile "$profile_path"
+    elif [ -z "$vault_url" ] || [ -z "$email" ]; then
+        fail "missing profile $profile_path; pass --profile, or --vault-url and --email with item flags"
+    fi
+    [ -n "$vault_url" ] || vault_url=$(profile_get VAULT_URL)
+    [ -n "$email" ] || email=$(profile_get VAULT_EMAIL)
+    [ -n "$folder" ] || folder=$(profile_get VAULT_FOLDER)
+    [ -n "$ca_item" ] || ca_item=$(profile_get VAULT_ITEM_CA)
+    [ -n "$crt_item" ] || crt_item=$(profile_get VAULT_ITEM_SERVER_CERT)
+    [ -n "$key_item" ] || key_item=$(profile_get VAULT_ITEM_SERVER_KEY)
+    [ -n "$lan_ca_item" ] || lan_ca_item=$(profile_get VAULT_ITEM_LAN_CA)
+    [ -n "$env_item" ] || env_item=$(profile_get VAULT_ITEM_WORKSPACE_ENV)
+
+    ca=$(resolve_item_argument ca "$ca_id" "$ca_item")
+    crt=$(resolve_item_argument crt "$crt_id" "$crt_item")
+    key=$(resolve_item_argument key "$key_id" "$key_item")
+    lan_ca=$(resolve_item_argument lan-ca "$lan_ca_id" "$lan_ca_item")
+    env=$(resolve_item_argument env "$env_id" "$env_item")
+    for reference in "$ca" "$crt" "$key"; do
+        [ -n "$reference" ] || fail 'the docker CA, server certificate and server key are required'
     done
-    [ -z "$env_id" ] || is_uuid "$env_id" || fail 'item ids must be lowercase UUIDs'
+    if [ -n "$lan_ca" ]; then lan_ca_expected=yes; else lan_ca_expected=no; fi
+
     configure_rbw "$vault_url" "$email"
     vault_run \
-        "OVERLAY_CA_ID=$ca_id" "OVERLAY_CRT_ID=$crt_id" "OVERLAY_KEY_ID=$key_id" "OVERLAY_LAN_CA_ID=$lan_ca_id" \
-        "OVERLAY_ENV_ID=$env_id" \
+        "OVERLAY_CA=$ca" "OVERLAY_CRT=$crt" "OVERLAY_KEY=$key" "OVERLAY_LAN_CA=$lan_ca" \
+        "OVERLAY_ENV=$env" "OVERLAY_FOLDER=$folder" "OVERLAY_INDEX=$VAULT_INDEX" \
+        "OVERLAY_UUID_PATTERN=$UUID_PATTERN" \
         "OVERLAY_TLS_DIRECTORY=$TLS_DIRECTORY" "OVERLAY_LAN_CA_DIRECTORY=$LAN_CA_DIRECTORY" \
         "OVERLAY_CONFIG_DIRECTORY=$CONFIG_DIRECTORY" \
         "OVERLAY_CA_CERTIFICATE=$CA_CERTIFICATE" "OVERLAY_SERVER_CERTIFICATE=$SERVER_CERTIFICATE" \
-        "OVERLAY_SERVER_KEY=$SERVER_KEY" "OVERLAY_LAN_CA=$LAN_CA" \
+        "OVERLAY_SERVER_KEY=$SERVER_KEY" "OVERLAY_LAN_CA_FILE=$LAN_CA" \
         "OVERLAY_WORKSPACE_ENV=$WORKSPACE_ENV" "OVERLAY_WORKSPACE_ENV_OWNER=$WORKSPACE_ENV_OWNER" -- '
         umask 077
+        tab=$(printf "\t")
         install -d -o root -g root -m 0700 "$OVERLAY_TLS_DIRECTORY"
         install -d -o root -g root -m 0755 "$OVERLAY_LAN_CA_DIRECTORY"
         install -d -o root -g root -m 0755 "$OVERLAY_CONFIG_DIRECTORY"
-        trap '"'"'rm -f "$OVERLAY_TLS_DIRECTORY"/*.tmp "$OVERLAY_LAN_CA_DIRECTORY"/*.tmp "$OVERLAY_CONFIG_DIRECTORY"/*.tmp'"'"' EXIT
+        trap '"'"'rm -f "$OVERLAY_INDEX" "$OVERLAY_TLS_DIRECTORY"/*.tmp "$OVERLAY_LAN_CA_DIRECTORY"/*.tmp "$OVERLAY_CONFIG_DIRECTORY"/*.tmp'"'"' EXIT
+        rbw list --fields id,name,folder > "$OVERLAY_INDEX"
+        resolve() {
+            wanted=${1#*:}
+            case $1 in
+                id:*) printf %s "$wanted"; return ;;
+            esac
+            found="" count=0
+            while IFS= read -r entry; do
+                entry_id=${entry%%"$tab"*}
+                rest=${entry#*"$tab"}
+                entry_name=${rest%%"$tab"*}
+                entry_folder=${rest#*"$tab"}
+                case $entry_folder in *"$tab"*) continue ;; esac
+                printf %s "$entry_id" | grep -Eq "$OVERLAY_UUID_PATTERN" || continue
+                [ "$entry_name" = "$wanted" ] || continue
+                [ "$entry_folder" = "$OVERLAY_FOLDER" ] || continue
+                found=$entry_id
+                count=$((count + 1))
+            done < "$OVERLAY_INDEX"
+            if [ "$count" -eq 0 ]; then
+                echo "no vault item is named \"$wanted\" in the configured folder" >&2
+                exit 1
+            fi
+            if [ "$count" -ne 1 ]; then
+                echo "$count vault items are named \"$wanted\" in the configured folder" >&2
+                exit 1
+            fi
+            printf %s "$found"
+        }
         guard_regular_file() {
             if [ -e "$1" ] && { [ ! -f "$1" ] || [ -L "$1" ]; }; then
                 echo "refusing to replace non-regular file $1" >&2
@@ -125,40 +346,47 @@ secrets() {
         }
         stage_item() {
             guard_regular_file "$2"
-            rbw get --field notes "$1" > "$2.tmp"
-            grep -q "^-----BEGIN " "$2.tmp" || { echo "vault item $1 is not PEM" >&2; exit 1; }
+            item=$(resolve "$1")
+            rbw get --field notes "$item" > "$2.tmp"
+            grep -q "^-----BEGIN " "$2.tmp" || { echo "vault item $item is not PEM" >&2; exit 1; }
             chown root:root "$2.tmp"
             chmod "$3" "$2.tmp"
         }
         stage_env() {
             guard_regular_file "$2"
             if [ -n "$1" ]; then
-                rbw get --field notes "$1" > "$2.raw.tmp"
+                item=$(resolve "$1")
+                rbw get --field notes "$item" > "$2.raw.tmp"
                 sed "s/\r$//" "$2.raw.tmp" > "$2.tmp"
                 rm -f "$2.raw.tmp"
                 line=$(grep -nvE "^([A-Za-z_][A-Za-z0-9_]*=|#|$)" "$2.tmp" | head -n 1 | cut -d: -f1)
-                [ -z "$line" ] || { echo "vault item $1 line $line is not NAME=value" >&2; exit 1; }
+                [ -z "$line" ] || { echo "vault item $item line $line is not NAME=value" >&2; exit 1; }
             else
                 : > "$2.tmp"
             fi
             chown "$3" "$2.tmp"
             chmod 0600 "$2.tmp"
         }
-        stage_item "$OVERLAY_CA_ID" "$OVERLAY_CA_CERTIFICATE" 0644
-        stage_item "$OVERLAY_CRT_ID" "$OVERLAY_SERVER_CERTIFICATE" 0644
-        stage_item "$OVERLAY_KEY_ID" "$OVERLAY_SERVER_KEY" 0600
-        stage_item "$OVERLAY_LAN_CA_ID" "$OVERLAY_LAN_CA" 0644
-        stage_env "$OVERLAY_ENV_ID" "$OVERLAY_WORKSPACE_ENV" "$OVERLAY_WORKSPACE_ENV_OWNER"
-        for path in "$OVERLAY_CA_CERTIFICATE" "$OVERLAY_SERVER_CERTIFICATE" "$OVERLAY_SERVER_KEY" \
-            "$OVERLAY_LAN_CA" "$OVERLAY_WORKSPACE_ENV"; do
-            mv -f "$path.tmp" "$path"
-        done
+        stage_item "$OVERLAY_CA" "$OVERLAY_CA_CERTIFICATE" 0644
+        stage_item "$OVERLAY_CRT" "$OVERLAY_SERVER_CERTIFICATE" 0644
+        stage_item "$OVERLAY_KEY" "$OVERLAY_SERVER_KEY" 0600
+        [ -z "$OVERLAY_LAN_CA" ] || stage_item "$OVERLAY_LAN_CA" "$OVERLAY_LAN_CA_FILE" 0644
+        stage_env "$OVERLAY_ENV" "$OVERLAY_WORKSPACE_ENV" "$OVERLAY_WORKSPACE_ENV_OWNER"
+        mv -f "$OVERLAY_CA_CERTIFICATE.tmp" "$OVERLAY_CA_CERTIFICATE"
+        mv -f "$OVERLAY_SERVER_CERTIFICATE.tmp" "$OVERLAY_SERVER_CERTIFICATE"
+        mv -f "$OVERLAY_SERVER_KEY.tmp" "$OVERLAY_SERVER_KEY"
+        [ -z "$OVERLAY_LAN_CA" ] || mv -f "$OVERLAY_LAN_CA_FILE.tmp" "$OVERLAY_LAN_CA_FILE"
+        mv -f "$OVERLAY_WORKSPACE_ENV.tmp" "$OVERLAY_WORKSPACE_ENV"
     '
-    verify
+    if [ "$no_enable" = 1 ]; then
+        verify
+    else
+        enable_docker
+    fi
 }
 
 assert_owned_file() {
-    path=$1 owner=$2 mode=$3
+    local path=$1 owner=$2 mode=$3
     [ -f "$path" ] || fail "missing $path"
     [ ! -L "$path" ] || fail "$path is a symbolic link"
     [ "$(stat -c '%u:%g %a' "$path")" = "$owner $mode" ] || fail "wrong owner or mode on $path"
@@ -172,27 +400,57 @@ workspace_env_names() {
     sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$WORKSPACE_ENV"
 }
 
+assert_env_grammar() {
+    local path=$1 offending
+    if offending=$(grep -nvE '^([A-Za-z_][A-Za-z0-9_]*=|#|$)' "$path"); then
+        offending=${offending%%$'\n'*}
+        fail "$path line ${offending%%:*} is not NAME=value"
+    fi
+}
+
 assert_workspace_env() {
     assert_owned_file "$WORKSPACE_ENV" "$WORKSPACE_ENV_OWNER" 600
-    line=$(grep -nvE '^([A-Za-z_][A-Za-z0-9_]*=|#|$)' "$WORKSPACE_ENV" | head -n 1 | cut -d: -f1)
-    [ -z "$line" ] || fail "$WORKSPACE_ENV line $line is not NAME=value"
+    assert_env_grammar "$WORKSPACE_ENV"
 }
 
 assert_directory() {
-    path=$1 mode=$2
+    local path=$1 mode=$2
     [ -d "$path" ] || fail "missing directory $path"
     [ ! -L "$path" ] || fail "$path is a symbolic link"
     [ "$(stat -c '%U:%G %a' "$path")" = "root:root $mode" ] || fail "wrong owner or mode on $path"
 }
 
+lan_ca_configured() {
+    case $lan_ca_expected in
+        yes) return 0 ;;
+        no) return 1 ;;
+    esac
+    [ -f "$PROFILE" ] || return 0
+    load_profile "$PROFILE"
+    [ -n "$(profile_get VAULT_ITEM_LAN_CA)" ]
+}
+
 listening_ports() {
-    cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | while read -r _ local _ state _; do
-        [ "$state" = 0A ] || continue
-        printf '%d\n' "0x${local#*:}"
+    local path local_address state
+    for path in /proc/net/tcp /proc/net/tcp6; do
+        [ -r "$path" ] || continue
+        while read -r _ local_address _ state _; do
+            [ "$state" = 0A ] || continue
+            printf '%d\n' "0x${local_address#*:}"
+        done < "$path"
     done | sort -un
 }
 
+report_listening() {
+    local ports=$1 port
+    [ -n "$ports" ] || return 0
+    while IFS= read -r port; do
+        printf 'listen %s\n' "$port"
+    done <<< "$ports"
+}
+
 verify_daemon_config() {
+    local setting
     assert_regular_file "$DAEMON_CONFIG" 644
     if grep -Fq "$PLAINTEXT_PORT" "$DAEMON_CONFIG"; then
         fail "$DAEMON_CONFIG mentions the plaintext port $PLAINTEXT_PORT"
@@ -208,13 +466,19 @@ verify_daemon_config() {
 }
 
 verify() {
+    local subject certificate_key private_key
     assert_directory "$TLS_DIRECTORY" 700
-    assert_directory "$LAN_CA_DIRECTORY" 755
     assert_regular_file "$CA_CERTIFICATE" 644
     assert_regular_file "$SERVER_CERTIFICATE" 644
     assert_regular_file "$SERVER_KEY" 600
-    assert_regular_file "$LAN_CA" 644
     assert_workspace_env
+    if lan_ca_configured; then
+        assert_directory "$LAN_CA_DIRECTORY" 755
+        assert_regular_file "$LAN_CA" 644
+        openssl x509 -in "$LAN_CA" -noout -subject >/dev/null || fail 'unreadable LAN root CA'
+    elif [ -f "$LAN_CA" ]; then
+        fail "$LAN_CA exists but no LAN root CA is configured; remove it or set VAULT_ITEM_LAN_CA"
+    fi
 
     subject=$(openssl x509 -in "$SERVER_CERTIFICATE" -noout -subject) || fail 'unreadable server certificate'
     certificate_key=$(openssl x509 -in "$SERVER_CERTIFICATE" -noout -pubkey) || fail 'unreadable server public key'
@@ -222,7 +486,6 @@ verify() {
     [ "$certificate_key" = "$private_key" ] || fail 'the server key does not match the server certificate'
     openssl verify -CAfile "$CA_CERTIFICATE" "$SERVER_CERTIFICATE" >/dev/null ||
         fail 'the server certificate was not issued by ca.pem'
-    openssl x509 -in "$LAN_CA" -noout -subject >/dev/null || fail 'unreadable LAN root CA'
     verify_daemon_config
 
     printf 'server: %s\n' "$subject"
@@ -232,7 +495,7 @@ verify() {
 }
 
 wait_for_docker() {
-    attempt=0
+    local attempt=0
     while [ "$attempt" -lt 60 ]; do
         if docker info >/dev/null 2>&1; then
             return
@@ -244,6 +507,7 @@ wait_for_docker() {
 }
 
 pull_images() {
+    local image
     [ -f "$IMAGE_LIST" ] || fail "missing $IMAGE_LIST"
     while IFS= read -r image; do
         [ -n "$image" ] || continue
@@ -252,24 +516,32 @@ pull_images() {
 }
 
 enable_docker() {
+    local ports
     verify
     systemctl enable --now docker.socket docker.service
     wait_for_docker
     pull_images
-    listening_ports | sed 's/^/listen /'
-    if listening_ports | grep -qx "$PLAINTEXT_PORT"; then
+    ports=$(listening_ports)
+    report_listening "$ports"
+    if grep -qx "$PLAINTEXT_PORT" <<< "$ports"; then
         fail "a plaintext docker listener is present on $PLAINTEXT_PORT"
     fi
-    listening_ports | grep -qx "$TLS_PORT" || fail "docker is not listening on $TLS_PORT"
+    grep -qx "$TLS_PORT" <<< "$ports" || fail "docker is not listening on $TLS_PORT"
     printf 'docker %s listening on %s with mutual TLS\n' \
         "$(docker version --format '{{.Server.Version}}')" "$TLS_PORT"
 }
 
 status() {
+    local path names
     if [ -r "$RELEASE_MARKER" ]; then
         printf 'release %s\n' "$(cat "$RELEASE_MARKER")"
     else
         echo 'release unknown (no marker)'
+    fi
+    if [ -f "$PROFILE" ]; then
+        printf 'profile %s\n' "$PROFILE"
+    else
+        echo 'profile missing'
     fi
     systemctl is-active docker.socket docker.service || true
     for path in "$CA_CERTIFICATE" "$SERVER_CERTIFICATE" "$SERVER_KEY" "$LAN_CA" "$WORKSPACE_ENV"; do
@@ -291,13 +563,368 @@ status() {
     if [ -f "$SERVER_CERTIFICATE" ]; then
         openssl x509 -in "$SERVER_CERTIFICATE" -noout -enddate
     fi
-    listening_ports | sed 's/^/listen /'
+    report_listening "$(listening_ports)"
+}
+
+run_clean() {
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"
+}
+
+run_apt() {
+    /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive "$@"
+}
+
+ensure_directory() {
+    local mode=$1 path=$2
+
+    if [ -L "$path" ]; then
+        fail "$path is a symbolic link"
+    fi
+    if [ -d "$path" ]; then
+        chown root:root -- "$path"
+        chmod "$mode" -- "$path"
+        return
+    fi
+    if [ -e "$path" ]; then
+        fail "$path exists and is not a directory"
+    fi
+    install -d -o root -g root -m "$mode" -- "$path"
+}
+
+write_root_file() {
+    local mode=$1 path=$2 temp
+
+    if [ -L "$path" ]; then
+        fail "$path is a symbolic link"
+    fi
+    temp=$(mktemp -- "${path}.XXXXXX") || fail "unable to stage $path"
+    cat > "$temp"
+    chown root:root -- "$temp"
+    chmod "$mode" -- "$temp"
+    if [ -f "$path" ] && cmp -s -- "$temp" "$path" &&
+        [ "$(stat -c '%U:%G %04a' "$path")" = "root:root $mode" ]; then
+        rm -f -- "$temp"
+        return 1
+    fi
+    mv -f -- "$temp" "$path"
+    return 0
+}
+
+os_release_value() {
+    local value
+    value=$(/usr/bin/sed -n "s/^$1=//p" /etc/os-release) || return 1
+    value=${value%%$'\n'*}
+    printf '%s' "${value//\"/}"
+}
+
+assert_ubuntu() {
+    local id version
+
+    [ -r /etc/os-release ] || fail 'missing /etc/os-release'
+    id=$(os_release_value ID)
+    version=$(os_release_value VERSION_ID)
+    [ "$id" = ubuntu ] || fail 'this distribution is not Ubuntu'
+    [ "$version" = "$UBUNTU_VERSION_ID" ] ||
+        fail "this distribution is Ubuntu $version, but the pinned package set targets $UBUNTU_VERSION_ID"
+}
+
+install_wsl_config() {
+    write_root_file 0644 /etc/wsl.conf <<'CONF' || return 0
+[boot]
+systemd=true
+
+[automount]
+enabled=false
+
+[interop]
+enabled=false
+appendWindowsPath=false
+
+[user]
+default=root
+CONF
+    printf 'wsl.conf updated; the distribution must be terminated for it to apply\n'
+}
+
+package_status() {
+    local status
+    status=$(run_clean /usr/bin/dpkg-query -W -f="$2" "$1" 2>/dev/null) || status=''
+    printf '%s' "$status"
+}
+
+install_base_packages() {
+    local missing=0 package
+
+    for package in "${BASE_PACKAGES[@]}"; do
+        [ "$(package_status "$package" '${db:Status-Abbrev}')" = 'ii ' ] || missing=1
+    done
+    [ "$missing" = 1 ] || return 0
+    run_apt /usr/bin/apt-get update
+    run_apt /usr/bin/apt-get install -y --no-install-recommends "${BASE_PACKAGES[@]}"
+}
+
+package_version_matches() {
+    [ "$(package_status "$1" '${db:Status-Abbrev} ${Version}')" = "ii  $2" ]
+}
+
+install_docker_repository() {
+    local temp digest
+
+    ensure_directory 0755 /etc/apt/keyrings
+    if [ -f "$DOCKER_KEYRING" ]; then
+        digest=$(run_clean /usr/bin/sha256sum < "$DOCKER_KEYRING" | cut -d' ' -f1) || digest=''
+        if [ "$digest" = "$DOCKER_GPG_SHA256" ]; then
+            chown root:root -- "$DOCKER_KEYRING"
+            chmod 0644 -- "$DOCKER_KEYRING"
+            install_docker_sources
+            return
+        fi
+    fi
+
+    temp=$(mktemp -- "${DOCKER_KEYRING}.XXXXXX") || fail 'unable to stage the Docker signing key'
+    if ! run_clean /usr/bin/curl --disable --fail --location --proto '=https' --proto-redir '=https' \
+        --tlsv1.2 --tls-max 1.3 --cacert /etc/ssl/certs/ca-certificates.crt --retry 3 \
+        --output "$temp" "$DOCKER_GPG_URL"; then
+        rm -f -- "$temp"
+        fail 'unable to download the Docker signing key'
+    fi
+    digest=$(run_clean /usr/bin/sha256sum < "$temp" | cut -d' ' -f1) || digest=''
+    if [ "$digest" != "$DOCKER_GPG_SHA256" ]; then
+        rm -f -- "$temp"
+        fail 'the Docker signing key does not match its pinned SHA-256'
+    fi
+    chown root:root -- "$temp"
+    chmod 0644 -- "$temp"
+    mv -f -- "$temp" "$DOCKER_KEYRING"
+    install_docker_sources
+}
+
+install_docker_sources() {
+    local architecture
+
+    architecture=$(run_clean /usr/bin/dpkg --print-architecture) || fail 'unable to read the dpkg architecture'
+    write_root_file 0644 "$DOCKER_SOURCES" <<CONF || true
+Types: deb
+URIs: ${DOCKER_REPOSITORY_URL}
+Suites: ${UBUNTU_CODENAME}
+Components: stable
+Architectures: ${architecture}
+Signed-By: ${DOCKER_KEYRING}
+CONF
+}
+
+install_docker_packages() {
+    if package_version_matches docker-ce "$DOCKER_CE_VERSION" &&
+        package_version_matches docker-ce-cli "$DOCKER_CLI_VERSION" &&
+        package_version_matches containerd.io "$CONTAINERD_VERSION"; then
+        run_clean /usr/bin/apt-mark hold docker-ce docker-ce-cli containerd.io > /dev/null
+        return
+    fi
+    run_apt /usr/bin/apt-get update
+    run_clean /usr/bin/apt-mark unhold docker-ce docker-ce-cli containerd.io > /dev/null 2>&1 || true
+    run_apt /usr/bin/apt-get install -y --no-install-recommends \
+        "docker-ce=${DOCKER_CE_VERSION}" \
+        "docker-ce-cli=${DOCKER_CLI_VERSION}" \
+        "containerd.io=${CONTAINERD_VERSION}"
+    package_version_matches docker-ce "$DOCKER_CE_VERSION" || fail 'docker-ce is not at its pinned version'
+    package_version_matches docker-ce-cli "$DOCKER_CLI_VERSION" || fail 'docker-ce-cli is not at its pinned version'
+    package_version_matches containerd.io "$CONTAINERD_VERSION" || fail 'containerd.io is not at its pinned version'
+    run_clean /usr/bin/apt-mark hold docker-ce docker-ce-cli containerd.io > /dev/null
+}
+
+install_rbw() {
+    if package_version_matches rbw "$RBW_PACKAGE_VERSION"; then
+        run_clean /usr/bin/apt-mark hold rbw > /dev/null
+        return
+    fi
+    run_apt /usr/bin/apt-get update
+    run_clean /usr/bin/apt-mark unhold rbw > /dev/null 2>&1 || true
+    run_apt /usr/bin/apt-get install -y --no-install-recommends "rbw=${RBW_PACKAGE_VERSION}"
+    package_version_matches rbw "$RBW_PACKAGE_VERSION" || fail 'rbw is not at its pinned version'
+    run_clean /usr/bin/apt-mark hold rbw > /dev/null
+}
+
+install_pinentry() {
+    ensure_directory 0755 "$PINENTRY_DIRECTORY"
+    write_root_file 0755 "$PINENTRY" <<'PYTHON' || true
+#!/usr/bin/python3
+import os
+import sys
+from pathlib import Path
+
+out = sys.stdout.buffer
+prompt = b""
+
+
+def write(data: bytes) -> None:
+    out.write(data)
+    out.flush()
+
+
+write(b"OK rbw credential pinentry ready\n")
+for raw in sys.stdin.buffer:
+    command, _, argument = raw.rstrip(b"\r\n").partition(b" ")
+    if command == b"SETPROMPT":
+        prompt = argument
+        write(b"OK\n")
+    elif command in {b"SETTITLE", b"SETDESC", b"SETERROR"}:
+        write(b"OK\n")
+    elif command == b"GETPIN":
+        if prompt != b"Master Password":
+            write(b"ERR 83886179 unexpected pinentry prompt\n")
+            break
+        try:
+            secret = Path(os.environ["CREDENTIALS_DIRECTORY"], "rbw_master").read_bytes()
+        except (KeyError, OSError):
+            write(b"ERR 83886179 credential unavailable\n")
+            break
+        if not secret:
+            write(b"ERR 83886179 empty credential\n")
+            break
+        write(b"D " + b"".join(f"%{byte:02X}".encode() for byte in secret) + b"\nOK\n")
+        break
+    elif command == b"BYE":
+        write(b"OK\n")
+        break
+    else:
+        write(b"ERR 83886179 unsupported pinentry command\n")
+        break
+PYTHON
+}
+
+install_self() {
+    ensure_directory 0755 "$(dirname "$OVERLAY")"
+    write_root_file 0755 "$OVERLAY" < "$SELF" || true
+}
+
+install_profile() {
+    [ -n "$1" ] || return 0
+    write_root_file 0644 "$PROFILE" < "$1" || true
+}
+
+install_docker_configuration() {
+    ensure_directory 0755 /etc/docker
+    ensure_directory 0700 "$TLS_DIRECTORY"
+    ensure_directory 0755 "$LAN_CA_DIRECTORY"
+    write_root_file 0644 "$DAEMON_CONFIG" <<CONF || true
+{
+  "hosts": ["fd://", "tcp://0.0.0.0:${TLS_PORT}"],
+  "tls": true,
+  "tlsverify": true,
+  "tlscacert": "${CA_CERTIFICATE}",
+  "tlscert": "${SERVER_CERTIFICATE}",
+  "tlskey": "${SERVER_KEY}",
+  "log-driver": "local",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  },
+  "default-address-pools": [
+    {
+      "base": "172.28.0.0/14",
+      "size": 24
+    }
+  ]
+}
+CONF
+}
+
+install_service_dropins() {
+    ensure_directory 0755 "$DROPIN_DIRECTORY"
+    if write_root_file 0644 "${DROPIN_DIRECTORY}/10-listeners.conf" <<'CONF'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/dockerd
+CONF
+    then
+        needs_daemon_reload=1
+    fi
+    if write_root_file 0644 "${DROPIN_DIRECTORY}/20-require-tls.conf" <<CONF
+[Unit]
+ConditionPathExists=${CA_CERTIFICATE}
+ConditionPathExists=${SERVER_CERTIFICATE}
+ConditionPathExists=${SERVER_KEY}
+CONF
+    then
+        needs_daemon_reload=1
+    fi
+}
+
+install_configuration_directory() {
+    local image
+
+    ensure_directory 0755 "$CONFIG_DIRECTORY"
+    {
+        for image in "${WORKSPACE_IMAGES[@]}"; do
+            printf '%s\n' "$image"
+        done
+    } | write_root_file 0644 "$IMAGE_LIST" || true
+    printf 'coder-worker %s\n' "$RELEASE_VERSION" | write_root_file 0644 "$RELEASE_MARKER" || true
+}
+
+systemd_running() {
+    [ -d /run/systemd/system ]
+}
+
+enable_units() {
+    if ! systemd_running; then
+        printf 'systemd is not running yet; terminate the distribution and run this script again\n'
+        return
+    fi
+    if [ "$needs_daemon_reload" = 1 ]; then
+        systemctl daemon-reload
+    fi
+    systemctl enable docker.socket docker.service > /dev/null
+}
+
+prepull_images() {
+    local image
+
+    if ! docker info > /dev/null 2>&1; then
+        printf 'docker is not running yet; run "coder-worker-overlay secrets" to fetch trust material and start it\n'
+        return
+    fi
+    while IFS= read -r image; do
+        [ -n "$image" ] || continue
+        docker image pull -- "$image"
+    done < "$IMAGE_LIST"
+}
+
+install_distribution() {
+    local profile_source=''
+
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --profile) profile_source=${2:-}; shift 2 ;;
+            *) usage ;;
+        esac
+    done
+
+    assert_ubuntu
+    [ -z "$profile_source" ] || load_profile "$profile_source"
+    install_wsl_config
+    install_base_packages
+    install_docker_repository
+    install_docker_packages
+    install_rbw
+    install_pinentry
+    install_self
+    install_docker_configuration
+    install_service_dropins
+    install_configuration_directory
+    install_profile "$profile_source"
+    enable_units
+    prepull_images
+
+    printf 'coder-worker %s configured; docker stays down until %s holds its CA, server certificate and server key\n' \
+        "$RELEASE_VERSION" "$TLS_DIRECTORY"
 }
 
 require_root
 command=${1:-}
 [ $# -gt 0 ] && shift
 case $command in
+    install) install_distribution "$@" ;;
     secrets) secrets "$@" ;;
     verify) [ $# -eq 0 ] || usage; verify ;;
     enable) [ $# -eq 0 ] || usage; enable_docker ;;

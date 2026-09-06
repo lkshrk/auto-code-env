@@ -3,231 +3,155 @@
 Turns a stock Ubuntu 26.04 WSL2 distribution on the Windows desktop into a
 Docker host for Coder workspaces. The only thing it exposes is Docker's TCP
 listener on 2376 with mutual TLS, reachable from the cluster node addresses
-only.
-
-There is no image build here. The distribution is stock Ubuntu plus one pinned,
-checksummed setup script; the product is that script, the in-distro overlay
-tool, the Windows installer, and the trust-material generator.
-
-## Runtime contract
+only. There is no image build: a Windows installer, one in-distro tool that
+installs and operates the distribution, a trust-material generator, and a
+committed non-secret host profile.
 
 ```text
-coderd pod (namespace coder)
-  terraform provider "docker"
-    host      = tcp://172.16.20.195:2376
-    cert_path = /etc/coder/docker-tls      Secret coder-docker-tls, SOPS, mode 0444
-        |
+coderd (namespace coder), docker provider, tcp://172.16.20.195:2376
+  client certificate from Secret coder-docker-tls at /etc/coder/docker-tls
         |  mutual TLS; the client certificate is the only credential
         v
-Windows desktop 172.16.20.195
-  Hyper-V firewall: inbound default Block, TCP/2376 allowed from the node IPs
-        |
+Windows desktop: Hyper-V firewall, inbound Block, 2376 from the node IPs only
         v
-WSL2 distribution "coder-worker": Ubuntu 26.04, systemd, mirrored networking
-  dockerd  tcp://0.0.0.0:2376  tls + tlsverify        never 2375
-        |
-        +-- coder-<owner>-<workspace>        codercom/enterprise-base:ubuntu
-        +-- coder-<owner>-<workspace>-dind   docker:27-dind, privileged, optional
-        +-- /etc/ssl/lan/lan-ca.pem          bind-mounted read-only into workspaces
-        `-- /etc/coder-worker/workspace.env  bind-mounted read-only into workspaces
-
-workspace agent -> https://coder.h-cloud.io   outbound only, DERP relay in coderd
+WSL2 "coder-worker": Ubuntu 26.04, systemd, mirrored networking
+  dockerd tcp://0.0.0.0:2376, tls + tlsverify, never 2375
+  workspace containers mount /etc/ssl/lan/lan-ca.pem and
+  /etc/coder-worker/workspace.env read-only
 ```
-
-Mirrored networking puts `0.0.0.0:2376` on the host address, so the Hyper-V
-firewall rule is the only network boundary. `tlsverify` is the only
-authentication: any client holding a certificate signed by the CA reaches the
-daemon, and a daemon socket is root on that host. Treat the client half of the
-CA as a root credential for the desktop.
-
-Everything runs as root inside the distribution. There is no `agent` user and no
-sudo; the distribution exists to run dockerd and nothing else.
 
 ## Install
 
-Elevated PowerShell on the desktop. `install.ps1` takes the setup script and
-the overlay tool as two separately checksummed artifacts, because both have to
-reach the distribution before anything is configured:
+Elevated PowerShell on the desktop, twice:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 `
-  -SetupScriptPath .\setup.sh -SetupScriptSha256 <64-hex-sha256> `
-  -OverlayPath .\coder-worker-overlay -OverlaySha256 <64-hex-sha256>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -HostProfile towerr
+wsl.exe -d coder-worker -u root -- coder-worker-overlay secrets
 ```
 
-`-SetupScriptUri` and `-OverlayUri` take the same artifacts over absolute HTTPS
-instead. Exactly one source per artifact, and the SHA-256 is mandatory in both
-modes. Compute them from the repository copies:
+The first reads `hosts/towerr.profile`, downloads every other artifact from the
+release tag pinned in `$DefaultRelease`, verifies each against that release's
+`checksums.txt`, reconciles `.wslconfig`, applies the firewall rule, registers
+the distribution, installs Docker and registers the keepalive task. The firewall
+rule goes on before the distribution exists, so 2376 is never briefly open to
+the LAN. The second asks for the Vaultwarden master password, fetches the trust
+material, verifies it and starts Docker. Nothing else is prompted for or typed.
+
+`install.ps1` is the trust anchor. It embeds `$DefaultChecksumsSha256`, the
+digest of its release's `checksums.txt`, and refuses that file unless it
+matches, so no artifact is ever trusted on the strength of an HTTPS fetch alone.
+GitHub lets release assets be replaced on an existing tag, so pinning only the
+tag would not have been enough.
+
+Verifying `install.ps1` against a digest published on the same release page
+proves nothing, because whoever could replace the assets could replace that
+digest too. Get it from the git tag instead, which is bound to a commit. From a
+clone of `lkshrk/auto-code-env`, once the tag exists:
 
 ```sh
-sha256sum coder-worker/wsl/setup.sh coder-worker/wsl/coder-worker-overlay
+git show coder-worker-v1.0.0:coder-worker/windows/install.ps1 | sha256sum
 ```
 
-The installer requires Windows 11, elevated PowerShell, and WSL 2.7 or later.
-It merges `networkingMode=mirrored` and `dnsTunneling=true` into `.wslconfig`,
-backing up the existing file only when it changes, then runs
-`wsl --install Ubuntu-26.04 --name coder-worker --no-launch`. Naming a store
-distribution needs WSL 2.4.4 or later, which the 2.7 floor already guarantees.
-`wsl --manage <distro> --set-sparse true` follows so the VHD gives space back
-after a prune.
+`fatal: invalid object name` there means the wrong checkout or an unreleased
+tag, not tampering.
 
-`-Location <directory>` puts the VHD outside the system drive. `-DistroName`
-and `-UbuntuDistribution` override the defaults `coder-worker` and
-`Ubuntu-26.04`.
+`-ReleaseTag` selects another release and then requires `-ChecksumsSha256`,
+since the embedded digest only covers the pinned one. `-OverlayPath`
+or `-OverlayUri` with `-OverlaySha256`, and likewise `-Firewall*`,
+`-Keepalive*`, `-Rootfs*`, supply an artifact by hand with a mandatory checksum;
+`-SkipFirewall` and `-SkipKeepalive` skip a step deliberately, and skipping the
+firewall leaves 2376 unrestricted. The parameter is `-HostProfile` because
+`-Host` and `-Profile` shadow PowerShell automatic variables.
 
-If the store flavour is unavailable on the host, pass a root filesystem instead
-and the installer imports it. `-Location` is mandatory in that mode:
+Windows 11, elevated PowerShell and WSL 2.7 or later are required. Every step
+reconciles, so rerunning the installer is how you recover a half-finished
+install or roll out a newer overlay: an already-registered distribution keeps
+its data and its VHD, and only the overlay install, the firewall rule and the
+keepalive task are reapplied. `.wslconfig` is global, so the installer never
+sets `memory` or `processors`.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 `
-  -RootfsUri https://cloud-images.ubuntu.com/wsl/.../ubuntu-26.04-wsl-amd64.wsl `
-  -RootfsSha256 <64-hex-sha256> -Location D:\wsl\coder-worker `
-  -SetupScriptPath .\setup.sh -SetupScriptSha256 <64-hex-sha256> `
-  -OverlayPath .\coder-worker-overlay -OverlaySha256 <64-hex-sha256>
-```
+## Host profile
 
-Both artifacts are staged into `/root/coder-worker` and their SHA-256 is
-re-checked inside the distribution before anything runs. `setup.sh` then runs
-twice with a `wsl --terminate` after each pass: the first pass writes
-`/etc/wsl.conf` and installs packages, the terminate lets systemd come up under
-the new configuration, and the second pass enables the Docker units. Both passes
-are no-ops once their state is already correct.
+`hosts/<name>.profile` is a committed, non-secret `KEY=value` file. That grammar
+was chosen because both PowerShell and POSIX sh parse it in a few lines and
+`workspace.env` already uses it. The extension is `.profile`, not `.env`,
+because this repository gitignores `*.env` as the shape secrets arrive in.
 
-An existing distribution is a no-op. If `coder-worker` is registered, the
-installer does not download, import, or reconfigure it. Host `.wslconfig`
-reconciliation still runs first and may call `wsl --shutdown`.
+| Key | Required | Meaning |
+|---|---|---|
+| `DISTRO_NAME` | yes | WSL distribution name |
+| `UBUNTU_DISTRIBUTION` | yes | Store flavour, `Ubuntu-26.04` |
+| `VHD_LOCATION` | no | Put the VHD off the system drive |
+| `VAULT_URL` | yes | Absolute HTTPS Vaultwarden URL |
+| `VAULT_EMAIL` | yes | Vaultwarden account |
+| `VAULT_FOLDER` | no | Folder the items live in |
+| `VAULT_ITEM_CA` | yes | Item holding `ca.pem` |
+| `VAULT_ITEM_SERVER_CERT` | yes | Item holding `server-cert.pem` |
+| `VAULT_ITEM_SERVER_KEY` | yes | Item holding `server-key.pem` |
+| `VAULT_ITEM_LAN_CA` | no | Item holding the LAN root CA |
+| `VAULT_ITEM_WORKSPACE_ENV` | no | Item holding the workspace env file |
+| `DOCKER_PORT` | yes | Must be 2376 |
+| `FIREWALL_REMOTE_ADDRESSES` | yes | IPv4 hosts or /24-or-narrower ranges, comma separated |
 
-`.wslconfig` is global: `memory` and `processors` bound every distribution on
-the host, including `openhands-worker`. The installer therefore never sets them.
-Choose them by hand if workspaces need a cap:
+Both parsers accept only these keys, reject a repeat, reject any key whose name
+looks like a secret, and reject any value shaped like a credential: PEM
+material, a token prefix, or 40 or more opaque characters. A profile can
+therefore never open 2375 or set the firewall source to `Any`. Explicit flags
+override it on both sides; `coder-worker-overlay install` writes it to
+`/etc/coder-worker/profile`, where `secrets` and `verify` read it.
 
-```ini
-[wsl2]
-memory=24GB
-processors=8
-```
+`VAULT_ITEM_LAN_CA` is optional: omit it and `lan-ca.pem` is never written,
+while `verify` fails if a stale copy remains. `coder/templates/backends/docker.tf`
+bind-mounts that path unconditionally, so dropping the item without removing the
+mount there leaves Docker creating a directory at that path on the next workspace
+start. `verify` refuses the directory rather than reading it as a certificate.
+Both files are in this repository, so drop the item and the mount together.
 
-## Firewall
-
-`coder-worker` does not ship its own firewall script. The WSL Hyper-V firewall
-is one shared object, so both products drive `worker/windows/firewall.ps1`, each
-with its own rule name. A wrapper would only add a second file that has to find
-the first one on an operator's disk, where the two scripts are separate release
-assets.
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\firewall.ps1 `
-  -RuleName coder-worker-docker -RuleDisplayName "Coder worker Docker" `
-  -Port 2376 -RemoteAddresses <node IPs, comma separated>
-```
-
-Use the same node-IP list as the worker's TCP/443 rule. `-RemoteAddresses`
-accepts only IPv4 hosts or ranges of /24 or narrower; `Any` is refused. `-Port`
-accepts only 443 or 2376. Create, update, and delete touch only the rule with
-the given name, so adding this rule leaves `openhands-worker-https` untouched.
-
-## Keepalive
-
-WSL idle-stops a distribution about ten seconds after the last `wsl.exe` session
-ends, which would take dockerd down between workspace builds.
-`worker/windows/keepalive.ps1` is already parameterized:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\keepalive.ps1 `
-  -DistroName coder-worker -TaskName coder-worker-keepalive
-```
-
-The task runs at logon of the current user, so the host must log the operator on
-(or auto-logon) for the backend to come back after a reboot.
-
-## Trust material
+## Trust material and rotation
 
 One CA signs both halves. Generate it once, on a trusted machine, never in the
-repository:
+repository: `coder-worker/scripts/gen-docker-tls.sh --out ~/coder-worker-tls`.
+ECDSA P-256, a ten-year CA, two-year leaves, server SANs `IP:172.16.20.195` and
+`DNS:coder-worker.h-cloud.lan`, all overridable.
 
-```sh
-coder-worker/scripts/gen-docker-tls.sh --out ~/coder-worker-tls
-```
+| File | Goes to |
+|---|---|
+| `ca.pem`, `server-cert.pem`, `server-key.pem` | one Vaultwarden item each, PEM in the notes, named by `VAULT_ITEM_*` |
+| workspace env file | a Vaultwarden item, `NAME=value` lines in the notes |
+| `ca.pem`, `client-cert.pem`, `client-key.pem` | the `coder-docker-tls` SOPS Secret, read by coderd |
 
-ECDSA P-256, a ten-year CA, two-year leaves, server SANs
-`IP:172.16.20.195` and `DNS:coder-worker.h-cloud.lan`. `--server-ip`,
-`--server-dns`, `--ca-cn`, `--server-cn`, and `--client-cn` override the
-defaults. The output directory must be new or empty and outside this repository;
-the script refuses otherwise.
+`ca-key.pem` goes nowhere; keep it offline to reissue a leaf. Delete the output
+directory once both halves are stored. Rotation is the same: replace the items
+and the SOPS Secret, rerun `coder-worker-overlay secrets`, reconcile Flux.
 
-| File | Goes to | Consumed by |
-|---|---|---|
-| `ca.pem` | Vaultwarden item, PEM in the notes | `coder-worker-overlay secrets --ca-id` |
-| `server-cert.pem` | Vaultwarden item, PEM in the notes | `--crt-id` |
-| `server-key.pem` | Vaultwarden item, PEM in the notes | `--key-id` |
-| workspace env file | Vaultwarden item, `NAME=value` lines in the notes | `--env-id`, optional |
-| `ca.pem` | `coder-docker-tls` SOPS Secret, key `ca.pem` | coderd |
-| `client-cert.pem` | `coder-docker-tls` SOPS Secret, key `cert.pem` | coderd |
-| `client-key.pem` | `coder-docker-tls` SOPS Secret, key `key.pem` | coderd |
+Items are addressed by name. `secrets` lists the vault once, keeps entries whose
+name and folder match exactly, and refuses unless exactly one matches each item,
+so a renamed, deleted or duplicated item fails loudly. `rbw get` alone would
+fall back to a partial name match, which is why resolution happens here and the
+fetch is then done by the resolved UUID. `--ca-id` and its four siblings still
+take UUIDs and skip resolution.
 
-`ca-key.pem` goes nowhere. Keep it offline; it is only needed to reissue a
-leaf. Delete the output directory once both halves are stored. The LAN root CA
-is the item the worker already uses, referenced by `--lan-ca-id`.
+The workspace env item exists because a Docker workspace cannot read the cluster
+Secret that gives Kubernetes workspaces `LITELLM_API` and a GitHub token. Its
+notes are the file verbatim: `NAME` matching `^[A-Za-z_][A-Za-z0-9_]*$`, the
+rest of the line taken raw after the first `=`. Any other line fails the whole
+run, reported by line number and never by content. A rotated token must be
+written to both this item and the SOPS Secret.
 
-Rotation is the same sequence: regenerate, replace the Vaultwarden items and the
-SOPS secret, run `secrets` and `enable` again, reconcile Flux.
+## Operating the distribution
 
-## Workspace environment
+Everything inside the distribution runs as root through
+`/usr/local/sbin/coder-worker-overlay`: `install --profile FILE` (run by
+`install.ps1`), `secrets [--no-enable]`, `verify`, `enable`, and `status`, which
+is safe to run at any time and prints state but never a value.
 
-Kubernetes workspaces receive `LITELLM_API` and a GitHub token from a cluster
-Secret through `secret_key_ref`. A Docker workspace on the desktop cannot read
-that Secret, so the same values arrive natively for this backend: a fifth
-Vaultwarden item holds an env file, `secrets` writes it to
-`/etc/coder-worker/workspace.env`, and the Docker template bind-mounts it into
-each workspace container, which exports every line before starting the agent.
-The values never pass through Coder, Terraform state, or this repository.
-
-The item's notes are the file, verbatim:
-
-```text
-# comments and blank lines are allowed
-LITELLM_API=https://litellm.h-cloud.io/v1
-GH_TOKEN=<pat>
-GITHUB_TOKEN=<pat>
-GITHUB_PERSONAL_ACCESS_TOKEN=<pat>
-```
-
-`NAME` must match `^[A-Za-z_][A-Za-z0-9_]*$`. Everything after the first `=` is
-the value, taken raw: no quote stripping, no expansion, only a trailing carriage
-return removed. Any line that is not a comment, blank, or `NAME=value` fails the
-whole `secrets` run and is reported by line number, never by content.
-
-The four names above are what this deployment expects: one PAT repeated under
-three names, the same thing the Kubernetes backend does. Nothing enforces them.
-The file is whatever the item says.
-
-Rotation happens in two places on purpose. The cluster workspaces read the SOPS
-secret and the desktop workspaces read this item, so a rotated PAT has to be
-written to both. Neither backend can reach the other's copy.
-
-Any client holding the Docker client certificate can start a container that
-bind-mounts this file and read it. The file's `0600` mode keeps it away from
-other processes in the distribution, not from the daemon's clients: the
-certificate is already a root credential for the desktop, and this file is one
-more thing it grants.
-
-## Secrets and enable
-
-Inside the distribution as root. `coder-worker-overlay secrets` reads the
-Vaultwarden master password once with `systemd-ask-password`, keeps it only in a
-root-owned tmpfs file for the duration of one transient `systemd-run` unit that
-exposes it to `rbw` as a credential, fetches the items by immutable UUID, and
-writes them with the required ownership and modes. It then locks `rbw`, stops
-its agent, and purges the local vault copy.
-
-```powershell
-wsl.exe -d coder-worker -u root -- coder-worker-overlay secrets `
-  --vault-url https://vault.example --email worker@example `
-  --ca-id <uuid> --crt-id <uuid> --key-id <uuid> --lan-ca-id <uuid> `
-  --env-id <uuid>
-wsl.exe -d coder-worker -u root -- coder-worker-overlay verify
-wsl.exe -d coder-worker -u root -- coder-worker-overlay enable
-```
+`secrets` reads the master password once with `systemd-ask-password`, keeps it
+only in a root-owned tmpfs file for the duration of one transient `systemd-run`
+unit that exposes it to `rbw` as a credential, then locks `rbw`, stops its agent
+and purges the local vault copy whether the fetch succeeded or not. Items are
+staged beside their destinations and moved into place only once every one is
+fetched and accepted, so a failure anywhere leaves the previous files untouched.
+It then verifies and enables Docker unless `--no-enable`.
 
 | Path | Owner | Mode |
 |---|---|---|
@@ -238,124 +162,108 @@ wsl.exe -d coder-worker -u root -- coder-worker-overlay enable
 | `/etc/ssl/lan/lan-ca.pem` | `root:root` | `0644` |
 | `/etc/coder-worker/workspace.env` | `1000:1000` | `0600` |
 
-All five items are staged beside their destinations and moved into place only
-once every one of them is fetched and accepted, so a failure anywhere leaves the
-previous files exactly as they were. `--env-id` is the one optional item: omit
-it and `workspace.env` is written empty, with the same owner and mode, so the
-Docker template always has a file to mount. `1000:1000` is the container's
-`coder` user; the distribution itself has no such account, which is why the file
-is owned by a bare numeric id.
+`1000:1000` is the container's `coder` user, which the distribution has no
+account for. `verify` checks each path is a regular file with that owner and
+mode, that every `workspace.env` line is a comment, blank or `NAME=value`, that
+the server key matches its certificate, that the certificate was issued by
+`ca.pem`, that `lan-ca.pem` is a file and not a bind-mount directory, that
+`daemon.json` never names 2375, and that `dockerd --validate` accepts it.
 
-`verify` checks that each path is a regular file with that owner and mode, that
-every line of `workspace.env` is a comment, blank, or `NAME=value`, that the
-server key matches the server certificate, that the certificate was issued by
-`ca.pem`, that `/etc/ssl/lan/lan-ca.pem` is a file and not the directory Docker
-creates for a bind mount whose source is missing, that `daemon.json` never names
-port 2375, and that `dockerd --validate` accepts it.
+## Security model
 
-`enable` refuses to start anything until `verify` passes, then enables
-`docker.socket` and `docker.service`, pulls the workspace images listed in
-`/etc/coder-worker/images`, prints the listening sockets, and fails if anything
-answers on 2375 or nothing answers on 2376.
-
-`status` prints the release marker, unit state, the trust material with its
-modes, whether `workspace.env` is empty or which variables it names, the server
-certificate expiry, and the listening sockets. It is the one subcommand that is
-safe to run at any time. Nothing prints a value from the env file, on any path:
-not `secrets`, not `verify`, not `status`, and not a failure message, which
-reports the offending line by number only.
+Mirrored networking puts `0.0.0.0:2376` on the host address, so the Hyper-V
+firewall rule is the only network boundary. `tlsverify` is the only
+authentication: any client holding a certificate signed by the CA reaches the
+daemon, and a daemon socket is root on that host. Treat the client half of the
+CA as a root credential for the desktop. Such a client can also start a
+container that bind-mounts `workspace.env` and read it; the `0600` mode keeps
+that file from other processes in the distribution, not from the daemon's
+clients.
 
 Until all three files under `/etc/docker/tls` exist, `docker.service` carries a
-`ConditionPathExists` for each of them and systemd skips it. The daemon fails
-closed: it never starts, so 2376 never opens without mutual TLS configured.
+`ConditionPathExists` for each and systemd skips it, so the daemon fails closed
+and 2376 never opens without mutual TLS configured. Everything in the
+distribution runs as root; there is no `agent` user and no sudo.
 
-## What setup.sh pins
+The WSL Hyper-V firewall is one shared object, so both products drive
+`worker/windows/firewall.ps1` under their own rule name, leaving
+`openhands-worker-https` untouched; `-RemoteAddresses` accepts only IPv4 hosts
+or /24-or-narrower ranges and `-Port` only 443 or 2376. That script and
+`keepalive.ps1` are copied into this release rather than referenced from the
+worker release, so one `checksums.txt` covers an install and the two version
+streams stay independent. Keepalive runs at logon, so the host must log the
+operator on for the backend to return after a reboot.
 
-| Component | Pin |
-|---|---|
-| Ubuntu | `26.04`, codename `resolute`, asserted from `/etc/os-release` |
-| Docker apt signing key | SHA-256 verified against a constant before it is trusted |
-| `docker-ce`, `docker-ce-cli` | `5:29.8.0-1~ubuntu.26.04~resolute` |
-| `containerd.io` | `2.3.4-2~ubuntu.26.04~resolute` |
-| `rbw` | `1.13.2-7` |
+Ubuntu is asserted to be 26.04 `resolute`, the Docker apt signing key is
+SHA-256 verified against a constant before it is trusted, and `docker-ce`,
+`docker-ce-cli` (`5:29.8.0-1~ubuntu.26.04~resolute`), `containerd.io`
+(`2.3.4-2~ubuntu.26.04~resolute`) and `rbw` (`1.13.2-7`) are pinned and held.
+Nothing uses a `latest` tag.
 
-All four packages are held with `apt-mark hold` after install. Updating any of
-them is a source change: edit the constant in `setup.sh`, recompute its SHA-256,
-and rerun the installer against a fresh distribution.
+## Releasing
 
-`daemon.json` sets `hosts` to `fd://` and `tcp://0.0.0.0:2376`, `tls` and
-`tlsverify` to true, the three TLS paths, `log-driver: local` with rotation, and
-a `172.28.0.0/14` address pool that avoids both the LAN and the cluster pod
-CIDR. A drop-in clears `-H fd://` from the unit `ExecStart` so `daemon.json`
-owns the listeners; without it dockerd refuses to start with hosts configured in
-both places.
+`coder-worker/scripts/release-checksums.sh --out DIR` assembles the release and
+prints the digest of its `checksums.txt`. CI runs the same script, so there is
+one implementation and no drift. To cut a release, run it, put the digest in
+`$DefaultChecksumsSha256`, bump `$DefaultRelease` and `RELEASE_VERSION` to the
+new version in the same commit, then tag `coder-worker-v<version>`. CI rewrites
+nothing; it refuses the tag unless all three constants already agree with what
+it assembles.
 
-Two files are copied rather than shared with `worker/`: the `rbw` credential
-pinentry helper, which `worker/provision.sh` writes into its image, and the
-`.wslconfig` reconciliation in `install.ps1`. Both installers ship as standalone
-release assets that an operator downloads one file at a time, so a shared module
-would have to be downloaded too. Change either one in both places.
+`checksums.txt` covers the overlay, `firewall.ps1`, `keepalive.ps1`,
+`gen-docker-tls.sh` and each host profile as `host-<name>.profile`.
+`install.ps1` is published alongside them but deliberately left out of it: it
+embeds that file's digest, so covering it too would be circular. Its own digest
+is published as `install.ps1.sha256`, which is a convenience, not an anchor.
 
 ## Verification
 
-After the firewall change and again after `enable`:
-
 ```sh
-# from a cluster pod, the worker's existing path still works
-nc -zv 172.16.20.195 443
-
-# from a LAN host outside the node list, this must time out
-nc -zv 172.16.20.195 2376
-
-# from a cluster pod: no client certificate and a foreign one both fail
-openssl s_client -connect 172.16.20.195:2376 </dev/null
-openssl s_client -connect 172.16.20.195:2376 -cert other.pem -key other-key.pem </dev/null
-
-# from a cluster pod with the real client half, this succeeds
+nc -zv 172.16.20.195 2376                       # from outside the node list: must time out
+openssl s_client -connect 172.16.20.195:2376 </dev/null   # from a pod: must fail
 docker --tlsverify --tlscacert ca.pem --tlscert cert.pem --tlskey key.pem \
-  -H tcp://172.16.20.195:2376 version
+  -H tcp://172.16.20.195:2376 version           # from a pod with the client half: succeeds
 ```
 
 ```powershell
 Get-NetFirewallHyperVRule | Where-Object DisplayName -match 'worker'
-Get-NetTCPConnection -LocalPort 2376
+wsl.exe -d coder-worker -u root -- coder-worker-overlay status
 ```
 
-```sh
-wsl.exe -d coder-worker -u root -- ss -ltn
-```
+`status` must show 2376 and nothing on 2375, and the rule list both
+`openhands-worker-https` and `coder-worker-docker` with their own port and
+source sets. A file check is not a runtime proof: complete a real workspace
+build before calling the backend done.
 
-`ss -ltn` must show 2376 and nothing on 2375. `Get-NetFirewallHyperVRule` must
-list both `openhands-worker-https` and `coder-worker-docker`, each with its own
-port and source set. During a build, `Get-NetTCPConnection -LocalPort 2376`
-shows a cluster node address as the remote peer.
+## Troubleshooting
 
-A file check is not a runtime proof. Complete a real workspace build before
-calling the backend done.
-
-## Offline desktop
-
-Template import and push never contact the desktop, because the Terraform
-provider is configured with `disable_docker_daemon_check = true`. Workspace
-start, stop, and delete do, and fail with a provider error while the distro or
-the host is down. `coder delete --orphan` removes the workspace record when the
-containers cannot be reached. A Windows reboot without auto-logon leaves the
-backend offline until the operator logs in, the same limitation the worker has.
+| Symptom | Cause |
+|---|---|
+| `no vault item is named "..."` | The item was renamed, or `VAULT_FOLDER` does not match |
+| `N vault items are named "..."` | Duplicates in that folder; delete one or pass `--ca-id` and friends |
+| `checksums.txt SHA-256 does not match the expected digest` | The release assets changed, or `$DefaultChecksumsSha256` is stale. Do not bypass it; verify the release |
+| `<profile> is missing DOCKER_PORT` | A required profile key was dropped; both parsers require the same set |
+| `missing profile /etc/coder-worker/profile` | The distribution predates the profile; reinstall on a fresh one, or pass `--profile` |
+| `... exists but no LAN root CA is configured` | `VAULT_ITEM_LAN_CA` was dropped; remove the stale `lan-ca.pem` |
+| `refusing to replace non-regular file .../lan-ca.pem` | Docker created a bind-mount directory; remove it, then rerun `secrets` |
+| `docker did not become ready` | `verify` passed but the unit did not start; check `journalctl -u docker` |
+| Workspace start fails while the desktop is off | Expected. Import and push never contact the desktop; start, stop and delete do. `coder delete --orphan` removes the record |
 
 ## Tests
 
 ```sh
-bash coder-worker/tests/setup.Tests.sh
+bash coder-worker/tests/release.Tests.sh
+bash coder-worker/tests/profile.Tests.sh
+bash coder-worker/tests/install.Tests.sh
 bash coder-worker/tests/overlay.Tests.sh
 bash coder-worker/tests/gen-docker-tls.Tests.sh
 pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1
-shellcheck coder-worker/wsl/setup.sh coder-worker/wsl/coder-worker-overlay \
-  coder-worker/scripts/gen-docker-tls.sh coder-worker/tests/*.sh
+shellcheck coder-worker/scripts/*.sh coder-worker/wsl/coder-worker-overlay \
+  coder-worker/tests/*.sh
 ```
 
-The three shell suites run inside an Ubuntu 26.04 container and need Docker. The
-setup suite runs `setup.sh` five times against stubbed apt, systemd, and Docker
-to prove that the second run changes no byte, that Docker is enabled only once
-systemd is up, and that a signing key failing its pinned checksum aborts the
-run. The overlay suite runs `setup.sh` first, so it exercises the real
-`daemon.json` rather than a copy of it.
+The shell suites run inside an Ubuntu 26.04 container and need Docker. The
+install suite runs the overlay five times against stubbed apt, systemd and
+Docker to prove the second run changes no byte and that a signing key failing
+its pinned checksum aborts. The overlay suite runs `install` first, so it
+exercises the real `daemon.json` rather than a copy.

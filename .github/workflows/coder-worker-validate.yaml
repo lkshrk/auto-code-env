@@ -5,8 +5,12 @@ name: Coder worker validate
 on:
   pull_request:
     paths:
+      - .github/workflows/coder-worker-release.yaml
       - .github/workflows/coder-worker-validate.yaml
       - coder-worker/**
+      - worker/windows/firewall.ps1
+      - worker/windows/keepalive.ps1
+      - coder/templates/backends/docker.tf
 
 permissions:
   contents: read
@@ -23,9 +27,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash coder-worker/tests/setup.Tests.sh
+          bash coder-worker/tests/release.Tests.sh
+          bash coder-worker/tests/profile.Tests.sh
+          bash coder-worker/tests/install.Tests.sh
           bash coder-worker/tests/overlay.Tests.sh
           bash coder-worker/tests/gen-docker-tls.Tests.sh
+          bash coder-worker/tests/images.Tests.sh
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \

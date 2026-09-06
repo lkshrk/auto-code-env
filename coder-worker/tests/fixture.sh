@@ -1,5 +1,5 @@
 #!/bin/sh
-# Sourced inside the test container by setup.Tests.sh and overlay.Tests.sh.
+# Sourced inside the test container by install.Tests.sh and overlay.Tests.sh.
 set -eu
 
 FIXTURE_LOG=/tmp/log
@@ -142,7 +142,7 @@ fixture_snapshot() {
         /etc/systemd/system/docker.service.d/20-require-tls.conf \
         /etc/apt/keyrings/docker.asc /etc/apt/sources.list.d/docker.sources \
         /usr/local/libexec/coder-worker-rbw-pinentry /usr/local/sbin/coder-worker-overlay \
-        /etc/coder-worker/images /etc/coder-worker/release; do
+        /etc/coder-worker/images /etc/coder-worker/release /etc/coder-worker/profile; do
         printf '%s %s %s\n' "$path" "$(stat -c '%U:%G %a %y' "$path")" "$(sha256sum < "$path" | cut -d' ' -f1)"
     done
 }
