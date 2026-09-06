@@ -13,6 +13,7 @@ on:
       - shared/windows/firewall.ps1
       - shared/windows/keepalive.ps1
       - coder/templates/backends/docker.tf
+      - coder/templates/common.tf
 
 permissions:
   contents: read

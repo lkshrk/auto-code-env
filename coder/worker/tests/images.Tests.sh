@@ -4,13 +4,22 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
 overlay="$repo_root/coder/worker/runtime/coder-worker-overlay"
 backend="$repo_root/coder/templates/backends/docker.tf"
+common="$repo_root/coder/templates/common.tf"
 
 test -f "$overlay"
 test -f "$backend"
+test -f "$common"
 
 # The overlay pre-pulls; the template runs. A drift makes the first build fetch over the LAN or fail offline.
 pulled=$(sed -n "/^readonly -a WORKSPACE_IMAGES=(/,/^)/p" "$overlay" | sed -n "s/^ *'\(.*\)'$/\1/p" | sort)
-run=$(sed -n 's/^ *image *= *"\(.*\)"$/\1/p' "$backend" | sort -u)
+run=$({
+    sed -n 's/^ *image *= *"\(.*\)"$/\1/p' "$backend"
+    if grep -Eq '^ *image *= *var\.workspace_image *$' "$backend"; then
+        default_image=$(sed -n '/^variable "workspace_image" {/,/^}/p' "$common" | sed -n 's/^ *default *= *"\(.*\)"$/\1/p')
+        test -n "$default_image" || { echo 'workspace_image must have a literal default' >&2; exit 1; }
+        printf '%s\n' "$default_image"
+    fi
+} | sort -u)
 
 test -n "$pulled" || { echo 'no images found in the overlay'; exit 1; }
 test -n "$run" || { echo 'no images found in the docker backend'; exit 1; }
