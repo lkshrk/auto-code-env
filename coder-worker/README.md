@@ -210,14 +210,30 @@ Nothing uses a `latest` tag.
 
 ## Releasing
 
-To cut a release, bump `$DefaultRelease` and `RELEASE_VERSION` to the new
-version in the same commit, then tag `coder-worker-v<version>`. CI assembles the
-assets with `coder-worker/scripts/release-checksums.sh`, signs `checksums.txt`
-with the release signing key and publishes `checksums.txt.sig` beside it. CI
-rewrites nothing; it refuses the tag unless both constants already agree and the
-signature it just produced verifies against `$ReleaseSigningKey` in
+The merge is the release. Open a pull request that bumps `$DefaultRelease` in
+`install.ps1` and `RELEASE_VERSION` in the overlay to the same new version, and
+merging it to `main` publishes `coder-worker-v<version>`. There is no tag to
+push: the workflow derives the version from the overlay, creates the tag at the
+merged commit and releases it in one run. A merge that does not change the
+version publishes nothing, which is every other merge; the workflow notices the
+tag already exists and succeeds without doing anything.
+
+Bump both constants or neither. If the overlay names a version `install.ps1`
+does not, the workflow refuses before creating the tag, so a half-finished bump
+fails the merge instead of leaving a tag that no release will ever fill.
+
+CI assembles the assets with `coder-worker/scripts/release-checksums.sh`, signs
+`checksums.txt` with the release signing key and publishes `checksums.txt.sig`
+beside it. CI rewrites nothing; it refuses to publish unless the tag points at
+the commit it built, both constants agree with the tag, every suite passes, and
+the signature it just produced verifies against `$ReleaseSigningKey` in
 `install.ps1`, so a key mismatch fails the release instead of shipping something
 the installer will reject.
+
+Pushing a tag by hand still works and behaves exactly as before. It is also the
+way back from a release that failed after its tag was created: the tag now
+exists, so a later merge skips, and the fix is to re-run the failed workflow run
+rather than to merge again.
 
 Nothing here is per-release except those two version constants. A Renovate bump
 to an image in `coder/templates/backends/docker.tf` changes the overlay, and the
