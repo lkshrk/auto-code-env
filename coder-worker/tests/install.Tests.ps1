@@ -173,6 +173,10 @@ foreach ($case in @(
         @{ Der = New-DerSignature -R $r -S $s -LengthOverride 60; Message = "a length that disagrees with the buffer is refused" },
         @{ Der = New-DerSignature -R $r -S $s -LengthOverride 80; Message = "a length that overruns the buffer is refused" },
         @{ Der = [byte[]]((New-DerSignature -R $r -S $s) + [byte]0); Message = "trailing garbage after the SEQUENCE is refused" },
+        @{ Der = [byte[]](0x30, 0x08, 0x02, 0x01, 0x11, 0x02, 0x01, 0x22, 0x00, 0x00)
+            Message = "garbage inside a correctly sized SEQUENCE is refused" },
+        @{ Der = New-DerSignature -R ([byte[]](@(0x01) + [byte[]]::new(33))) -S $s
+            Message = "a minimally encoded r of 34 bytes is refused" },
         @{ Der = New-DerSignature -R $high -S $s; Message = "a negative r is refused" },
         @{ Der = New-DerSignature -R $r -S $high; Message = "a negative s is refused" },
         @{ Der = New-DerSignature -R ([byte[]](@(0x00) + $r)) -S $s; Message = "a non-minimally padded r is refused" },
