@@ -147,6 +147,7 @@ $steps = @{
     UnregisterDistribution = { param($name) & $record "unregister $name" }
     RenameDistribution     = { param($key, $name) & $record "rename $key $name" }
     RestoreDistribution    = { param($name) & $record "restore $name" }
+    RestoreOverlay         = { & $record "restore-overlay" }
     Finalize               = { param($name) & $record "finalize $name" }
 }
 
@@ -169,6 +170,7 @@ Assert-Order -Calls $calls.ToArray() -First "resolve openhands-worker-next" -Sec
 Assert-Order -Calls $calls.ToArray() -First "stop openhands-worker-next" -Second "rename HKCU:\Lxss\{guid} openhands-worker" `
     -Message "the staging distribution is terminated before it is renamed"
 Assert-NotCalled -Calls $calls.ToArray() -Call "restore openhands-worker" -Message "a successful swap does not restore the old distribution"
+Assert-NotCalled -Calls $calls.ToArray() -Call "restore-overlay" -Message "a successful swap keeps the refreshed overlay"
 
 foreach ($failure in @("provision openhands-worker-next", "activate openhands-worker-next")) {
     $calls.Clear()
@@ -191,6 +193,7 @@ $failAt = "install openhands-worker-next"
 Assert-Throws { Update-WorkerDistribution -Distro "openhands-worker" -Staging "openhands-worker-next" @steps } "injected failure" "install failure aborts"
 Assert-NotCalled -Calls $calls.ToArray() -Call "unregister openhands-worker-next" -Message "a distribution that was never installed is not unregistered"
 Assert-NotCalled -Calls $calls.ToArray() -Call "stop openhands-worker" -Message "the old distribution is never touched when the staging install fails"
+Assert-True ($calls -contains "restore-overlay") "the previous overlay is put back when the staging install fails"
 $failAt = ""
 Write-Host "PASS: fail-closed swap"
 

@@ -100,6 +100,7 @@ function Update-WorkerDistribution {
         [Parameter(Mandatory)][scriptblock]$UnregisterDistribution,
         [Parameter(Mandatory)][scriptblock]$RenameDistribution,
         [Parameter(Mandatory)][scriptblock]$RestoreDistribution,
+        [scriptblock]$RestoreOverlay,
         [Parameter(Mandatory)][scriptblock]$Finalize
     )
 
@@ -114,6 +115,9 @@ function Update-WorkerDistribution {
         & $ActivateStaging $Staging
     }
     catch {
+        if ($RestoreOverlay) {
+            try { & $RestoreOverlay } catch { Write-Warning $_.Exception.Message }
+        }
         if ($installed) {
             try { & $StopDistribution $Staging } catch { Write-Warning $_.Exception.Message }
             try { & $UnregisterDistribution $Staging } catch { Write-Warning $_.Exception.Message }
@@ -203,7 +207,15 @@ if ($MyInvocation.InvocationName -ne ".") {
     $profilePath = Resolve-WorkerProfilePath -ProfileAsset $configuration.Profile -Directory (Join-Path $root $tag) -Download $download
     Write-Host "Verified $($assets.Paths.Count) release assets of $tag against checksums.txt."
 
-    Copy-WorkerFileToDistribution -WslPath $wslPath -Distro $distro -Path $assets.Paths["openhands-overlay"] -Destination "/usr/local/sbin/openhands-overlay" -Mode "0755"
+    # the refreshed overlay outlives a failed import unless it is put back
+    $overlayPath = "/usr/local/sbin/openhands-overlay"
+    $overlayBackup = $overlayPath + ".previous"
+    $backupShell = "set -e; if [ -e '$overlayPath' ]; then cp -a '$overlayPath' '$overlayBackup'; fi"
+    $backupExit = Invoke-WorkerProcess -FilePath $wslPath -Arguments @("--distribution", $distro, "--user", "root", "--exec", "/bin/sh", "-c", $backupShell)
+    if ($backupExit -ne 0) {
+        throw "Backing up the overlay in '$distro' failed with exit code $backupExit."
+    }
+    Copy-WorkerFileToDistribution -WslPath $wslPath -Distro $distro -Path $assets.Paths["openhands-overlay"] -Destination $overlayPath -Mode "0755"
     Write-Host "Refreshed openhands-overlay in '$distro' from $tag before exporting state."
     $statePath = Join-Path $root ("state-" + (Get-Date -Format "yyyyMMddHHmmss") + ".tar.gz")
     Invoke-WorkerOverlay -WslPath $wslPath -Distro $distro -Command @("state", "export") -OutputPath $statePath
@@ -218,6 +230,11 @@ if ($MyInvocation.InvocationName -ne ".") {
     Write-Host "Exported $entries agent state entries to $statePath."
 
     Update-WorkerDistribution -Distro $distro -Staging $staging `
+        -RestoreOverlay {
+            $restoreShell = "set -e; if [ -e '$overlayBackup' ]; then mv -f '$overlayBackup' '$overlayPath'; fi"
+            Invoke-WorkerProcess -FilePath $wslPath -Arguments @("--distribution", $distro, "--user", "root", "--exec", "/bin/sh", "-c", $restoreShell) | Out-Null
+            Write-Host "Restored the previous openhands-overlay in '$distro'."
+        } `
         -InstallStaging { param($name) & $assets.Paths["install.ps1"] -DistroName $name -ImagePath $assets.Image -ImageSha256 $assets.ImageHash } `
         -ProvisionStaging {
             param($name)
