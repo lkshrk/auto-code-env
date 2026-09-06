@@ -55,7 +55,7 @@ rm -f -- "$temporary_artifact" "$temporary_checksum" "$temporary_tar"
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$repo_root"
-VERSION="$version" docker buildx bake --allow="fs.write=$output_dir" -f worker/docker-bake.hcl "wsl-${arch}" \
+VERSION="$version" docker buildx bake --allow="fs.write=$output_dir" -f openhands/worker/image/docker-bake.hcl "wsl-${arch}" \
   --set "wsl-${arch}.output=type=tar,dest=${temporary_tar}"
 test -f "$temporary_tar"
 gzip -9n --stdout -- "$temporary_tar" > "$temporary_artifact"

@@ -8,7 +8,7 @@ on:
       - .github/workflows/worker-validate.yaml
       - .github/workflows/worker-release.yaml
       - openhands/profiles/**
-      - worker/**
+      - openhands/worker/**
       - shared/windows/**
 
 permissions:
@@ -26,15 +26,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash worker/tests/provision.Tests.sh
-          bash worker/tests/runtime.Tests.sh
-          bash worker/tests/image.Tests.sh
-          bash worker/tests/overlay.Tests.sh
-          bash worker/tests/applier.Tests.sh
+          bash openhands/worker/tests/provision.Tests.sh
+          bash openhands/worker/tests/runtime.Tests.sh
+          bash openhands/worker/tests/image.Tests.sh
+          bash openhands/worker/tests/overlay.Tests.sh
+          bash openhands/worker/tests/applier.Tests.sh
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File worker/tests/install.Tests.ps1
+            pwsh -NoProfile -File openhands/worker/tests/install.Tests.ps1
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
@@ -46,17 +46,17 @@ jobs:
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File worker/tests/setup.Tests.ps1
+            pwsh -NoProfile -File openhands/worker/tests/setup.Tests.ps1
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File worker/tests/update.Tests.ps1
+            pwsh -NoProfile -File openhands/worker/tests/update.Tests.ps1
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File worker/tests/compat.Tests.ps1
-          find worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
-          shellcheck worker/rootfs/usr/local/sbin/openhands-overlay worker/rootfs-oci/usr/local/sbin/container-entrypoint
+            pwsh -NoProfile -File openhands/worker/tests/compat.Tests.ps1
+          find openhands/worker shared -type f -name '*.sh' -print0 | xargs -0 shellcheck
+          shellcheck openhands/worker/image/rootfs/usr/local/sbin/openhands-overlay openhands/worker/image/rootfs-oci/usr/local/sbin/container-entrypoint
 
   validate:
     name: ${{ matrix.arch }}
@@ -79,14 +79,14 @@ jobs:
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Validate build definition
-        run: bash worker/tests/image.Tests.sh
+        run: bash openhands/worker/tests/image.Tests.sh
 
       - name: Smoke native image build
         shell: bash
         run: |
           set -euo pipefail
           docker buildx build \
-            --file worker/Containerfile \
+            --file openhands/worker/image/Containerfile \
             --platform '${{ matrix.platform }}' \
             --target smoke \
             --build-arg "OPENHANDS_WORKER_VERSION=ci-${GITHUB_SHA::12}" \
@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           output="$RUNNER_TEMP/worker-wsl"
           version="ci-${GITHUB_SHA::12}"
-          worker/build-wsl.sh "$version" '${{ matrix.arch }}' "$output"
+          openhands/worker/image/build-wsl.sh "$version" '${{ matrix.arch }}' "$output"
           artifact="$output/openhands-worker-$version-${{ matrix.arch }}.wsl"
           tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
           tar -tf "$artifact" | grep -E '^\.?/?etc/systemd/system/systemd-modules-load\.service\.d/10-wsl\.conf$' >/dev/null

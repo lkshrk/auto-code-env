@@ -7,8 +7,8 @@ RUN test "$(/usr/bin/getent passwd ubuntu)" = 'ubuntu:x:1000:1000:Ubuntu:/home/u
     /usr/sbin/userdel -r ubuntu && \
     ! /usr/bin/getent passwd ubuntu && ! /usr/bin/getent group ubuntu && ! -e /home/ubuntu
 
-COPY --chown=root:root worker/provision.sh worker/rootfs-wsl/etc/wsl.conf worker/patches/patch-agent-canvas-automation.mjs worker/tests/agent-canvas-ingress-smoke.mjs /opt/openhands-build/
-COPY --chown=root:root worker/omni/settings.json /opt/openhands-build/omni/settings.json
+COPY --chown=root:root openhands/worker/image/provision.sh openhands/worker/image/rootfs-wsl/etc/wsl.conf openhands/worker/image/patches/patch-agent-canvas-automation.mjs openhands/worker/tests/agent-canvas-ingress-smoke.mjs /opt/openhands-build/
+COPY --chown=root:root openhands/worker/image/omni/settings.json /opt/openhands-build/omni/settings.json
 RUN OPENHANDS_IMAGE_BUILD=1 /bin/bash /opt/openhands-build/provision.sh && \
     /usr/bin/rm -f /etc/nginx/sites-enabled/default && \
     /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/local/bin:/usr/bin:/bin UV_CACHE_DIR=/home/agent/.cache/uv \
@@ -27,11 +27,11 @@ RUN OPENHANDS_IMAGE_BUILD=1 /bin/bash /opt/openhands-build/provision.sh && \
     /usr/bin/chmod 0644 /etc/openhands/release && \
     /usr/bin/rm -rf /var/lib/apt/lists/*
 
-COPY --chown=root:root worker/rootfs/ /
+COPY --chown=root:root openhands/worker/image/rootfs/ /
 
 FROM provisioned AS oci
 
-COPY --chown=root:root worker/rootfs-oci/ /
+COPY --chown=root:root openhands/worker/image/rootfs-oci/ /
 RUN /usr/bin/chmod 0755 /usr/local/sbin/container-entrypoint && /usr/bin/install -d -o root -g root -m 0755 /etc/nginx/tls
 EXPOSE 443
 ENTRYPOINT ["/usr/local/sbin/container-entrypoint"]
@@ -58,7 +58,7 @@ RUN /usr/sbin/runuser -u agent -- /usr/bin/env -i HOME=/home/agent PATH=/usr/loc
 
 FROM provisioned AS wsl
 
-COPY --chown=root:root worker/rootfs-wsl/ /
+COPY --chown=root:root openhands/worker/image/rootfs-wsl/ /
 RUN /usr/bin/chmod 0755 /usr/local/sbin/openhands-overlay /usr/local/lib/openhands/apply-profile.py && \
     /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update && \
     /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y --no-install-recommends systemd systemd-sysv libpam-systemd dbus-user-session locales && \

@@ -50,7 +50,7 @@ function Import-ScriptFunction {
     return $function.Extent.Text
 }
 
-$windows = Join-Path $PSScriptRoot "..\windows"
+$windows = Join-Path $PSScriptRoot "..\install"
 $commonPath = Join-Path $windows "common.ps1"
 $setupPath = Join-Path $windows "setup.ps1"
 

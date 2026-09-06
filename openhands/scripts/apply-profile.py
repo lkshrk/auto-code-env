@@ -1,1 +1,0 @@
-../../worker/rootfs/usr/local/lib/openhands/apply-profile.py

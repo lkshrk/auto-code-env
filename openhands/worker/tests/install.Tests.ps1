@@ -227,7 +227,7 @@ $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("wsl-install-tests-" + 
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 
 try {
-    $installPath = Join-Path $PSScriptRoot ".." "windows" "install.ps1"
+    $installPath = Join-Path $PSScriptRoot ".." "install" "install.ps1"
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Set-WslMirroredNetworking")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Test-WslDistributionRegistered")))
     . ([scriptblock]::Create((Import-InstallFunction $installPath "Get-WslArtifactArchitecture")))

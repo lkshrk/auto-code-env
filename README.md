@@ -4,14 +4,6 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
 
 ## Layout
 
-- [`worker/`](worker/) builds and validates the multi-architecture
-  `ghcr.io/lkshrk/openhands-worker` OCI image and the architecture-specific WSL
-  artifacts. `rootfs/`, `rootfs-oci/`, and `rootfs-wsl/` mirror the target
-  filesystem and are copied verbatim into every image, the OCI image, and the
-  WSL image respectively. `windows/` holds the host-side PowerShell scripts
-  published as release assets. See
-  [`worker/README.md`](worker/README.md) for architecture, installation,
-  security, release, and verification details.
 - [`coder/`](coder/) holds everything that targets Coder:
   - `templates/` holds the Terraform sources for the workspace templates.
     `.github/workflows/coder-templates.yaml` validates them and pushes changed
@@ -39,4 +31,11 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
     example `skills/agent-sandbox-deploy` for deploying into the h-cloud
     `agent-sandbox` namespace.
   - `automations/` holds automation definitions, one directory per backend.
-  - `scripts/` holds operational one-off tooling.
+  - `worker/` builds and validates the multi-architecture
+    `ghcr.io/lkshrk/openhands-worker` OCI image and the architecture-specific WSL
+    artifacts. `image/` holds the build: `rootfs/`, `rootfs-oci/` and
+    `rootfs-wsl/` mirror the target filesystem and are copied verbatim into the
+    image, the OCI image and the WSL image respectively. `install/` holds the
+    host-side PowerShell scripts published as release assets. See
+    [`openhands/worker/README.md`](openhands/worker/README.md) for architecture,
+    installation, security, release and verification details.
