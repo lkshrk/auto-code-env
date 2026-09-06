@@ -4,8 +4,11 @@ name: Coder worker release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - coder-worker-v*
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,15 +29,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Validate the release contents
+      - name: Resolve the release tag
+        id: tag
         shell: bash
         run: |
           set -euo pipefail
-          tag=${GITHUB_REF_NAME}
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag=$GITHUB_REF_NAME
+          else
+            test "$(grep -c '^readonly RELEASE_VERSION=' coder-worker/wsl/coder-worker-overlay)" = 1
+            version=$(sed -n 's/^readonly RELEASE_VERSION=//p' coder-worker/wsl/coder-worker-overlay)
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::RELEASE_VERSION '$version' in coder-worker-overlay is not a release version"
+              exit 1
+            fi
+            tag="coder-worker-v$version"
+            if [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
+              echo "$tag is already released; this merge changes no version and publishes nothing."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if ! grep -Fxq "\$DefaultRelease = \"$tag\"" coder-worker/windows/install.ps1; then
+              echo "::error::install.ps1 does not pin $tag; finish the version bump before merging"
+              exit 1
+            fi
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Validate the release contents
+        if: steps.tag.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=$RELEASE_TAG
           [[ "$tag" == coder-worker-v* ]]
           VERSION=${tag#coder-worker-v}
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
-          tag_commit=$(git ls-remote --tags origin "refs/tags/$tag" | awk -v direct="refs/tags/$tag" -v peeled="refs/tags/$tag^{}" '
+          tag_commit=$(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}" | awk -v direct="refs/tags/$tag" -v peeled="refs/tags/$tag^{}" '
             $2 == direct { direct_oid = $1 }
             $2 == peeled { peeled_oid = $1 }
             END { print peeled_oid != "" ? peeled_oid : direct_oid }
@@ -56,21 +90,48 @@ jobs:
           find coder-worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
           shellcheck coder-worker/wsl/coder-worker-overlay
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
 
-      - name: Assemble assets and gate on the embedded checksums digest
+      - name: Assemble assets, sign checksums.txt and gate on the embedded key
+        if: steps.tag.outputs.skip != 'true'
         shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.CODER_WORKER_SIGNING_KEY }}
         run: |
           set -euo pipefail
+          tag=$RELEASE_TAG
           release="$RUNNER_TEMP/release"
-          digest=$(bash coder-worker/scripts/release-checksums.sh --out "$release")
-          if ! grep -Fxq "\$DefaultChecksumsSha256 = \"$digest\"" coder-worker/windows/install.ps1; then
-            echo "::error::install.ps1 must embed \$DefaultChecksumsSha256 = \"$digest\""
+          bash coder-worker/scripts/release-checksums.sh --out "$release" > /dev/null
+          if [ -z "${SIGNING_KEY:-}" ]; then
+            echo "::error::CODER_WORKER_SIGNING_KEY is not set; the release would ship a checksums.txt install.ps1 rejects"
+            exit 1
+          fi
+          private="$RUNNER_TEMP/signing-key.pem"
+          (umask 077 && printf '%s\n' "$SIGNING_KEY" > "$private")
+          payload="$RUNNER_TEMP/signing-payload"
+          { printf '%s\n' "$tag"; cat "$release/checksums.txt"; } > "$payload"
+          openssl dgst -sha256 -sign "$private" -out "$release/checksums.txt.sig" "$payload"
+          embedded=$(grep -Eo '^[$]ReleaseSigningKey = "[A-Za-z0-9+/]+={0,2}"$' coder-worker/windows/install.ps1 | cut -d'"' -f2)
+          if [ -z "$embedded" ]; then
+            echo '::error::install.ps1 must embed ReleaseSigningKey as a base64 SubjectPublicKeyInfo'
+            exit 1
+          fi
+          printf '%s' "$embedded" | openssl base64 -d -A > "$RUNNER_TEMP/release-signing-key.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/release-signing-key.der" \
+            -out "$RUNNER_TEMP/release-signing-key.pem"
+          if ! openssl dgst -sha256 -verify "$RUNNER_TEMP/release-signing-key.pem" \
+            -signature "$release/checksums.txt.sig" "$payload"; then
+            echo '::error::checksums.txt.sig does not verify against ReleaseSigningKey in install.ps1; rotate the key or the secret'
             exit 1
           fi
           (cd "$release" && ls -1) > "$RUNNER_TEMP/assets.txt"
 
+      - name: Remove the signing key
+        if: always() && steps.tag.outputs.skip != 'true'
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/signing-key.pem"
+
       - name: Publish immutable release
+        if: steps.tag.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -100,11 +161,26 @@ jobs:
               ;;
             false)
               for asset in "${assets[@]}"; do
+                # An ECDSA signature differs on every run, so the published one is checked by verifying it, below.
+                if [ "$asset" = checksums.txt.sig ]; then
+                  continue
+                fi
                 digest="sha256:$(sha256sum "$release/$asset" | awk '{print $1}')"
                 jq -e --arg asset "$asset" --arg digest "$digest" \
                   '.assets[] | select(.name == $asset and .state == "uploaded" and .digest == $digest)' \
                   "$release_json" >/dev/null
               done
+              published="$RUNNER_TEMP/published"
+              rm -rf "$published"
+              mkdir -p "$published"
+              gh release download "$tag" --dir "$published" \
+                --pattern checksums.txt --pattern checksums.txt.sig
+              { printf '%s\n' "$tag"; cat "$published/checksums.txt"; } > "$published/payload"
+              if ! openssl dgst -sha256 -verify "$RUNNER_TEMP/release-signing-key.pem" \
+                -signature "$published/checksums.txt.sig" "$published/payload"; then
+                echo '::error::the published checksums.txt.sig does not verify against ReleaseSigningKey'
+                exit 1
+              fi
               ;;
             *)
               echo "::error::Unexpected release draft state: $release_draft"

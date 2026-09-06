@@ -39,3 +39,14 @@ jobs:
             pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1
           find coder-worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
           shellcheck coder-worker/wsl/coder-worker-overlay
+
+  windows:
+    name: windows powershell 5.1
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Run the installer suite on the runtime the README documents
+        shell: powershell
+        run: .\coder-worker\tests\install.Tests.ps1

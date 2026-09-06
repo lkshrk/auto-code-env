@@ -16,10 +16,12 @@ usage: release-checksums.sh --out DIR
 
 Assembles the coder-worker release assets into DIR, writes checksums.txt over
 every artifact install.ps1 fetches, and prints the SHA-256 of checksums.txt.
-That digest is $DefaultChecksumsSha256 in install.ps1. DIR must be new or empty.
+DIR must be new or empty. Signing checksums.txt is the release workflow's job,
+so this script needs no key and never touches one; pass the digest it prints to
+install.ps1 -ChecksumsSha256 to install from an unsigned local assembly.
 
-install.ps1 is published but stays out of checksums.txt: it embeds that file's
-digest, so covering it too would be circular.
+install.ps1 is published but stays out of checksums.txt: it is the anchor the
+operator already holds, and checksums.txt only covers what it fetches.
 EOF
     exit 2
 }

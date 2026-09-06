@@ -27,7 +27,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $DefaultRelease = "coder-worker-v1.0.0"
-$DefaultChecksumsSha256 = "36f67c4f4500fa014053efc0074ebd89feee9f5f355dfb74b6f93e5ac7e94c70"
+$ReleaseSigningKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvgv5RXXPQPWPwPvvfFEkfpdSkQJQKXm2SYDazPi+gOlnsOgf1xBPke9HhBP3fT17rBq479ctngvC3N++//cB+w=="
 $ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
 $TlsPort = 2376
@@ -375,6 +375,112 @@ function Get-FileSha256 {
     }
 }
 
+# Hand-rolled because the .NET Core key and signature importers do not exist on Windows PowerShell 5.1.
+function ConvertFrom-SubjectPublicKeyInfo {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Der)
+
+    $prefix = [byte[]](0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
+        0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00)
+    if ($Der.Length -ne 91 -or $Der[$prefix.Length] -ne 0x04) {
+        return $null
+    }
+    for ($index = 0; $index -lt $prefix.Length; $index++) {
+        if ($Der[$index] -ne $prefix[$index]) {
+            return $null
+        }
+    }
+    return [byte[]]$Der[($prefix.Length + 1)..($Der.Length - 1)]
+}
+
+function ConvertFrom-DerSignature {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Der)
+
+    if ($Der.Length -lt 8 -or $Der.Length -gt 72 -or $Der[0] -ne 0x30 -or $Der[1] -ge 0x80) {
+        return $null
+    }
+    if ([int]$Der[1] -ne $Der.Length - 2) {
+        return $null
+    }
+
+    $raw = [byte[]]::new(64)
+    $offset = 2
+    foreach ($half in 0, 1) {
+        if ($offset + 2 -gt $Der.Length -or $Der[$offset] -ne 0x02) {
+            return $null
+        }
+        $length = [int]$Der[$offset + 1]
+        $offset += 2
+        if ($length -lt 1 -or $length -gt 33 -or $offset + $length -gt $Der.Length) {
+            return $null
+        }
+        if (($Der[$offset] -band 0x80) -ne 0) {
+            return $null
+        }
+        if ($length -gt 1 -and $Der[$offset] -eq 0x00 -and ($Der[$offset + 1] -band 0x80) -eq 0) {
+            return $null
+        }
+        $start = $offset
+        $count = $length
+        if ($length -eq 33) {
+            if ($Der[$offset] -ne 0x00) {
+                return $null
+            }
+            $start++
+            $count--
+        }
+        [Array]::Copy($Der, $start, $raw, ($half * 32) + (32 - $count), $count)
+        $offset += $length
+    }
+    if ($offset -ne $Der.Length) {
+        return $null
+    }
+    return $raw
+}
+
+function Test-ReleaseSignature {
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Tag,
+        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Data,
+        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Signature,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$PublicKey
+    )
+
+    $point = ConvertFrom-SubjectPublicKeyInfo -Der ([Convert]::FromBase64String($PublicKey))
+    if ($null -eq $point) {
+        throw "The embedded release signing key is not a P-256 SubjectPublicKeyInfo."
+    }
+    $raw = ConvertFrom-DerSignature -Der $Signature
+    if ($null -eq $raw) {
+        return $false
+    }
+
+    $prefix = [Text.Encoding]::UTF8.GetBytes($Tag + "`n")
+    $payload = [byte[]]::new($prefix.Length + $Data.Length)
+    [Array]::Copy($prefix, 0, $payload, 0, $prefix.Length)
+    [Array]::Copy($Data, 0, $payload, $prefix.Length, $Data.Length)
+
+    $q = [Security.Cryptography.ECPoint]::new()
+    $q.X = [byte[]]$point[0..31]
+    $q.Y = [byte[]]$point[32..63]
+    $parameters = [Security.Cryptography.ECParameters]::new()
+    $parameters.Curve = [Security.Cryptography.ECCurve+NamedCurves]::nistP256
+    $parameters.Q = $q
+
+    $ecdsa = [Security.Cryptography.ECDsa]::Create()
+    try {
+        $ecdsa.ImportParameters($parameters)
+        try {
+            return $ecdsa.VerifyData($payload, $raw, [Security.Cryptography.HashAlgorithmName]::SHA256)
+        }
+        catch [Security.Cryptography.CryptographicException] {
+            return $false
+        }
+    }
+    finally {
+        $ecdsa.Dispose()
+    }
+}
+
 function Get-StagedArtifact {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -581,33 +687,44 @@ try {
         if ($null -ne $script:checksums) {
             return $script:checksums
         }
-        $destination = Join-Path $stage "checksums.txt"
-        $uri = Get-ReleaseAssetUri -BaseUri $ReleaseBaseUri -Tag $tag -Asset "checksums.txt"
-        $parsed = $null
-        if (-not [Uri]::TryCreate($uri, [UriKind]::Absolute, [ref]$parsed) -or $parsed.Scheme -cne "https") {
-            throw "The release base URI must be absolute HTTPS."
-        }
         $expected = $ChecksumsSha256
-        if ([string]::IsNullOrWhiteSpace($expected)) {
-            if ($tag -cne $DefaultRelease) {
-                throw "-ChecksumsSha256 is required with -ReleaseTag; the embedded digest only covers $DefaultRelease."
-            }
-            $expected = $DefaultChecksumsSha256
-        }
-        if ($expected -notmatch '^[0-9A-Fa-f]{64}$') {
+        $pinned = -not [string]::IsNullOrWhiteSpace($expected)
+        if ($pinned -and $expected -notmatch '^[0-9A-Fa-f]{64}$') {
             throw "ChecksumsSha256 must be a 64-character hexadecimal SHA-256 value."
         }
-        Invoke-WebRequest -Uri $parsed -OutFile $destination -UseBasicParsing
-        $stream = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-        try {
-            $actual = Get-FileSha256 -Stream $stream
+
+        $staged = @{}
+        foreach ($asset in @("checksums.txt", "checksums.txt.sig")) {
+            if ($pinned -and $asset -eq "checksums.txt.sig") {
+                continue
+            }
+            $uri = Get-ReleaseAssetUri -BaseUri $ReleaseBaseUri -Tag $tag -Asset $asset
+            $parsed = $null
+            if (-not [Uri]::TryCreate($uri, [UriKind]::Absolute, [ref]$parsed) -or $parsed.Scheme -cne "https") {
+                throw "The release base URI must be absolute HTTPS."
+            }
+            $staged[$asset] = Join-Path $stage $asset
+            Invoke-WebRequest -Uri $parsed -OutFile $staged[$asset] -UseBasicParsing
         }
-        finally {
-            $stream.Dispose()
+
+        $destination = $staged["checksums.txt"]
+        if ($pinned) {
+            $stream = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            try {
+                $actual = Get-FileSha256 -Stream $stream
+            }
+            finally {
+                $stream.Dispose()
+            }
+            if ($actual -ine $expected) {
+                throw "checksums.txt SHA-256 does not match the expected digest."
+            }
         }
-        if ($actual -ine $expected) {
-            throw "checksums.txt SHA-256 does not match the expected digest."
+        elseif (-not (Test-ReleaseSignature -Tag $tag -Data ([IO.File]::ReadAllBytes($destination)) `
+                    -Signature ([IO.File]::ReadAllBytes($staged["checksums.txt.sig"])) -PublicKey $ReleaseSigningKey)) {
+            throw "checksums.txt is not signed by the release signing key for '$tag'."
         }
+
         $script:checksums = Get-ChecksumMap -Lines ([string[]][IO.File]::ReadAllLines($destination))
         return $script:checksums
     }
