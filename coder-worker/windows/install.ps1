@@ -375,26 +375,106 @@ function Get-FileSha256 {
     }
 }
 
+# Hand-rolled because the .NET Core key and signature importers do not exist on Windows PowerShell 5.1.
+function ConvertFrom-SubjectPublicKeyInfo {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Der)
+
+    $prefix = [byte[]](0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
+        0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00)
+    if ($Der.Length -ne 91 -or $Der[$prefix.Length] -ne 0x04) {
+        return $null
+    }
+    for ($index = 0; $index -lt $prefix.Length; $index++) {
+        if ($Der[$index] -ne $prefix[$index]) {
+            return $null
+        }
+    }
+    return [byte[]]$Der[($prefix.Length + 1)..($Der.Length - 1)]
+}
+
+function ConvertFrom-DerSignature {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Der)
+
+    if ($Der.Length -lt 8 -or $Der.Length -gt 72 -or $Der[0] -ne 0x30 -or $Der[1] -ge 0x80) {
+        return $null
+    }
+    if ([int]$Der[1] -ne $Der.Length - 2) {
+        return $null
+    }
+
+    $raw = [byte[]]::new(64)
+    $offset = 2
+    foreach ($half in 0, 1) {
+        if ($offset + 2 -gt $Der.Length -or $Der[$offset] -ne 0x02) {
+            return $null
+        }
+        $length = [int]$Der[$offset + 1]
+        $offset += 2
+        if ($length -lt 1 -or $length -gt 33 -or $offset + $length -gt $Der.Length) {
+            return $null
+        }
+        if (($Der[$offset] -band 0x80) -ne 0) {
+            return $null
+        }
+        if ($length -gt 1 -and $Der[$offset] -eq 0x00 -and ($Der[$offset + 1] -band 0x80) -eq 0) {
+            return $null
+        }
+        $start = $offset
+        $count = $length
+        if ($length -eq 33) {
+            if ($Der[$offset] -ne 0x00) {
+                return $null
+            }
+            $start++
+            $count--
+        }
+        [Array]::Copy($Der, $start, $raw, ($half * 32) + (32 - $count), $count)
+        $offset += $length
+    }
+    if ($offset -ne $Der.Length) {
+        return $null
+    }
+    return $raw
+}
+
 function Test-ReleaseSignature {
     param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Tag,
         [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Data,
         [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Signature,
         [Parameter(Mandatory)][AllowEmptyString()][string]$PublicKey
     )
 
-    $key = [Convert]::FromBase64String($PublicKey)
+    $point = ConvertFrom-SubjectPublicKeyInfo -Der ([Convert]::FromBase64String($PublicKey))
+    if ($null -eq $point) {
+        throw "The embedded release signing key is not a P-256 SubjectPublicKeyInfo."
+    }
+    $raw = ConvertFrom-DerSignature -Der $Signature
+    if ($null -eq $raw) {
+        return $false
+    }
+
+    $prefix = [Text.Encoding]::UTF8.GetBytes($Tag + "`n")
+    $payload = [byte[]]::new($prefix.Length + $Data.Length)
+    [Array]::Copy($prefix, 0, $payload, 0, $prefix.Length)
+    [Array]::Copy($Data, 0, $payload, $prefix.Length, $Data.Length)
+
+    $q = [Security.Cryptography.ECPoint]::new()
+    $q.X = [byte[]]$point[0..31]
+    $q.Y = [byte[]]$point[32..63]
+    $parameters = [Security.Cryptography.ECParameters]::new()
+    $parameters.Curve = [Security.Cryptography.ECCurve+NamedCurves]::nistP256
+    $parameters.Q = $q
+
     $ecdsa = [Security.Cryptography.ECDsa]::Create()
     try {
-        $read = 0
-        $ecdsa.ImportSubjectPublicKeyInfo($key, [ref]$read)
-        if ($read -ne $key.Length -or $ecdsa.KeySize -ne 256) {
+        $ecdsa.ImportParameters($parameters)
+        try {
+            return $ecdsa.VerifyData($payload, $raw, [Security.Cryptography.HashAlgorithmName]::SHA256)
+        }
+        catch [Security.Cryptography.CryptographicException] {
             return $false
         }
-        return $ecdsa.VerifyData($Data, $Signature, [Security.Cryptography.HashAlgorithmName]::SHA256,
-            [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
-    }
-    catch [Security.Cryptography.CryptographicException] {
-        return $false
     }
     finally {
         $ecdsa.Dispose()
@@ -640,9 +720,9 @@ try {
                 throw "checksums.txt SHA-256 does not match the expected digest."
             }
         }
-        elseif (-not (Test-ReleaseSignature -Data ([IO.File]::ReadAllBytes($destination)) `
+        elseif (-not (Test-ReleaseSignature -Tag $tag -Data ([IO.File]::ReadAllBytes($destination)) `
                     -Signature ([IO.File]::ReadAllBytes($staged["checksums.txt.sig"])) -PublicKey $ReleaseSigningKey)) {
-            throw "checksums.txt is not signed by the release signing key."
+            throw "checksums.txt is not signed by the release signing key for '$tag'."
         }
 
         $script:checksums = Get-ChecksumMap -Lines ([string[]][IO.File]::ReadAllLines($destination))

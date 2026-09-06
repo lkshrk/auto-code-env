@@ -83,33 +83,25 @@ if ($source -notmatch '(?m)^\$ReleaseSigningKey = "(?<key>[A-Za-z0-9+/]+={0,2})"
     throw "install.ps1 must embed the release signing key as a base64 SubjectPublicKeyInfo."
 }
 $releaseSigningKey = $Matches["key"]
+foreach ($absent in 'ImportSubjectPublicKeyInfo', 'DSASignatureFormat') {
+    if ($source -match $absent) {
+        throw "install.ps1 must not use $absent; Windows PowerShell 5.1 does not have it."
+    }
+}
 foreach ($name in "Set-WslMirroredNetworking", "Test-DistributionName", "Test-WslDistributionRegistered",
     "Test-UbuntuRelease", "Test-Sha256Digest", "Test-WslVersionSupported", "Get-WslExecutablePath",
     "Get-FileSha256", "Get-StagedArtifact", "Get-DistributionInstallArguments",
     "Test-ProfileKeySecretShaped", "Test-ProfileValueSecretShaped", "Test-ProfileValue",
     "Read-CoderWorkerProfile", "Get-ChecksumMap", "Get-ReleaseAssetUri", "Test-ReleaseSignature",
+    "ConvertFrom-SubjectPublicKeyInfo", "ConvertFrom-DerSignature",
     "Get-ReleaseChecksums", "Get-Artifact") {
     Invoke-Expression (Import-ScriptFunction -Path $scriptPath -Name $name)
 }
 
-$keyBytes = [Convert]::FromBase64String($releaseSigningKey)
-$anchor = [Security.Cryptography.ECDsa]::Create()
-try {
-    $read = 0
-    $anchor.ImportSubjectPublicKeyInfo($keyBytes, [ref]$read)
-    Assert-Equal $keyBytes.Length $read "the embedded key is exactly one SubjectPublicKeyInfo"
-    Assert-Equal 256 $anchor.KeySize "the embedded key is 256 bits"
-    Assert-Equal "1.2.840.10045.3.1.7" $anchor.ExportParameters($false).Curve.Oid.Value "the embedded key is on P-256"
-}
-finally {
-    $anchor.Dispose()
-}
-Write-Host "PASS: install.ps1 embeds a parseable P-256 release signing key"
-
 function Assert-Signature {
-    param([bool]$Expected, [byte[]]$Data, [byte[]]$Signature, [string]$PublicKey, [string]$Message)
+    param([bool]$Expected, [byte[]]$Data, [byte[]]$Signature, [string]$PublicKey, [string]$Message, [string]$Tag = $vectorTag)
 
-    Assert-Equal $Expected (Test-ReleaseSignature -Data $Data -Signature $Signature -PublicKey $PublicKey) $Message
+    Assert-Equal $Expected (Test-ReleaseSignature -Tag $Tag -Data $Data -Signature $Signature -PublicKey $PublicKey) $Message
 }
 
 function New-TamperedCopy {
@@ -121,31 +113,97 @@ function New-TamperedCopy {
     return $copy
 }
 
-# Produced once by openssl over the fixture below, private key destroyed: CI's PowerShell image has no openssl.
-$vectorKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOw5k+vIz2zSxHCFOywj+tCsM4hmokPDMoz/pEBeaoiOafWZAHYsum4zIm3+mQkUvTjfW/7VVO10XGlakEQrXNg=="
-$vectorSignature = [Convert]::FromBase64String("MEUCIQDvwHCqSvh8lpfUbA+9EVYKNJ7K8ix4ZNBhiudGIx/NBQIgIUfHWtcXe5gyuutI8exfrgORRdgVAFunrZBTgKMVXWQ=")
+function New-BoundSignature {
+    param([Security.Cryptography.ECDsa]$Key, [string]$Tag, [string]$Body)
+
+    $payload = [byte[]]([Text.Encoding]::UTF8.GetBytes($Tag + "`n") + [Text.Encoding]::UTF8.GetBytes($Body))
+    return $Key.SignData($payload, [Security.Cryptography.HashAlgorithmName]::SHA256,
+        [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
+}
+
+function New-DerSignature {
+    param([byte[]]$R, [byte[]]$S, [int]$SequenceTag = 0x30, [int]$IntegerTag = 0x02, [int]$LengthOverride = -1)
+
+    $body = [Collections.Generic.List[byte]]::new()
+    foreach ($half in @($R, $S)) {
+        $body.Add([byte]$IntegerTag)
+        $body.Add([byte]$half.Length)
+        $body.AddRange($half)
+    }
+    $length = if ($LengthOverride -ge 0) { $LengthOverride } else { $body.Count }
+    $der = [Collections.Generic.List[byte]]::new()
+    $der.Add([byte]$SequenceTag)
+    $der.Add([byte]$length)
+    $der.AddRange($body)
+    return [byte[]]$der.ToArray()
+}
+
+$keyBytes = [Convert]::FromBase64String($releaseSigningKey)
+Assert-Equal 64 (ConvertFrom-SubjectPublicKeyInfo -Der $keyBytes).Length "the embedded key parses to a P-256 point"
+Assert-Equal $null (ConvertFrom-SubjectPublicKeyInfo -Der ([byte[]]@())) "an empty SubjectPublicKeyInfo is refused"
+Assert-Equal $null (ConvertFrom-SubjectPublicKeyInfo -Der ([byte[]]$keyBytes[0..89])) "a truncated SubjectPublicKeyInfo is refused"
+Assert-Equal $null (ConvertFrom-SubjectPublicKeyInfo -Der ([byte[]]($keyBytes + [byte]0))) "a SubjectPublicKeyInfo with trailing garbage is refused"
+foreach ($index in 0, 1, 2, 8, 17, 23, 24, 25) {
+    Assert-Equal $null (ConvertFrom-SubjectPublicKeyInfo -Der (New-TamperedCopy -Bytes $keyBytes -Index $index)) `
+        "a SubjectPublicKeyInfo whose header byte $index differs is refused"
+}
+Assert-Equal $null (ConvertFrom-SubjectPublicKeyInfo -Der (New-TamperedCopy -Bytes $keyBytes -Index 26)) `
+    "a point that is not marked uncompressed is refused"
+Write-Host "PASS: install.ps1 embeds a parseable P-256 release signing key"
+
+$r = [byte[]]::new(32); $r[0] = 0x11; $r[31] = 7
+$s = [byte[]]::new(32); $s[0] = 0x22; $s[31] = 9
+$high = [byte[]]::new(32); $high[0] = 0x80
+Assert-Equal 64 (ConvertFrom-DerSignature -Der (New-DerSignature -R $r -S $s)).Length "a well-formed DER signature converts to 64 raw bytes"
+Assert-Equal 64 (ConvertFrom-DerSignature -Der (New-DerSignature -R ([byte[]](0x01)) -S $s)).Length "a short integer is left-padded"
+Assert-Equal 64 (ConvertFrom-DerSignature -Der (New-DerSignature -R ([byte[]](@(0x00) + $high)) -S $s)).Length `
+    "a 33-byte integer with the required leading zero is accepted"
+
+$padded = ConvertFrom-DerSignature -Der (New-DerSignature -R ([byte[]](0x01)) -S ([byte[]](0x02)))
+Assert-Equal 1 $padded[31] "a short r lands in the low bytes of its half"
+Assert-Equal 2 $padded[63] "a short s lands in the low bytes of its half"
+Assert-Equal 0 $padded[0] "a short r is zero-padded on the left"
+
+foreach ($case in @(
+        @{ Der = [byte[]]@(); Message = "an empty signature is refused" },
+        @{ Der = [byte[]](0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01); Message = "a signature shorter than the minimum is refused" },
+        @{ Der = New-DerSignature -R $r -S $s -SequenceTag 0x31; Message = "a wrong outer tag is refused" },
+        @{ Der = New-DerSignature -R $r -S $s -IntegerTag 0x04; Message = "a wrong integer tag is refused" },
+        @{ Der = New-DerSignature -R $r -S $s -LengthOverride 0x81; Message = "a long-form length is refused" },
+        @{ Der = New-DerSignature -R $r -S $s -LengthOverride 60; Message = "a length that disagrees with the buffer is refused" },
+        @{ Der = New-DerSignature -R $r -S $s -LengthOverride 80; Message = "a length that overruns the buffer is refused" },
+        @{ Der = [byte[]]((New-DerSignature -R $r -S $s) + [byte]0); Message = "trailing garbage after the SEQUENCE is refused" },
+        @{ Der = New-DerSignature -R $high -S $s; Message = "a negative r is refused" },
+        @{ Der = New-DerSignature -R $r -S $high; Message = "a negative s is refused" },
+        @{ Der = New-DerSignature -R ([byte[]](@(0x00) + $r)) -S $s; Message = "a non-minimally padded r is refused" },
+        @{ Der = New-DerSignature -R ([byte[]]@()) -S $s; Message = "a zero-length r is refused" },
+        @{ Der = New-DerSignature -R ([byte[]]::new(34)) -S $s; Message = "an r longer than 33 bytes is refused" },
+        @{ Der = New-DerSignature -R ([byte[]](@(0x01) + $high)) -S $s; Message = "a 33-byte r without the leading zero is refused" }
+    )) {
+    Assert-Equal $null (ConvertFrom-DerSignature -Der $case.Der) $case.Message
+}
+Write-Host "PASS: DER signature parsing refuses every malformed encoding"
+
+# Produced once by openssl over the tag-bound payload below, private key destroyed: CI's PowerShell image has no openssl.
+$vectorTag = "coder-worker-v9.9.9"
+$vectorKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEtthi3yD03OC17TcOqGWqE2CJR7CJDxDKT3emWS0OQlom9lUA1drOzauZ04T8ansSGxsZ8fbrU2yc5Uos7pLbyQ=="
+$vectorSignature = [Convert]::FromBase64String("MEYCIQD2rNoBWc5Ae/sADFEuvGdxQLD3QME6sm1vs7+HPWWm9wIhAP4M+IYi9cchng+nLp8wk+hX7sbJRVHkgalsmjnMBwXj")
 $vectorPayload = [Text.Encoding]::ASCII.GetBytes((("a" * 64) + "  coder-worker-overlay`n" + ("b" * 64) + "  firewall.ps1`n"))
 
 Assert-Signature $true $vectorPayload $vectorSignature $vectorKey "an openssl-produced DER signature verifies"
+Assert-Signature $false $vectorPayload $vectorSignature $vectorKey "a signature bound to another tag is refused" -Tag "coder-worker-v9.9.8"
+Assert-Signature $false $vectorPayload $vectorSignature $vectorKey "an empty tag is refused" -Tag ""
 Assert-Signature $false (New-TamperedCopy -Bytes $vectorPayload -Index 70) $vectorSignature $vectorKey "a tampered payload is refused"
 Assert-Signature $false $vectorPayload (New-TamperedCopy -Bytes $vectorSignature -Index 10) $vectorKey "a tampered signature is refused"
 Assert-Signature $false $vectorPayload ([byte[]]@()) $vectorKey "an empty signature is refused"
 Assert-Signature $false $vectorPayload ([Text.Encoding]::ASCII.GetBytes("not DER at all")) $vectorKey "a signature that is not DER is refused"
-Assert-Signature $false $vectorPayload $vectorSignature[0..40] $vectorKey "a truncated signature is refused"
+Assert-Signature $false $vectorPayload ([byte[]]$vectorSignature[0..40]) $vectorKey "a truncated signature is refused"
 Assert-Signature $false ([byte[]]@()) $vectorSignature $vectorKey "an empty payload is refused"
 Assert-Signature $false $vectorPayload $vectorSignature $releaseSigningKey "the embedded key refuses a foreign release's signature"
-
-$foreign = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue("1.2.840.10045.3.1.7"))
-try {
-    $foreignSignature = $foreign.SignData($vectorPayload, [Security.Cryptography.HashAlgorithmName]::SHA256,
-        [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
-}
-finally {
-    $foreign.Dispose()
-}
-Assert-Signature $false $vectorPayload $foreignSignature $vectorKey "a signature from a different key is refused"
-Assert-ThrowsMessage { Test-ReleaseSignature -Data $vectorPayload -Signature $vectorSignature -PublicKey "not base64" } `
+Assert-ThrowsMessage { Test-ReleaseSignature -Tag $vectorTag -Data $vectorPayload -Signature $vectorSignature -PublicKey "not base64" } `
     "Base-64" "a corrupt embedded key aborts rather than silently failing closed"
+Assert-ThrowsMessage { Test-ReleaseSignature -Tag $vectorTag -Data $vectorPayload -Signature $vectorSignature -PublicKey ([Convert]::ToBase64String([byte[]]::new(91))) } `
+    "not a P-256 SubjectPublicKeyInfo" "an embedded key that is not a P-256 SPKI aborts"
 Write-Host "PASS: release signature verification"
 
 $openssl = Get-Command openssl -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -156,8 +214,8 @@ else {
     $signing = Join-Path ([IO.Path]::GetTempPath()) ("coder-worker-signing-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $signing | Out-Null
     try {
-        $payloadPath = Join-Path $signing "checksums.txt"
-        [IO.File]::WriteAllBytes($payloadPath, $vectorPayload)
+        $bound = Join-Path $signing "payload"
+        [IO.File]::WriteAllBytes($bound, ([byte[]]([Text.Encoding]::UTF8.GetBytes($vectorTag + "`n") + $vectorPayload)))
         $publicKeys = @()
         $signatures = @()
         foreach ($index in 0, 1) {
@@ -168,13 +226,14 @@ else {
             if ($LASTEXITCODE -ne 0) { throw "openssl could not generate a throwaway key." }
             & $openssl.Path pkey -in $keyPath -pubout -outform DER -out $derPath
             if ($LASTEXITCODE -ne 0) { throw "openssl could not export the throwaway public key." }
-            & $openssl.Path dgst -sha256 -sign $keyPath -out $signaturePath $payloadPath
+            & $openssl.Path dgst -sha256 -sign $keyPath -out $signaturePath $bound
             if ($LASTEXITCODE -ne 0) { throw "openssl could not sign the fixture." }
             $publicKeys += [Convert]::ToBase64String([IO.File]::ReadAllBytes($derPath))
             $signatures += , [IO.File]::ReadAllBytes($signaturePath)
         }
 
         Assert-Signature $true $vectorPayload $signatures[0] $publicKeys[0] "a freshly signed fixture verifies"
+        Assert-Signature $false $vectorPayload $signatures[0] $publicKeys[0] "a fresh signature is bound to its tag" -Tag "coder-worker-v0.0.1"
         Assert-Signature $false $vectorPayload $signatures[1] $publicKeys[0] "a signature from the other throwaway key is refused"
         Assert-Signature $false (New-TamperedCopy -Bytes $vectorPayload -Index 0) $signatures[0] $publicKeys[0] `
             "a tampered fixture is refused"
@@ -317,10 +376,8 @@ try {
     $signer = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue("1.2.840.10045.3.1.7"))
     $stranger = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue("1.2.840.10045.3.1.7"))
     $ReleaseSigningKey = [Convert]::ToBase64String($signer.ExportSubjectPublicKeyInfo())
-    $bodyBytes = [Text.Encoding]::UTF8.GetBytes($script:body)
     $signedBody = $script:body
-    $goodSignature = $signer.SignData($bodyBytes, [Security.Cryptography.HashAlgorithmName]::SHA256,
-        [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
+    $goodSignature = New-BoundSignature -Key $signer -Tag $DefaultRelease -Body $script:body
     $script:signature = $goodSignature
 
     $tag = $DefaultRelease
@@ -342,8 +399,10 @@ try {
             @{ Signature = [byte[]]@(); Message = "an empty signature is refused" },
             @{ Signature = [Text.Encoding]::ASCII.GetBytes("not DER at all"); Message = "a signature that is not DER is refused" },
             @{ Signature = $goodSignature[0..40]; Message = "a truncated signature is refused" },
-            @{ Signature = $stranger.SignData($bodyBytes, [Security.Cryptography.HashAlgorithmName]::SHA256,
-                    [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence); Message = "a signature from another key is refused" }
+            @{ Signature = New-BoundSignature -Key $stranger -Tag $DefaultRelease -Body $signedBody
+                Message = "a signature from another key is refused" },
+            @{ Signature = New-BoundSignature -Key $signer -Tag "coder-worker-v3.0.0" -Body $signedBody
+                Message = "a signature bound to another release is refused" }
         )) {
         $script:checksums = $null
         $script:signature = [byte[]]$case.Signature
@@ -359,10 +418,16 @@ try {
     $script:checksums = $null
     $script:requested = @()
     $tag = "coder-worker-v9.9.9"
+    Assert-ThrowsMessage { Get-ReleaseChecksums } "is not signed by the release signing key" `
+        "another release may not reuse this release's signed checksums.txt"
+    $script:checksums = $null
+    $script:requested = @()
+    $script:signature = New-BoundSignature -Key $signer -Tag $tag -Body $signedBody
     Get-ReleaseChecksums | Out-Null
     Assert-Equal "https://example/download/coder-worker-v9.9.9/checksums.txt.sig" $script:requested[1] `
         "-ReleaseTag needs no digest, because the signing key is not per release"
     $tag = $DefaultRelease
+    $script:signature = $goodSignature
 
     $script:checksums = $null
     $script:downloads = 0

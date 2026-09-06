@@ -34,6 +34,11 @@ while IFS= read -r asset; do
 done < "$work/fetched"
 echo 'PASS: checksums.txt covers every fetched artifact and excludes install.ps1'
 
+for absent in ImportSubjectPublicKeyInfo DSASignatureFormat; do
+  if grep -Fq "$absent" "$installer"; then
+    echo "install.ps1 must not use $absent; Windows PowerShell 5.1 does not have it"; exit 1
+  fi
+done
 if grep -Fq 'DefaultChecksumsSha256' "$installer"; then
   echo 'install.ps1 must not pin a per-release checksums digest'; exit 1
 fi
@@ -47,7 +52,8 @@ echo 'PASS: install.ps1 embeds a parseable P-256 release signing key'
 workflow="$repo_root/.github/workflows/coder-worker-release.yaml"
 # shellcheck disable=SC2016
 required_in_workflow=(
-  'openssl dgst -sha256 -sign "$private" -out "$release/checksums.txt.sig" "$release/checksums.txt"'
+  'openssl dgst -sha256 -sign "$private" -out "$release/checksums.txt.sig" "$payload"'
+  $'{ printf \'%s\\n\' "$tag"; cat "$release/checksums.txt"; } > "$payload"'
   'git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}"'
   'openssl dgst -sha256 -verify "$RUNNER_TEMP/release-signing-key.pem"'
   'rm -f "$RUNNER_TEMP/signing-key.pem"'
@@ -145,18 +151,26 @@ for required in "${gates_in_workflow[@]}"; do
 done
 echo 'PASS: every release gate survives, and no step past the tag runs when nothing is released'
 
+bind() { { printf '%s\n' "$1"; cat "$work/one/checksums.txt"; } > "$2"; }
 openssl ecparam -name prime256v1 -genkey -noout -out "$work/throwaway.pem"
-openssl dgst -sha256 -sign "$work/throwaway.pem" -out "$work/one/checksums.txt.sig" "$work/one/checksums.txt"
+bind coder-worker-v1.0.0 "$work/payload"
+openssl dgst -sha256 -sign "$work/throwaway.pem" -out "$work/one/checksums.txt.sig" "$work/payload"
 openssl pkey -in "$work/throwaway.pem" -pubout -out "$work/throwaway.pub.pem"
 rm -f "$work/throwaway.pem"
 openssl dgst -sha256 -verify "$work/throwaway.pub.pem" \
-  -signature "$work/one/checksums.txt.sig" "$work/one/checksums.txt" >/dev/null
-printf 'x\n' >> "$work/one/checksums.txt"
+  -signature "$work/one/checksums.txt.sig" "$work/payload" >/dev/null
+bind coder-worker-v1.0.1 "$work/other-tag"
 if openssl dgst -sha256 -verify "$work/throwaway.pub.pem" \
-  -signature "$work/one/checksums.txt.sig" "$work/one/checksums.txt" >/dev/null 2>&1; then
+  -signature "$work/one/checksums.txt.sig" "$work/other-tag" >/dev/null 2>&1; then
+  echo 'a signature must not carry from one release tag to another'; exit 1
+fi
+printf 'x\n' >> "$work/one/checksums.txt"
+bind coder-worker-v1.0.0 "$work/payload"
+if openssl dgst -sha256 -verify "$work/throwaway.pub.pem" \
+  -signature "$work/one/checksums.txt.sig" "$work/payload" >/dev/null 2>&1; then
   echo 'a tampered checksums.txt must not verify against its signature'; exit 1
 fi
-echo 'PASS: an assembled checksums.txt signs and verifies, and refuses to after a byte changes'
+echo 'PASS: a signed checksums.txt is bound to its tag and to its bytes'
 
 if bash "$assembler" --out "$work/one" >/dev/null 2>&1; then
   echo 'the assembler must refuse a non-empty output directory'; exit 1
