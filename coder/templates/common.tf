@@ -76,6 +76,68 @@ data "coder_parameter" "deployment_url" {
   mutable      = true
 }
 
+variable "workspace_image" {
+  type    = string
+  default = "codercom/enterprise-base:ubuntu"
+}
+
+variable "mcp_url" {
+  type    = string
+  default = ""
+}
+
+variable "omni_version" {
+  type    = string
+  default = "0.10.15"
+
+  validation {
+    condition     = can(regex("^v?[0-9]+\\.[0-9]+\\.[0-9]+$", var.omni_version))
+    error_message = "omni_version must be an exact stable release."
+  }
+}
+
+data "coder_parameter" "environment_mode" {
+  name         = "environment_mode"
+  display_name = "Environment setup"
+  default      = data.coder_workspace.me.template_name == "dev" ? "composable" : "legacy"
+  mutable      = true
+  option {
+    name  = "Composable components"
+    value = "composable"
+  }
+  option {
+    name  = "Existing personal profile"
+    value = "legacy"
+  }
+}
+
+data "coder_parameter" "agent_clients" {
+  name         = "agent_clients"
+  display_name = "Optional agent clients"
+  description  = "JSON list: claude, codex. Empty installs neither. Applies to composable setup."
+  type         = "list(string)"
+  default      = "[]"
+  mutable      = true
+}
+
+data "coder_parameter" "agent_plugins" {
+  name         = "agent_plugins"
+  display_name = "Agent plugin tools"
+  description  = "Auxiliary executables for selected clients. Does not install skills, hooks, marketplaces, or MCP registrations."
+  type         = "bool"
+  default      = "false"
+  mutable      = true
+}
+
+data "coder_parameter" "enable_openhands" {
+  name         = "enable_openhands"
+  display_name = "OpenHands Agent Server"
+  description  = "Private authenticated remote runtime; requires composable setup."
+  type         = "bool"
+  default      = "false"
+  mutable      = true
+}
+
 # ---------------------------------------------------------------------------
 # Derived locals
 #
@@ -87,7 +149,20 @@ data "coder_parameter" "deployment_url" {
 # ---------------------------------------------------------------------------
 
 locals {
-  backend = fileexists("${path.module}/backend") ? trimspace(file("${path.module}/backend")) : "kubernetes"
+  backend    = fileexists("${path.module}/backend") ? trimspace(file("${path.module}/backend")) : "kubernetes"
+  composable = data.coder_parameter.environment_mode.value == "composable"
+  selected_stacks = distinct(concat(
+    local.stacks,
+    local.enable_dind ? ["containers"] : [],
+    local.enable_playwright ? ["ts"] : [],
+    tobool(data.coder_parameter.enable_openhands.value) ? ["python"] : [],
+  ))
+  agent_init_script = <<-SCRIPT
+    ${file("${path.module}/shared/workspace-ca.sh")}
+    export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.krew/bin:$HOME/.local/share/pnpm:$HOME/.local/share/pnpm/bin:$PATH"
+    export CODER_START_ID=$(cat /proc/sys/kernel/random/uuid)
+    ${coder_agent.main.init_script}
+  SCRIPT
 
   workspace_owner_slug_base = lower(replace(data.coder_workspace_owner.me.name, "/[^a-zA-Z0-9-]/", "-"))
   workspace_name_slug_base  = lower(replace(data.coder_workspace.me.name, "/[^a-zA-Z0-9-]/", "-"))
@@ -151,32 +226,42 @@ locals {
   SCRIPT
 
   coder_dotfiles_bootstrap = <<-SCRIPT
-    set -e
+    #!/usr/bin/env bash
+    set -euo pipefail
 
     ${local.tmpdir_bootstrap}
+    rm -f "$HOME/.local/state/coder-environment/readiness.json"
 
     ${local.backend_bootstrap}
 
-    if command -v apt-get >/dev/null 2>&1; then
-      sudo apt-get update -qq
-      apt_packages="build-essential ca-certificates curl git jq node-gyp nodejs npm openssh-client stow tmux unzip"
-      case ",$CODER_OMNI_STACKS," in
-        *,go,*) apt_packages="$apt_packages golang-go" ;;
-      esac
-      sudo apt-get install -y --no-install-recommends $apt_packages >/dev/null
-    fi
+    ${file("${path.module}/shared/workspace-ca.sh")}
+    ${file("${path.module}/shared/install-base.sh")}
+    coder_install_system_ca
 
     ${local.git_ssh_bootstrap}
 
-    export CODER_DOTFILES_URL="${data.coder_parameter.dotfiles_url.value}"
+    export CODER_DOTFILES_URL="$CODER_CONFIGURED_DOTFILES_URL"
     export CODER_DOTFILES_SOURCE_DIR="$HOME/dotfiles"
 
     ${file("${path.module}/shared/prepare-dotfiles.sh")}
 
-    # Omni owns Codex; remove the raw binary left by the retired Coder module.
-    [ -L "$HOME/.local/bin/codex" ] || rm -f "$HOME/.local/bin/codex"
-
-    bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder.sh"
+    export CODER_DOTFILES_REVISION=$(git -C "$CODER_DOTFILES_SOURCE_DIR" rev-parse HEAD)
+    if [ "$CODER_ENVIRONMENT_MODE" = "composable" ]; then
+      if [ ! -f "$CODER_DOTFILES_SOURCE_DIR/setup-coder-components.sh" ]; then
+        printf '%s\n' "Composable setup requires updated dotfiles. Update the preserved checkout at $CODER_DOTFILES_SOURCE_DIR explicitly." >&2
+        exit 1
+      fi
+      mkdir -p "$HOME/.local/state/coder-environment"
+      printf '%s' '${base64encode(file("${path.module}/shared/components.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/components.py"
+      python3 "$HOME/.local/state/coder-environment/components.py" validate --report "$HOME/.local/state/coder-environment/readiness.json"
+      python3 "$HOME/.local/state/coder-environment/components.py" wait-repositories
+      bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder-components.sh"
+    elif [ "$CODER_OMNI_HOST" = "hermes" ]; then
+      bash "$CODER_DOTFILES_SOURCE_DIR/setup-hermes.sh"
+    else
+      [ -L "$HOME/.local/bin/codex" ] || rm -f "$HOME/.local/bin/codex"
+      bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder.sh"
+    fi
 
     # No browser preinstall: shiplight and each project's @playwright/test
     # fetch their own pinned revision on demand into ~/.cache/ms-playwright on
@@ -186,13 +271,28 @@ locals {
     if [ "$CODER_ENABLE_PLAYWRIGHT" = "1" ]; then
       export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
       if command -v bun >/dev/null 2>&1; then
-        bunx playwright install-deps chromium
+        bunx playwright@1.63.0 install-deps chromium
       else
-        npx -y playwright install-deps chromium
+        npx -y playwright@1.63.0 install-deps chromium
       fi
     fi
 
+    if [ "$CODER_ENVIRONMENT_MODE" = "composable" ]; then
+      export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.krew/bin:$HOME/.local/share/pnpm:$HOME/.local/share/pnpm/bin:$PATH"
+      python3 "$HOME/.local/state/coder-environment/components.py" check
+      ${module.openhands.startup_script}
+      python3 "$HOME/.local/state/coder-environment/components.py" check --report "$HOME/.local/state/coder-environment/readiness.json"
+    elif [ "$CODER_ENABLE_OPENHANDS" = "1" ]; then
+      printf '%s\n' 'OpenHands requires composable environment setup' >&2
+      exit 1
+    fi
   SCRIPT
+}
+
+module "openhands" {
+  source            = "./modules/openhands"
+  enabled           = tobool(data.coder_parameter.enable_openhands.value)
+  working_directory = length(local.repos_set) == 1 ? "/home/coder/${local.repo_clone_dirs}" : ""
 }
 
 # ---------------------------------------------------------------------------
@@ -205,20 +305,40 @@ resource "coder_agent" "main" {
   startup_script          = local.coder_dotfiles_bootstrap
   startup_script_behavior = "blocking"
 
+  lifecycle {
+    precondition {
+      condition     = !tobool(data.coder_parameter.enable_openhands.value) || local.composable
+      error_message = "OpenHands requires composable environment setup."
+    }
+    precondition {
+      condition     = length(distinct([for repo in local.repos_set : trimsuffix(basename(repo), ".git")])) == length(local.repos_set)
+      error_message = "Repositories must have distinct checkout directory names."
+    }
+  }
+
   env = merge({
-    GIT_AUTHOR_NAME         = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_AUTHOR_EMAIL        = data.coder_workspace_owner.me.email
-    GIT_COMMITTER_NAME      = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_COMMITTER_EMAIL     = data.coder_workspace_owner.me.email
-    CODER_OMNI_HOST         = local.omni_host
-    OMNI_HOSTNAME           = local.omni_host
-    CODER_OMNI_STACKS       = join(",", local.stacks)
-    CODER_REPO_DIRS         = local.repo_clone_dirs
-    CODER_ENABLE_PLAYWRIGHT = local.enable_playwright ? "1" : "0"
-    ECC_GATEGUARD           = "off"
-    GOCACHE                 = "/tmp/go-build"
-    GOLANGCI_LINT_CACHE     = "/tmp/golangci-lint"
-    OMNI_OTEL_CA_PATH       = "/etc/ssl/lan/lan-ca.pem"
+    GIT_AUTHOR_NAME               = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
+    GIT_AUTHOR_EMAIL              = data.coder_workspace_owner.me.email
+    GIT_COMMITTER_NAME            = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
+    GIT_COMMITTER_EMAIL           = data.coder_workspace_owner.me.email
+    CODER_OMNI_HOST               = local.omni_host
+    OMNI_HOSTNAME                 = local.omni_host
+    CODER_OMNI_STACKS             = join(",", local.composable ? local.selected_stacks : local.stacks)
+    CODER_ENVIRONMENT_MODE        = data.coder_parameter.environment_mode.value
+    CODER_BACKEND                 = local.backend
+    CODER_CONFIGURED_DOTFILES_URL = data.coder_parameter.dotfiles_url.value
+    CODER_AGENT_CLIENTS           = join(",", jsondecode(data.coder_parameter.agent_clients.value))
+    CODER_AGENT_PLUGINS           = tobool(data.coder_parameter.agent_plugins.value) ? "1" : "0"
+    CODER_ENABLE_OPENHANDS        = tobool(data.coder_parameter.enable_openhands.value) ? "1" : "0"
+    CODER_ENABLE_DIND             = local.enable_dind ? "1" : "0"
+    CODER_MCP_URL                 = var.mcp_url
+    CODER_REPO_KEYS               = join(",", [for repo in local.repos_set : sha256(repo)])
+    CODER_REPO_DIRS               = local.repo_clone_dirs
+    CODER_ENABLE_PLAYWRIGHT       = local.enable_playwright ? "1" : "0"
+    ECC_GATEGUARD                 = "off"
+    GOCACHE                       = "/tmp/go-build"
+    GOLANGCI_LINT_CACHE           = "/tmp/golangci-lint"
+    OMNI_OTEL_CA_PATH             = "/etc/ssl/lan/lan-ca.pem"
 
     TMPDIR = local.tmpdir
     # Pinned to their current defaults so a future upstream default cannot move
@@ -230,7 +350,12 @@ resource "coder_agent" "main" {
     # appends its own store version suffix, so this resolves to .../store/v11.
     npm_config_store_dir  = "/home/coder/.local/share/pnpm/store"
     pnpm_config_store_dir = "/home/coder/.local/share/pnpm/store"
-  }, local.deployment_env)
+    }, local.deployment_env, local.composable ? {
+    OMNI_VERSION = var.omni_version
+    SHELL        = "/usr/bin/zsh"
+    EDITOR       = "nvim"
+    VISUAL       = "nvim"
+  } : {})
 
   metadata {
     display_name = "CPU Usage"
@@ -271,5 +396,13 @@ module "git-clone" {
   # The git-clone module runs as its own agent script, in parallel with the
   # main dotfiles bootstrap. Seed host keys here too so SSH clones do not race
   # the main startup script and fail with "Host key verification failed".
-  pre_clone_script = "${local.tmpdir_bootstrap}\n${local.git_ssh_bootstrap}"
+  pre_clone_script  = "${local.tmpdir_bootstrap}\n${local.git_ssh_bootstrap}"
+  post_clone_script = <<-SCRIPT
+    set -e
+    git rev-parse --is-inside-work-tree >/dev/null
+    if [ -n "$CODER_START_ID" ]; then
+      mkdir -p "$HOME/.local/state/coder-environment/clones/$CODER_START_ID"
+      touch "$HOME/.local/state/coder-environment/clones/$CODER_START_ID/${sha256(each.value)}"
+    fi
+  SCRIPT
 }

@@ -7,21 +7,21 @@ on:
     branches:
       - main
     paths:
-      - coder/templates/*.tf
-      - coder/templates/**/*.tf
-      - coder/templates/*/backend
-      - coder/templates/backends/*.tf
+      - coder/templates/**
+      - coder/modules/**
+      - coder/scripts/**
+      - .github/workflows/coder-templates.yaml
   pull_request:
     paths:
-      - coder/templates/*.tf
-      - coder/templates/**/*.tf
-      - coder/templates/*/backend
-      - coder/templates/backends/*.tf
+      - coder/templates/**
+      - coder/modules/**
+      - coder/scripts/**
+      - .github/workflows/coder-templates.yaml
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.ref == 'refs/heads/main' && 'publication-main' || format('validation-{0}', github.ref)) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -32,125 +32,91 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Determine templates to push
-        id: changed
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+
+      - name: Test packaging and selection
         run: |
           set -euo pipefail
-          TEMPLATE_DIR="coder/templates"
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            git fetch origin "$GITHUB_BASE_REF" --depth=1
-            changed=$(git diff --name-only "origin/$GITHUB_BASE_REF"...HEAD -- "$TEMPLATE_DIR" || true)
-          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            # Manual runs validate and push everything.
-            changed="$TEMPLATE_DIR/common.tf"
-          else
-            # Diff the whole push, not just the head commit — a multi-commit
-            # push can have the template changes buried behind its head.
-            BEFORE="${{ github.event.before }}"
-            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
-              && git fetch origin "$BEFORE" --depth=1 2>/dev/null; then
-              changed=$(git diff --name-only "$BEFORE"..HEAD -- "$TEMPLATE_DIR" || true)
-            else
-              changed=$(git diff --name-only HEAD~1 HEAD -- "$TEMPLATE_DIR" || true)
-            fi
-          fi
+          bash coder/templates/tests/packaging.sh
+          bash coder/templates/tests/selection.sh
+          bash coder/templates/tests/prepare-dotfiles.sh
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests -p 'test_*.py'
 
-          # If shared Coder bootstrap changed, validate/push every template.
-          if echo "$changed" | grep -Eq "^$TEMPLATE_DIR/(common\.tf|shared/|tests/|backends/)"; then
-            dirs=$(find "$TEMPLATE_DIR" -mindepth 2 -maxdepth 2 -name main.tf -exec dirname {} \; | sort)
-          else
-            dirs=$(
-              echo "$changed" | while IFS= read -r file; do
-                case "$file" in
-                  "$TEMPLATE_DIR"/backends/*) ;;
-                  "$TEMPLATE_DIR"/*/*.tf | "$TEMPLATE_DIR"/*/backend) dirname "$file" ;;
-                esac
-              done | sort -u
-            )
-          fi
-
-          {
-            echo "dirs<<EOF"
-            echo "$dirs"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Install Terraform
-        if: steps.changed.outputs.dirs != ''
-        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          terraform_version: 1.15.5
-          terraform_wrapper: false
-
-      - name: Validate templates
-        if: steps.changed.outputs.dirs != ''
+      - name: Select templates
+        id: selected
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          TEMPLATE_DIR="coder/templates"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" changed "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/coder-template-dirs"
+          else
+            bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" all > "$RUNNER_TEMP/coder-template-dirs"
+          fi
+          if [[ -s "$RUNNER_TEMP/coder-template-dirs" ]]; then
+            echo 'has_templates=true' >> "$GITHUB_OUTPUT"
+          fi
 
-          bash "$TEMPLATE_DIR/tests/prepare-dotfiles.sh"
-
+      - name: Package templates once
+        if: steps.selected.outputs.has_templates == 'true'
+        id: packaged
+        run: |
+          set -euo pipefail
+          packages=$(mktemp -d "$RUNNER_TEMP/coder-packages.XXXXXX")
+          echo "root=$packages" >> "$GITHUB_OUTPUT"
           while IFS= read -r dir; do
-            [ -z "$dir" ] && continue
-            name=$(basename "$dir")
-            echo "Validating template: $name"
-            tmpdir=$(mktemp -d)
-            cp "$TEMPLATE_DIR/common.tf" "$tmpdir/common.tf"
-            cp -R "$TEMPLATE_DIR/shared" "$tmpdir/shared"
-            backend=kubernetes
-            if [ -f "$dir/backend" ]; then
-              cp "$dir/backend" "$tmpdir/backend"
-              backend=$(tr -d '[:space:]' < "$dir/backend")
-            fi
-            cp "$TEMPLATE_DIR/backends/$backend.tf" "$tmpdir/"
-            cp "$dir"/*.tf "$tmpdir/"
-            terraform -chdir="$tmpdir" fmt -check -diff
-            terraform -chdir="$tmpdir" init -backend=false -input=false
-            terraform -chdir="$tmpdir" validate
-            rm -rf "$tmpdir"
-          done <<< "${{ steps.changed.outputs.dirs }}"
+            bash coder/scripts/package-template.sh "$dir" "$packages/${dir##*/}"
+          done < "$RUNNER_TEMP/coder-template-dirs"
+
+      - name: Validate packaged templates
+        if: steps.selected.outputs.has_templates == 'true'
+        env:
+          PACKAGES: ${{ steps.packaged.outputs.root }}
+        run: |
+          set -euo pipefail
+          packages=()
+          while IFS= read -r dir; do
+            packages+=("$PACKAGES/${dir##*/}")
+          done < "$RUNNER_TEMP/coder-template-dirs"
+          bash coder/scripts/validate-templates.sh "${packages[@]}"
 
       - name: Install Coder CLI
-        if: github.event_name != 'pull_request' && steps.changed.outputs.dirs != ''
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.selected.outputs.has_templates == 'true'
+        env:
+          CODER_URL: https://coder.h-cloud.io
         run: |
           set -euo pipefail
-          # Match the server version to avoid version-mismatch failures.
-          CODER_VERSION=$(curl -fsSL "$CODER_URL/api/v2/buildinfo" | jq -r '.version' | sed 's/^v//; s/+.*//')
-          curl -fsSL "https://github.com/coder/coder/releases/download/v${CODER_VERSION}/coder_${CODER_VERSION}_linux_amd64.deb" -o /tmp/coder.deb
-          sudo dpkg -i /tmp/coder.deb
-          rm /tmp/coder.deb
-        env:
-          CODER_URL: https://coder.h-cloud.io
-          CODER_SESSION_TOKEN: ${{ secrets.CODER_SESSION_TOKEN }}
+          version=$(curl -fsSL "$CODER_URL/api/v2/buildinfo" | jq -er '.version' | sed 's/^v//; s/+.*//')
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          curl -fsSL "https://github.com/coder/coder/releases/download/v${version}/coder_${version}_linux_amd64.deb" -o "$RUNNER_TEMP/coder.deb"
+          sudo dpkg -i "$RUNNER_TEMP/coder.deb"
+          rm "$RUNNER_TEMP/coder.deb"
 
-      - name: Push templates to Coder
-        if: github.event_name != 'pull_request' && steps.changed.outputs.dirs != ''
+      - name: Push validated packages to Coder
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.selected.outputs.has_templates == 'true'
         env:
           CODER_URL: https://coder.h-cloud.io
           CODER_SESSION_TOKEN: ${{ secrets.CODER_SESSION_TOKEN }}
-        run: |-
+          PACKAGES: ${{ steps.packaged.outputs.root }}
+        run: |
           set -euo pipefail
-          TEMPLATE_DIR="coder/templates"
-
           while IFS= read -r dir; do
-            [ -z "$dir" ] && continue
-            name=$(basename "$dir")
-            echo "→ Pushing template: $name"
-            tmpdir=$(mktemp -d)
-            cp "$TEMPLATE_DIR/common.tf" "$tmpdir/common.tf"
-            cp -R "$TEMPLATE_DIR/shared" "$tmpdir/shared"
-            backend=kubernetes
-            if [ -f "$dir/backend" ]; then
-              cp "$dir/backend" "$tmpdir/backend"
-              backend=$(tr -d '[:space:]' < "$dir/backend")
-            fi
-            cp "$TEMPLATE_DIR/backends/$backend.tf" "$tmpdir/"
-            cp "$dir"/*.tf "$tmpdir/"
-            coder templates push "$name" --directory "$tmpdir" --yes
-            rm -rf "$tmpdir"
-            echo "✓ $name pushed"
-          done <<< "${{ steps.changed.outputs.dirs }}"
+            name=${dir##*/}
+            coder templates push "$name" --directory "$PACKAGES/$name" --yes
+          done < "$RUNNER_TEMP/coder-template-dirs"
+
+      - name: Clean packages
+        if: always() && steps.packaged.outputs.root != ''
+        env:
+          PACKAGES: ${{ steps.packaged.outputs.root }}
+        run: rm -rf -- "$PACKAGES"

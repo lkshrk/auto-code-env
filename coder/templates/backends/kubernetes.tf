@@ -1,10 +1,12 @@
 terraform {
   required_providers {
     coder = {
-      source = "coder/coder"
+      source  = "coder/coder"
+      version = "2.18.0"
     }
     kubernetes = {
-      source = "hashicorp/kubernetes"
+      source  = "hashicorp/kubernetes"
+      version = "3.2.1"
     }
   }
 }
@@ -115,9 +117,9 @@ resource "kubernetes_pod_v1" "workspace" {
 
     container {
       name              = "dev"
-      image             = "codercom/enterprise-base:ubuntu"
+      image             = var.workspace_image
       image_pull_policy = "IfNotPresent"
-      command           = ["sh", "-c", coder_agent.main.init_script]
+      command           = ["sh", "-c", local.agent_init_script]
 
       security_context {
         run_as_user = 1000
