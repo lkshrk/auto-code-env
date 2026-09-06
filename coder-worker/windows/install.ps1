@@ -27,7 +27,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $DefaultRelease = "coder-worker-v1.0.0"
-$DefaultChecksumsSha256 = "36f67c4f4500fa014053efc0074ebd89feee9f5f355dfb74b6f93e5ac7e94c70"
+$ReleaseSigningKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvgv5RXXPQPWPwPvvfFEkfpdSkQJQKXm2SYDazPi+gOlnsOgf1xBPke9HhBP3fT17rBq479ctngvC3N++//cB+w=="
 $ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
 $TlsPort = 2376
@@ -375,6 +375,32 @@ function Get-FileSha256 {
     }
 }
 
+function Test-ReleaseSignature {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Data,
+        [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Signature,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$PublicKey
+    )
+
+    $key = [Convert]::FromBase64String($PublicKey)
+    $ecdsa = [Security.Cryptography.ECDsa]::Create()
+    try {
+        $read = 0
+        $ecdsa.ImportSubjectPublicKeyInfo($key, [ref]$read)
+        if ($read -ne $key.Length -or $ecdsa.KeySize -ne 256) {
+            return $false
+        }
+        return $ecdsa.VerifyData($Data, $Signature, [Security.Cryptography.HashAlgorithmName]::SHA256,
+            [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
+    }
+    catch [Security.Cryptography.CryptographicException] {
+        return $false
+    }
+    finally {
+        $ecdsa.Dispose()
+    }
+}
+
 function Get-StagedArtifact {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -581,33 +607,44 @@ try {
         if ($null -ne $script:checksums) {
             return $script:checksums
         }
-        $destination = Join-Path $stage "checksums.txt"
-        $uri = Get-ReleaseAssetUri -BaseUri $ReleaseBaseUri -Tag $tag -Asset "checksums.txt"
-        $parsed = $null
-        if (-not [Uri]::TryCreate($uri, [UriKind]::Absolute, [ref]$parsed) -or $parsed.Scheme -cne "https") {
-            throw "The release base URI must be absolute HTTPS."
-        }
         $expected = $ChecksumsSha256
-        if ([string]::IsNullOrWhiteSpace($expected)) {
-            if ($tag -cne $DefaultRelease) {
-                throw "-ChecksumsSha256 is required with -ReleaseTag; the embedded digest only covers $DefaultRelease."
-            }
-            $expected = $DefaultChecksumsSha256
-        }
-        if ($expected -notmatch '^[0-9A-Fa-f]{64}$') {
+        $pinned = -not [string]::IsNullOrWhiteSpace($expected)
+        if ($pinned -and $expected -notmatch '^[0-9A-Fa-f]{64}$') {
             throw "ChecksumsSha256 must be a 64-character hexadecimal SHA-256 value."
         }
-        Invoke-WebRequest -Uri $parsed -OutFile $destination -UseBasicParsing
-        $stream = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-        try {
-            $actual = Get-FileSha256 -Stream $stream
+
+        $staged = @{}
+        foreach ($asset in @("checksums.txt", "checksums.txt.sig")) {
+            if ($pinned -and $asset -eq "checksums.txt.sig") {
+                continue
+            }
+            $uri = Get-ReleaseAssetUri -BaseUri $ReleaseBaseUri -Tag $tag -Asset $asset
+            $parsed = $null
+            if (-not [Uri]::TryCreate($uri, [UriKind]::Absolute, [ref]$parsed) -or $parsed.Scheme -cne "https") {
+                throw "The release base URI must be absolute HTTPS."
+            }
+            $staged[$asset] = Join-Path $stage $asset
+            Invoke-WebRequest -Uri $parsed -OutFile $staged[$asset] -UseBasicParsing
         }
-        finally {
-            $stream.Dispose()
+
+        $destination = $staged["checksums.txt"]
+        if ($pinned) {
+            $stream = [IO.File]::Open($destination, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            try {
+                $actual = Get-FileSha256 -Stream $stream
+            }
+            finally {
+                $stream.Dispose()
+            }
+            if ($actual -ine $expected) {
+                throw "checksums.txt SHA-256 does not match the expected digest."
+            }
         }
-        if ($actual -ine $expected) {
-            throw "checksums.txt SHA-256 does not match the expected digest."
+        elseif (-not (Test-ReleaseSignature -Data ([IO.File]::ReadAllBytes($destination)) `
+                    -Signature ([IO.File]::ReadAllBytes($staged["checksums.txt.sig"])) -PublicKey $ReleaseSigningKey)) {
+            throw "checksums.txt is not signed by the release signing key."
         }
+
         $script:checksums = Get-ChecksumMap -Lines ([string[]][IO.File]::ReadAllLines($destination))
         return $script:checksums
     }

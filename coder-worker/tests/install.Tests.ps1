@@ -60,7 +60,7 @@ foreach ($required in '--no-launch', '--set-sparse', '--terminate', 'foreach \(\
         throw "install.ps1 must contain $required."
     }
 }
-if ($source -match '2375') {
+if (($source -replace '(?m)^\$ReleaseSigningKey = "[^"]*"$', '') -match '2375') {
     throw "install.ps1 must never mention the plaintext docker port."
 }
 if ($source -notmatch '\$TlsPort = 2376') {
@@ -76,17 +76,115 @@ $defaultRelease = $Matches["tag"]
 if ($source -notmatch '(?m)^\$ReleaseBaseUri = "https://') {
     throw "install.ps1 must fetch release assets over HTTPS."
 }
-if ($source -notmatch '(?m)^\$DefaultChecksumsSha256 = "(?<digest>[0-9a-f]{64})"$') {
-    throw "install.ps1 must embed the SHA-256 of its release's checksums.txt."
+if ($source -match '\$DefaultChecksumsSha256') {
+    throw "install.ps1 must not pin a per-release checksums digest."
 }
-$defaultChecksumsSha256 = $Matches["digest"]
+if ($source -notmatch '(?m)^\$ReleaseSigningKey = "(?<key>[A-Za-z0-9+/]+={0,2})"$') {
+    throw "install.ps1 must embed the release signing key as a base64 SubjectPublicKeyInfo."
+}
+$releaseSigningKey = $Matches["key"]
 foreach ($name in "Set-WslMirroredNetworking", "Test-DistributionName", "Test-WslDistributionRegistered",
     "Test-UbuntuRelease", "Test-Sha256Digest", "Test-WslVersionSupported", "Get-WslExecutablePath",
     "Get-FileSha256", "Get-StagedArtifact", "Get-DistributionInstallArguments",
     "Test-ProfileKeySecretShaped", "Test-ProfileValueSecretShaped", "Test-ProfileValue",
-    "Read-CoderWorkerProfile", "Get-ChecksumMap", "Get-ReleaseAssetUri",
+    "Read-CoderWorkerProfile", "Get-ChecksumMap", "Get-ReleaseAssetUri", "Test-ReleaseSignature",
     "Get-ReleaseChecksums", "Get-Artifact") {
     Invoke-Expression (Import-ScriptFunction -Path $scriptPath -Name $name)
+}
+
+$keyBytes = [Convert]::FromBase64String($releaseSigningKey)
+$anchor = [Security.Cryptography.ECDsa]::Create()
+try {
+    $read = 0
+    $anchor.ImportSubjectPublicKeyInfo($keyBytes, [ref]$read)
+    Assert-Equal $keyBytes.Length $read "the embedded key is exactly one SubjectPublicKeyInfo"
+    Assert-Equal 256 $anchor.KeySize "the embedded key is 256 bits"
+    Assert-Equal "1.2.840.10045.3.1.7" $anchor.ExportParameters($false).Curve.Oid.Value "the embedded key is on P-256"
+}
+finally {
+    $anchor.Dispose()
+}
+Write-Host "PASS: install.ps1 embeds a parseable P-256 release signing key"
+
+function Assert-Signature {
+    param([bool]$Expected, [byte[]]$Data, [byte[]]$Signature, [string]$PublicKey, [string]$Message)
+
+    Assert-Equal $Expected (Test-ReleaseSignature -Data $Data -Signature $Signature -PublicKey $PublicKey) $Message
+}
+
+function New-TamperedCopy {
+    param([byte[]]$Bytes, [int]$Index)
+
+    $copy = [byte[]]::new($Bytes.Length)
+    [Array]::Copy($Bytes, $copy, $Bytes.Length)
+    $copy[$Index] = $copy[$Index] -bxor 0x01
+    return $copy
+}
+
+# Produced once by openssl over the fixture below, private key destroyed: CI's PowerShell image has no openssl.
+$vectorKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOw5k+vIz2zSxHCFOywj+tCsM4hmokPDMoz/pEBeaoiOafWZAHYsum4zIm3+mQkUvTjfW/7VVO10XGlakEQrXNg=="
+$vectorSignature = [Convert]::FromBase64String("MEUCIQDvwHCqSvh8lpfUbA+9EVYKNJ7K8ix4ZNBhiudGIx/NBQIgIUfHWtcXe5gyuutI8exfrgORRdgVAFunrZBTgKMVXWQ=")
+$vectorPayload = [Text.Encoding]::ASCII.GetBytes((("a" * 64) + "  coder-worker-overlay`n" + ("b" * 64) + "  firewall.ps1`n"))
+
+Assert-Signature $true $vectorPayload $vectorSignature $vectorKey "an openssl-produced DER signature verifies"
+Assert-Signature $false (New-TamperedCopy -Bytes $vectorPayload -Index 70) $vectorSignature $vectorKey "a tampered payload is refused"
+Assert-Signature $false $vectorPayload (New-TamperedCopy -Bytes $vectorSignature -Index 10) $vectorKey "a tampered signature is refused"
+Assert-Signature $false $vectorPayload ([byte[]]@()) $vectorKey "an empty signature is refused"
+Assert-Signature $false $vectorPayload ([Text.Encoding]::ASCII.GetBytes("not DER at all")) $vectorKey "a signature that is not DER is refused"
+Assert-Signature $false $vectorPayload $vectorSignature[0..40] $vectorKey "a truncated signature is refused"
+Assert-Signature $false ([byte[]]@()) $vectorSignature $vectorKey "an empty payload is refused"
+Assert-Signature $false $vectorPayload $vectorSignature $releaseSigningKey "the embedded key refuses a foreign release's signature"
+
+$foreign = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue("1.2.840.10045.3.1.7"))
+try {
+    $foreignSignature = $foreign.SignData($vectorPayload, [Security.Cryptography.HashAlgorithmName]::SHA256,
+        [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
+}
+finally {
+    $foreign.Dispose()
+}
+Assert-Signature $false $vectorPayload $foreignSignature $vectorKey "a signature from a different key is refused"
+Assert-ThrowsMessage { Test-ReleaseSignature -Data $vectorPayload -Signature $vectorSignature -PublicKey "not base64" } `
+    "Base-64" "a corrupt embedded key aborts rather than silently failing closed"
+Write-Host "PASS: release signature verification"
+
+$openssl = Get-Command openssl -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $openssl) {
+    Write-Host "SKIP: the openssl round trip needs openssl on PATH"
+}
+else {
+    $signing = Join-Path ([IO.Path]::GetTempPath()) ("coder-worker-signing-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $signing | Out-Null
+    try {
+        $payloadPath = Join-Path $signing "checksums.txt"
+        [IO.File]::WriteAllBytes($payloadPath, $vectorPayload)
+        $publicKeys = @()
+        $signatures = @()
+        foreach ($index in 0, 1) {
+            $keyPath = Join-Path $signing "throwaway-$index.pem"
+            $derPath = Join-Path $signing "throwaway-$index.der"
+            $signaturePath = Join-Path $signing "checksums-$index.sig"
+            & $openssl.Path ecparam -name prime256v1 -genkey -noout -out $keyPath
+            if ($LASTEXITCODE -ne 0) { throw "openssl could not generate a throwaway key." }
+            & $openssl.Path pkey -in $keyPath -pubout -outform DER -out $derPath
+            if ($LASTEXITCODE -ne 0) { throw "openssl could not export the throwaway public key." }
+            & $openssl.Path dgst -sha256 -sign $keyPath -out $signaturePath $payloadPath
+            if ($LASTEXITCODE -ne 0) { throw "openssl could not sign the fixture." }
+            $publicKeys += [Convert]::ToBase64String([IO.File]::ReadAllBytes($derPath))
+            $signatures += , [IO.File]::ReadAllBytes($signaturePath)
+        }
+
+        Assert-Signature $true $vectorPayload $signatures[0] $publicKeys[0] "a freshly signed fixture verifies"
+        Assert-Signature $false $vectorPayload $signatures[1] $publicKeys[0] "a signature from the other throwaway key is refused"
+        Assert-Signature $false (New-TamperedCopy -Bytes $vectorPayload -Index 0) $signatures[0] $publicKeys[0] `
+            "a tampered fixture is refused"
+        Assert-Signature $false $vectorPayload (New-TamperedCopy -Bytes $signatures[0] -Index 20) $publicKeys[0] `
+            "a tampered fresh signature is refused"
+        Write-Host "PASS: openssl signs what install.ps1 verifies"
+    }
+    finally {
+        Remove-Item -LiteralPath $signing -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Assert-Equal $true (Test-DistributionName -Name "coder-worker") "the default distribution name is valid"
@@ -184,6 +282,8 @@ Write-Host "PASS: pinned release asset URIs"
 
 $fetch = Join-Path ([IO.Path]::GetTempPath()) ("coder-worker-fetch-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $fetch | Out-Null
+$signer = $null
+$stranger = $null
 try {
     $ReleaseBaseUri = "https://example/download"
     $DefaultRelease = "coder-worker-v2.0.0"
@@ -192,13 +292,19 @@ try {
     $script:body = ("a" * 64) + "  coder-worker-overlay`n"
     $script:staged = $null
     $script:checksums = $null
-    $script:requested = ""
+    $script:requested = @()
+    $script:signature = [byte[]]@()
 
     function Invoke-WebRequest {
         param($Uri, $OutFile, [switch]$UseBasicParsing)
         $script:downloads++
-        $script:requested = "$Uri"
-        [IO.File]::WriteAllText($OutFile, $script:body)
+        $script:requested += "$Uri"
+        if ("$Uri".EndsWith(".sig")) {
+            [IO.File]::WriteAllBytes($OutFile, $script:signature)
+        }
+        else {
+            [IO.File]::WriteAllText($OutFile, $script:body)
+        }
     }
     function Get-StagedArtifact {
         param($Label, $Path, $Uri, $Sha256, $Destination)
@@ -208,36 +314,69 @@ try {
     $stream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($script:body))
     try { $bodyDigest = Get-FileSha256 -Stream $stream } finally { $stream.Dispose() }
 
+    $signer = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue("1.2.840.10045.3.1.7"))
+    $stranger = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue("1.2.840.10045.3.1.7"))
+    $ReleaseSigningKey = [Convert]::ToBase64String($signer.ExportSubjectPublicKeyInfo())
+    $bodyBytes = [Text.Encoding]::UTF8.GetBytes($script:body)
+    $signedBody = $script:body
+    $goodSignature = $signer.SignData($bodyBytes, [Security.Cryptography.HashAlgorithmName]::SHA256,
+        [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
+    $script:signature = $goodSignature
+
     $tag = $DefaultRelease
     $ChecksumsSha256 = ""
-    $DefaultChecksumsSha256 = $bodyDigest
     $map = Get-ReleaseChecksums
-    Assert-Equal 1 $script:downloads "checksums.txt is downloaded once"
-    Assert-Equal "https://example/download/coder-worker-v2.0.0/checksums.txt" $script:requested "checksums.txt comes from the pinned tag"
+    Assert-Equal 2 $script:downloads "checksums.txt and its signature are both downloaded"
+    Assert-Equal "https://example/download/coder-worker-v2.0.0/checksums.txt" $script:requested[0] "checksums.txt comes from the pinned tag"
+    Assert-Equal "https://example/download/coder-worker-v2.0.0/checksums.txt.sig" $script:requested[1] "the signature comes from the same tag"
     Assert-Equal ("a" * 64) $map["coder-worker-overlay"] "the overlay digest is read from checksums.txt"
     Get-ReleaseChecksums | Out-Null
-    Assert-Equal 1 $script:downloads "a second call reuses the cached map"
+    Assert-Equal 2 $script:downloads "a second call reuses the cached map"
 
     $script:checksums = $null
-    $DefaultChecksumsSha256 = "b" * 64
-    Assert-ThrowsMessage { Get-ReleaseChecksums } "does not match the expected digest" `
-        "a checksums.txt that fails the embedded digest is refused"
+    $script:body = ("b" * 64) + "  coder-worker-overlay`n"
+    Assert-ThrowsMessage { Get-ReleaseChecksums } "is not signed by the release signing key" `
+        "a checksums.txt the signature does not cover is refused"
+    $script:body = $signedBody
+    foreach ($case in @(
+            @{ Signature = [byte[]]@(); Message = "an empty signature is refused" },
+            @{ Signature = [Text.Encoding]::ASCII.GetBytes("not DER at all"); Message = "a signature that is not DER is refused" },
+            @{ Signature = $goodSignature[0..40]; Message = "a truncated signature is refused" },
+            @{ Signature = $stranger.SignData($bodyBytes, [Security.Cryptography.HashAlgorithmName]::SHA256,
+                    [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence); Message = "a signature from another key is refused" }
+        )) {
+        $script:checksums = $null
+        $script:signature = [byte[]]$case.Signature
+        Assert-ThrowsMessage { Get-ReleaseChecksums } "is not signed by the release signing key" $case.Message
+    }
+    $script:signature = $goodSignature
+
     $script:checksums = $null
-    $DefaultChecksumsSha256 = "not a digest"
-    Assert-ThrowsMessage { Get-ReleaseChecksums } "64-character hexadecimal" "a malformed embedded digest is refused"
-    $script:checksums = $null
-    $DefaultChecksumsSha256 = $bodyDigest
-    $ChecksumsSha256 = "c" * 64
-    Assert-ThrowsMessage { Get-ReleaseChecksums } "does not match the expected digest" `
-        "an explicit ChecksumsSha256 overrides the embedded one"
-    $script:checksums = $null
-    $ChecksumsSha256 = ""
+    $script:requested = @()
     $tag = "coder-worker-v9.9.9"
-    Assert-ThrowsMessage { Get-ReleaseChecksums } "ChecksumsSha256 is required with -ReleaseTag" `
-        "another release tag may not reuse the embedded digest"
-    Write-Host "PASS: checksums.txt is never trusted without a digest known before the download"
-
+    Get-ReleaseChecksums | Out-Null
+    Assert-Equal "https://example/download/coder-worker-v9.9.9/checksums.txt.sig" $script:requested[1] `
+        "-ReleaseTag needs no digest, because the signing key is not per release"
     $tag = $DefaultRelease
+
+    $script:checksums = $null
+    $script:downloads = 0
+    $script:signature = [byte[]]@()
+    $ChecksumsSha256 = $bodyDigest
+    Get-ReleaseChecksums | Out-Null
+    Assert-Equal 1 $script:downloads "-ChecksumsSha256 pins the file by digest and fetches no signature"
+    $script:checksums = $null
+    $ChecksumsSha256 = "c" * 64
+    Assert-ThrowsMessage { Get-ReleaseChecksums } "does not match the expected digest" "a wrong -ChecksumsSha256 is refused"
+    $script:checksums = $null
+    $script:downloads = 0
+    $ChecksumsSha256 = "not a digest"
+    Assert-ThrowsMessage { Get-ReleaseChecksums } "64-character hexadecimal" "a malformed -ChecksumsSha256 is refused"
+    Assert-Equal 0 $script:downloads "a malformed -ChecksumsSha256 is refused before anything is fetched"
+    $ChecksumsSha256 = ""
+    $script:signature = $goodSignature
+    Write-Host "PASS: checksums.txt is trusted only through the release signature or an operator-pinned digest"
+
     $script:checksums = $null
     Get-Artifact -Label "Overlay" -Asset "coder-worker-overlay" -Destination (Join-Path $fetch "out") | Out-Null
     Assert-Equal "https://example/download/coder-worker-v2.0.0/coder-worker-overlay" $script:staged.Uri "the artifact URI is built from the pinned tag"
@@ -258,6 +397,8 @@ finally {
     Remove-Item -LiteralPath $fetch -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path Function:\Invoke-WebRequest -ErrorAction SilentlyContinue
     Remove-Item -Path Function:\Get-StagedArtifact -ErrorAction SilentlyContinue
+    if ($null -ne $signer) { $signer.Dispose() }
+    if ($null -ne $stranger) { $stranger.Dispose() }
 }
 Invoke-Expression (Import-ScriptFunction -Path $scriptPath -Name "Get-StagedArtifact")
 
