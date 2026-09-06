@@ -15,7 +15,7 @@ server_dns_names=()
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly script_directory
-repository_root=$(cd -- "${script_directory}/../.." && pwd)
+repository_root=$(cd -- "${script_directory}/../../.." && pwd)
 readonly repository_root
 
 usage() {
