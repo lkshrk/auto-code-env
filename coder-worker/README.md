@@ -31,11 +31,12 @@ wsl.exe -d coder-worker -u root -- coder-worker-overlay secrets
 
 The first reads `hosts/towerr.profile`, downloads every other artifact from the
 release tag pinned in `$DefaultRelease`, verifies each against that release's
-signed `checksums.txt`, reconciles `.wslconfig`, applies the firewall rule, registers
-the distribution, installs Docker and registers the keepalive task. The firewall
-rule goes on before the distribution exists, so 2376 is never briefly open to
-the LAN. The second asks for the Vaultwarden master password, fetches the trust
-material, verifies it and starts Docker. Nothing else is prompted for or typed.
+signed `checksums.txt`, reconciles `.wslconfig`, applies the firewall rule,
+registers the distribution, installs Docker and registers the keepalive task.
+The firewall rule goes on before the distribution exists, so 2376 is never
+briefly open to the LAN. The second asks for the Vaultwarden master password,
+fetches the trust material, verifies it and starts Docker. Nothing else is
+prompted for or typed.
 
 `install.ps1` is the trust anchor. It embeds `$ReleaseSigningKey`, a P-256
 public key as base64 SubjectPublicKeyInfo, downloads `checksums.txt` and
@@ -61,12 +62,14 @@ tag, not tampering.
 signing key is not per release. `-ChecksumsSha256` pins `checksums.txt` by
 digest instead of by signature, for an offline chain of custody or a local
 assembly that was never signed; it is the one way to install without a valid
-signature. `-OverlayPath`
-or `-OverlayUri` with `-OverlaySha256`, and likewise `-Firewall*`,
-`-Keepalive*`, `-Rootfs*`, supply an artifact by hand with a mandatory checksum;
-`-SkipFirewall` and `-SkipKeepalive` skip a step deliberately, and skipping the
-firewall leaves 2376 unrestricted. The parameter is `-HostProfile` because
-`-Host` and `-Profile` shadow PowerShell automatic variables.
+signature.
+
+`-OverlayPath` or `-OverlayUri` with `-OverlaySha256`, and likewise
+`-Firewall*`, `-Keepalive*`, `-Rootfs*`, supply an artifact by hand with a
+mandatory checksum; `-SkipFirewall` and `-SkipKeepalive` skip a step
+deliberately, and skipping the firewall leaves 2376 unrestricted. The parameter
+is `-HostProfile` because `-Host` and `-Profile` shadow PowerShell automatic
+variables.
 
 Windows 11, elevated PowerShell and WSL 2.7 or later are required. Every step
 reconciles, so rerunning the installer is how you recover a half-finished
@@ -247,7 +250,7 @@ local copy:
 
 ```sh
 openssl ecparam -name prime256v1 -genkey -noout -out signing-key.pem
-openssl pkey -in signing-key.pem -pubout -outform DER | base64 -w0
+openssl pkey -in signing-key.pem -pubout -outform DER | openssl base64 -A
 ```
 
 That is one constant in one file. Releases cut before the rotation keep their
