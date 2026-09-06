@@ -84,7 +84,7 @@ if ($source -notmatch '(?m)^\$ReleaseSigningKey = "(?<key>[A-Za-z0-9+/]+={0,2})"
 }
 $releaseSigningKey = $Matches["key"]
 $ownSource = [IO.File]::ReadAllText($PSCommandPath) -replace "`r`n", "`n"
-foreach ($absent in 'ImportSubjectPublicKeyInfo', 'DSASignatureFormat') {
+foreach ($absent in 'ImportSubjectPublicKeyInfo', 'ExportSubjectPublicKeyInfo', 'DSASignatureFormat') {
     if ($source -match $absent) {
         throw "install.ps1 must not use $absent; Windows PowerShell 5.1 does not have it."
     }
@@ -116,6 +116,15 @@ function New-TamperedCopy {
     [Array]::Copy($Bytes, $copy, $Bytes.Length)
     $copy[$Index] = $copy[$Index] -bxor 0x01
     return $copy
+}
+
+function ConvertTo-SubjectPublicKeyInfo {
+    param([Security.Cryptography.ECDsa]$Key)
+
+    $prefix = [byte[]](0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
+        0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00)
+    $q = $Key.ExportParameters($false).Q
+    return [Convert]::ToBase64String([byte[]]($prefix + [byte]0x04 + $q.X + $q.Y))
 }
 
 function ConvertTo-DerInteger {
@@ -394,7 +403,7 @@ try {
 
     $signer = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue("1.2.840.10045.3.1.7"))
     $stranger = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromValue("1.2.840.10045.3.1.7"))
-    $ReleaseSigningKey = [Convert]::ToBase64String($signer.ExportSubjectPublicKeyInfo())
+    $ReleaseSigningKey = ConvertTo-SubjectPublicKeyInfo -Key $signer
     $signedBody = $script:body
     $goodSignature = New-BoundSignature -Key $signer -Tag $DefaultRelease -Body $script:body
     $script:signature = $goodSignature
