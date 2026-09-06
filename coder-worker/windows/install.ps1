@@ -26,7 +26,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$DefaultRelease = "coder-worker-v1.0.0"
+$DefaultRelease = "coder-worker-v1.0.1"
 $ReleaseSigningKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvgv5RXXPQPWPwPvvfFEkfpdSkQJQKXm2SYDazPi+gOlnsOgf1xBPke9HhBP3fT17rBq479ctngvC3N++//cB+w=="
 $ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
@@ -595,9 +595,26 @@ function Invoke-Wsl {
 
     $output = & $WslPath @Arguments
     if ($LASTEXITCODE -ne 0) {
+        $detail = (@($output) -join " ").Trim() -replace "`0", ""
+        if ($detail) {
+            throw "$FailureMessage wsl.exe said: $detail"
+        }
         throw $FailureMessage
     }
     return $output
+}
+
+# Start-Process joins ArgumentList without quoting, so no argument may contain a space or a shell operator.
+function Get-DistributionCopyArguments {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Target
+    )
+
+    if ($Target -match '\s' -or $Name -match '\s') {
+        throw "A distribution name or target path with whitespace cannot be passed to wsl.exe safely."
+    }
+    return @("--distribution", $Name, "--user", "root", "--exec", "/usr/bin/dd", "of=$Target", "status=none")
 }
 
 function Copy-FileIntoDistribution {
@@ -610,7 +627,7 @@ function Copy-FileIntoDistribution {
     )
 
     $process = Start-Process -FilePath $WslPath -NoNewWindow -Wait -PassThru `
-        -ArgumentList @("--distribution", $Name, "--user", "root", "--exec", "/bin/sh", "-c", "cat > $Target") `
+        -ArgumentList (Get-DistributionCopyArguments -Name $Name -Target $Target) `
         -RedirectStandardInput $Source
     if ($process.ExitCode -ne 0) {
         throw "Unable to copy '$Source' into WSL distribution '$Name'."
@@ -855,8 +872,14 @@ try {
             throw "WSL distribution '$DistroName' was not registered."
         }
 
-        Invoke-Wsl -WslPath $wslPath -Arguments @("--manage", $DistroName, "--set-sparse", "true") `
-            -FailureMessage "Unable to mark WSL distribution '$DistroName' sparse." | Out-Null
+        # Sparse conversion needs the distribution stopped, and only reclaims disk; never fail an install for it.
+        Invoke-Wsl -WslPath $wslPath -Arguments @("--terminate", $DistroName) `
+            -FailureMessage "Unable to terminate WSL distribution '$DistroName' before sparse conversion." | Out-Null
+        $sparse = & $wslPath --manage $DistroName --set-sparse true 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $detail = (@($sparse) -join " ").Trim() -replace "`0", ""
+            Write-Warning "Could not mark '$DistroName' sparse, so its disk will not shrink after pruning. wsl.exe said: $detail"
+        }
         Write-Host "Coder worker stage 1 completed: '$DistroName' registered."
     }
 
