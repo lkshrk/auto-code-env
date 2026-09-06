@@ -10,6 +10,7 @@ on:
       - openhands/profiles/**
       - openhands/worker/**
       - shared/windows/**
+      - tools/check-root-calculation.sh
 
 permissions:
   contents: read
@@ -55,6 +56,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
             pwsh -NoProfile -File openhands/worker/tests/compat.Tests.ps1
+          bash tools/check-root-calculation.sh
           find openhands/worker shared -type f -name '*.sh' -print0 | xargs -0 shellcheck
           shellcheck openhands/worker/image/rootfs/usr/local/sbin/openhands-overlay openhands/worker/image/rootfs-oci/usr/local/sbin/container-entrypoint
 

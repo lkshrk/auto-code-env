@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
 applier="$repo_root/openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py"
 fixture_image=auto-code-env-wsl-overlay-fixture:ubuntu-26.04-python3
 

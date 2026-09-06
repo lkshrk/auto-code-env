@@ -9,6 +9,7 @@ on:
       - .github/workflows/coder-worker-validate.yaml
       - coder/worker/**
       - tools/coder-worker/**
+      - tools/check-root-calculation.sh
       - shared/windows/firewall.ps1
       - shared/windows/keepalive.ps1
       - coder/templates/backends/docker.tf
@@ -28,6 +29,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash tools/check-root-calculation.sh
           bash coder/worker/tests/release.Tests.sh
           bash coder/worker/tests/profile.Tests.sh
           bash coder/worker/tests/install.Tests.sh

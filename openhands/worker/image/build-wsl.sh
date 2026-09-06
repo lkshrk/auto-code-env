@@ -53,7 +53,7 @@ trap 'exit 130' INT
 trap 'exit 143' HUP TERM
 rm -f -- "$temporary_artifact" "$temporary_checksum" "$temporary_tar"
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
 cd "$repo_root"
 VERSION="$version" docker buildx bake --allow="fs.write=$output_dir" -f openhands/worker/image/docker-bake.hcl "wsl-${arch}" \
   --set "wsl-${arch}.output=type=tar,dest=${temporary_tar}"

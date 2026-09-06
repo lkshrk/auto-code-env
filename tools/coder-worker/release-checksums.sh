@@ -5,7 +5,7 @@ umask 022
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly script_directory
-repository_root=$(cd -- "${script_directory}/../.." && pwd)
+repository_root=$(cd -- "$script_directory" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
 readonly repository_root
 
 out_directory=''

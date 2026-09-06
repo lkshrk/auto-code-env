@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
 bake_file="$repo_root/openhands/worker/image/docker-bake.hcl"
 build_script="$repo_root/openhands/worker/image/build-wsl.sh"
 validation_workflow="$repo_root/.github/workflows/worker-validate.yaml"
@@ -146,7 +146,8 @@ assert(trigger(validation).dig('pull_request', 'paths') == [
   '.github/workflows/worker-release.yaml',
   'openhands/profiles/**',
   'openhands/worker/**',
-  'shared/windows/**'
+  'shared/windows/**',
+  'tools/check-root-calculation.sh'
 ], 'validation paths must cover the worker, its released profiles and the shared scripts')
 assert(validation['permissions'] == { 'contents' => 'read' }, 'validation permissions must be read-only')
 validate = validation.fetch('jobs').fetch('validate')

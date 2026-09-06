@@ -89,6 +89,7 @@ jobs:
           test "$tag_commit" = "$GITHUB_SHA"
           grep -Fxq "\$DefaultRelease = \"$tag\"" coder/worker/install/install.ps1
           grep -Fxq "readonly RELEASE_VERSION=$VERSION" coder/worker/runtime/coder-worker-overlay
+          bash tools/check-root-calculation.sh
           bash coder/worker/tests/release.Tests.sh
           bash coder/worker/tests/profile.Tests.sh
           bash coder/worker/tests/install.Tests.sh
