@@ -83,9 +83,14 @@ if ($source -notmatch '(?m)^\$ReleaseSigningKey = "(?<key>[A-Za-z0-9+/]+={0,2})"
     throw "install.ps1 must embed the release signing key as a base64 SubjectPublicKeyInfo."
 }
 $releaseSigningKey = $Matches["key"]
+$ownSource = [IO.File]::ReadAllText($PSCommandPath)
 foreach ($absent in 'ImportSubjectPublicKeyInfo', 'DSASignatureFormat') {
     if ($source -match $absent) {
         throw "install.ps1 must not use $absent; Windows PowerShell 5.1 does not have it."
+    }
+    # This suite is the pre-flight an operator runs under powershell.exe, so it must run there too.
+    if (@($ownSource -split "`n" | Where-Object { $_ -match $absent -and $_ -notmatch "absent in" }).Count -gt 0) {
+        throw "this suite must not use $absent; it has to run on Windows PowerShell 5.1."
     }
 }
 foreach ($name in "Set-WslMirroredNetworking", "Test-DistributionName", "Test-WslDistributionRegistered",
@@ -113,12 +118,22 @@ function New-TamperedCopy {
     return $copy
 }
 
+function ConvertTo-DerInteger {
+    param([byte[]]$Half)
+
+    $start = 0
+    while ($start -lt ($Half.Length - 1) -and $Half[$start] -eq 0) { $start++ }
+    $value = $Half[$start..($Half.Length - 1)]
+    if ($value[0] -ge 0x80) { $value = @([byte]0x00) + $value }
+    return [byte[]]$value
+}
+
 function New-BoundSignature {
     param([Security.Cryptography.ECDsa]$Key, [string]$Tag, [string]$Body)
 
     $payload = [byte[]]([Text.Encoding]::UTF8.GetBytes($Tag + "`n") + [Text.Encoding]::UTF8.GetBytes($Body))
-    return $Key.SignData($payload, [Security.Cryptography.HashAlgorithmName]::SHA256,
-        [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
+    $raw = $Key.SignData($payload, [Security.Cryptography.HashAlgorithmName]::SHA256)
+    return New-DerSignature -R (ConvertTo-DerInteger $raw[0..31]) -S (ConvertTo-DerInteger $raw[32..63])
 }
 
 function New-DerSignature {

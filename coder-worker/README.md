@@ -22,6 +22,15 @@ WSL2 "coder-worker": Ubuntu 26.04, systemd, mirrored networking
 
 ## Install
 
+Before the first install, prove the signature check works on the runtime you
+will actually use. The suite runs on Windows PowerShell 5.1 as well as `pwsh`,
+and exercises the real verification path:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\coder-worker\tests\install.Tests.ps1
+```
+
+
 Elevated PowerShell on the desktop, twice:
 
 ```powershell
