@@ -46,6 +46,18 @@ its digest in the file that was just proved authentic, so nothing is ever
 trusted on the strength of an HTTPS fetch alone. GitHub lets release assets be
 replaced on an existing tag, so pinning only the tag would not have been enough.
 
+What is signed is not `checksums.txt` alone but the release tag, a newline, and
+then that file's bytes. A signature therefore names the release it belongs to,
+and one release's signed `checksums.txt` cannot be served for another. The
+installer rebuilds that payload from the tag it asked for, so a swap is a
+verification failure rather than a silent downgrade. To check a release by hand,
+with `key.pem` extracted as under Key rotation below:
+
+```sh
+{ printf 'coder-worker-v1.0.0\n'; cat checksums.txt; } |
+  openssl dgst -sha256 -verify key.pem -signature checksums.txt.sig
+```
+
 Verifying `install.ps1` against anything published on the same release page
 proves nothing, because whoever could replace the assets could replace that too.
 Get it from the git tag instead, which is bound to a commit. From a clone of
@@ -71,7 +83,9 @@ deliberately, and skipping the firewall leaves 2376 unrestricted. The parameter
 is `-HostProfile` because `-Host` and `-Profile` shadow PowerShell automatic
 variables.
 
-Windows 11, elevated PowerShell and WSL 2.7 or later are required. Every step
+Windows 11, elevated PowerShell and WSL 2.7 or later are required. Either
+runtime works: the installer verifies signatures with APIs that Windows
+PowerShell 5.1 has, so `powershell.exe` and `pwsh` behave the same. Every step
 reconciles, so rerunning the installer is how you recover a half-finished
 install or roll out a newer overlay: an already-registered distribution keeps
 its data and its VHD, and only the overlay install, the firewall rule and the
@@ -278,6 +292,14 @@ old signatures, so an installer from an older tag verifies against the key it
 shipped with, and a newer `install.ps1` will not accept an older release unless
 you pass `-ChecksumsSha256`.
 
+To get the public half back out of an installer, as `key.pem` for the by-hand
+check above:
+
+```sh
+grep -Eo '^\$ReleaseSigningKey = "[A-Za-z0-9+/]+={0,2}"$' install.ps1 | cut -d'"' -f2 |
+  openssl base64 -d -A | openssl pkey -pubin -inform DER -out key.pem
+```
+
 ## Verification
 
 ```sh
@@ -303,7 +325,7 @@ build before calling the backend done.
 |---|---|
 | `no vault item is named "..."` | The item was renamed, or `VAULT_FOLDER` does not match |
 | `N vault items are named "..."` | Duplicates in that folder; delete one or pass `--ca-id` and friends |
-| `checksums.txt is not signed by the release signing key` | The release assets changed, the signature is missing or truncated, or the key was rotated after that release. Do not bypass it; verify the release |
+| `checksums.txt is not signed by the release signing key for '<tag>'` | The release assets changed, the signature is missing or malformed, it belongs to a different release, or the key was rotated after that one. Do not bypass it; verify the release |
 | `checksums.txt SHA-256 does not match the expected digest` | The `-ChecksumsSha256` you passed does not describe that release's `checksums.txt` |
 | `<profile> is missing DOCKER_PORT` | A required profile key was dropped; both parsers require the same set |
 | `missing profile /etc/coder-worker/profile` | The distribution predates the profile; reinstall on a fresh one, or pass `--profile` |
