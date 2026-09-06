@@ -96,18 +96,32 @@ variable "omni_version" {
   }
 }
 
+variable "environment_mode_default" {
+  type    = string
+  default = "legacy"
+
+  validation {
+    condition     = contains(["legacy", "composable"], var.environment_mode_default)
+    error_message = "environment_mode_default must be legacy or composable."
+  }
+}
+
 data "coder_parameter" "environment_mode" {
   name         = "environment_mode"
   display_name = "Environment setup"
-  default      = data.coder_workspace.me.template_name == "dev" ? "composable" : "legacy"
+  default      = var.environment_mode_default
   mutable      = true
-  option {
-    name  = "Composable components"
-    value = "composable"
-  }
-  option {
-    name  = "Existing personal profile"
-    value = "legacy"
+  dynamic "option" {
+    for_each = var.environment_mode_default == "composable" ? {
+      composable = "Personal core and selected components"
+      } : {
+      composable = "Personal core and selected components"
+      legacy     = "Existing personal profile"
+    }
+    content {
+      name  = option.value
+      value = option.key
+    }
   }
 }
 

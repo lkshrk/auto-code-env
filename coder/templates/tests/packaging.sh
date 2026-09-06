@@ -3,6 +3,7 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 python3 - "$script_dir/../../scripts/package-template.sh" <<'PY'
+import json
 import shutil
 import subprocess
 import sys
@@ -39,8 +40,8 @@ class PackagingTests(unittest.TestCase):
         path.write_text(content)
         return path
 
-    def package(self, success=True):
-        result = subprocess.run(["bash", str(SCRIPT), str(self.source), str(self.output)], capture_output=True, text=True)
+    def package(self, *options, success=True):
+        result = subprocess.run(["bash", str(SCRIPT), str(self.source), str(self.output), *options], capture_output=True, text=True)
         if success:
             self.assertEqual(result.returncode, 0, result.stderr)
         else:
@@ -51,7 +52,7 @@ class PackagingTests(unittest.TestCase):
         self.package()
         self.assertEqual(
             {str(path.relative_to(self.output)) for path in self.output.rglob("*") if path.is_file()},
-            {"main.tf", "variables.tf", "common.tf", "kubernetes.tf", "backend", "shared/nested/bootstrap.sh",
+            {"main.tf", "variables.tf", "common.tf", "kubernetes.tf", "backend", "environment.auto.tfvars.json", "shared/nested/bootstrap.sh",
              "modules/openhands/main.tf", "modules/openhands/nested/config.json"},
         )
         for name in ("main.tf", "variables.tf"):
@@ -138,6 +139,51 @@ class PackagingTests(unittest.TestCase):
         result = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Usage:", result.stderr)
+
+
+    def test_dev_backend_targets_have_fixed_composable_defaults(self):
+        marker = self.write("dev/backend", "docker\n")
+        self.write("dev/secrets.auto.tfvars.json", '{"synthetic_secret": "must-not-copy"}')
+        for backend in ("docker", "kubernetes"):
+            with self.subTest(backend=backend):
+                self.output = self.root / f"dev-{backend}"
+                self.package("--backend", backend)
+                self.assertEqual((self.output / "backend").read_text(), backend + "\n")
+                self.assertEqual({p.name for p in self.output.glob("*.tf")}, {"main.tf", "variables.tf", "common.tf", backend + ".tf"})
+                self.assertEqual(json.loads((self.output / "environment.auto.tfvars.json").read_text()), {"environment_mode_default": "composable"})
+                self.assertFalse((self.output / "secrets.auto.tfvars.json").exists())
+        self.assertEqual(marker.read_text(), "docker\n")
+
+    def test_legacy_is_unchanged_and_cannot_override_backend(self):
+        self.source.rename(self.templates / "legacy")
+        self.source = self.templates / "legacy"
+        self.package()
+        self.assertEqual((self.output / "backend").read_text(), "kubernetes\n")
+        self.assertFalse((self.output / "environment.auto.tfvars.json").exists())
+        shutil.rmtree(self.output)
+        self.write("legacy/backend", "docker\n")
+        self.package()
+        self.assertEqual((self.output / "backend").read_text(), "docker\n")
+        self.assertFalse((self.output / "environment.auto.tfvars.json").exists())
+        shutil.rmtree(self.output)
+        for backend in ("docker", "kubernetes"):
+            self.package("--backend", backend, success=False)
+            self.assertFalse(self.output.exists())
+
+    def test_generated_configuration_collision_fails(self):
+        path = self.write("dev/environment.auto.tfvars.json", "{}")
+        self.package(success=False)
+        self.assertFalse(self.output.exists())
+        path.unlink()
+        path.symlink_to(self.root / "absent")
+        self.package(success=False)
+        self.assertFalse(self.output.exists())
+
+    def test_invalid_backend_override_arguments(self):
+        for options in (("--backend", "../docker"), ("--backend", "unknown"), ("--backend",), ("--other", "docker")):
+            with self.subTest(options=options):
+                self.package(*options, success=False)
+                self.assertFalse(self.output.exists())
 
 
 unittest.main()
