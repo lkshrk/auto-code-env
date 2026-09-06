@@ -7,7 +7,8 @@ on:
     paths:
       - .github/workflows/coder-worker-release.yaml
       - .github/workflows/coder-worker-validate.yaml
-      - coder-worker/**
+      - coder/worker/**
+      - tools/coder-worker/**
       - worker/windows/firewall.ps1
       - worker/windows/keepalive.ps1
       - coder/templates/backends/docker.tf
@@ -27,18 +28,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash coder-worker/tests/release.Tests.sh
-          bash coder-worker/tests/profile.Tests.sh
-          bash coder-worker/tests/install.Tests.sh
-          bash coder-worker/tests/overlay.Tests.sh
-          bash coder-worker/tests/gen-docker-tls.Tests.sh
-          bash coder-worker/tests/images.Tests.sh
+          bash coder/worker/tests/release.Tests.sh
+          bash coder/worker/tests/profile.Tests.sh
+          bash coder/worker/tests/install.Tests.sh
+          bash coder/worker/tests/overlay.Tests.sh
+          bash coder/worker/tests/gen-docker-tls.Tests.sh
+          bash coder/worker/tests/images.Tests.sh
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1
-          find coder-worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
-          shellcheck coder-worker/wsl/coder-worker-overlay
+            pwsh -NoProfile -File coder/worker/tests/install.Tests.ps1
+          find coder/worker tools/coder-worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
+          shellcheck coder/worker/runtime/coder-worker-overlay
 
   windows:
     name: windows powershell 5.1

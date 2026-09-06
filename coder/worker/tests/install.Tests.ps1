@@ -51,7 +51,7 @@ function Import-ScriptFunction {
     return $function.Extent.Text
 }
 
-$scriptPath = Join-Path $PSScriptRoot (Join-Path ".." (Join-Path "windows" "install.ps1"))
+$scriptPath = Join-Path $PSScriptRoot (Join-Path ".." (Join-Path "install" "install.ps1"))
 $profilePath = Join-Path $PSScriptRoot (Join-Path ".." (Join-Path "hosts" "towerr.profile"))
 $source = (Get-Content -Raw $scriptPath) -replace "`r`n", "`n"
 foreach ($required in '--no-launch', '--set-sparse', '--terminate', 'foreach \(\$pass in 1, 2\)',

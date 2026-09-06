@@ -27,7 +27,7 @@ signature check is exercised on the runtime this command uses rather than only
 on `pwsh`. To repeat it on the target machine:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\coder-worker\tests\install.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\coder\worker\tests\install.Tests.ps1
 ```
 
 
@@ -63,7 +63,7 @@ verification failure rather than a silent downgrade. To check a release by hand,
 with `key.pem` extracted as under Key rotation below:
 
 ```sh
-{ printf 'coder-worker-v1.0.2\n'; cat checksums.txt; } |
+{ printf 'coder-worker-v1.0.3\n'; cat checksums.txt; } |
   openssl dgst -sha256 -verify key.pem -signature checksums.txt.sig
 ```
 
@@ -73,8 +73,11 @@ Get it from the git tag instead, which is bound to a commit. From a clone of
 `lkshrk/auto-code-env`, once the tag exists:
 
 ```sh
-git show coder-worker-v1.0.2:coder-worker/windows/install.ps1 | sha256sum
+git show coder-worker-v1.0.3:coder/worker/install/install.ps1 | sha256sum
 ```
+
+Releases up to `coder-worker-v1.0.2` predate the move and hold that file at
+`coder-worker/windows/install.ps1`; use that path for those tags.
 
 `fatal: invalid object name` there means the wrong checkout or an unreleased
 tag, not tampering.
@@ -141,7 +144,7 @@ Both files are in this repository, so drop the item and the mount together.
 ## Trust material and rotation
 
 One CA signs both halves. Generate it once, on a trusted machine, never in the
-repository: `coder-worker/scripts/gen-docker-tls.sh --out ~/coder-worker-tls`.
+repository: `coder/worker/tools/gen-docker-tls.sh --out ~/coder-worker-tls`.
 ECDSA P-256, a ten-year CA, two-year leaves, server SANs `IP:172.16.20.195` and
 `DNS:coder-worker.h-cloud.lan`, all overridable.
 
@@ -249,7 +252,7 @@ Those refusals are cheap and run first, but the test suite runs after the tag
 exists. If a release fails there, the tag remains and later merges skip it, so
 recover by dispatching the workflow against that tag rather than merging again.
 
-CI assembles the assets with `coder-worker/scripts/release-checksums.sh`, signs
+CI assembles the assets with `tools/coder-worker/release-checksums.sh`, signs
 `checksums.txt` with the release signing key and publishes `checksums.txt.sig`
 beside it. CI rewrites nothing; it refuses to publish unless the tag points at
 the commit it built, both constants agree with the tag, every suite passes, and
@@ -346,14 +349,14 @@ build before calling the backend done.
 ## Tests
 
 ```sh
-bash coder-worker/tests/release.Tests.sh
-bash coder-worker/tests/profile.Tests.sh
-bash coder-worker/tests/install.Tests.sh
-bash coder-worker/tests/overlay.Tests.sh
-bash coder-worker/tests/gen-docker-tls.Tests.sh
-pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1
-shellcheck coder-worker/scripts/*.sh coder-worker/wsl/coder-worker-overlay \
-  coder-worker/tests/*.sh
+bash coder/worker/tests/release.Tests.sh
+bash coder/worker/tests/profile.Tests.sh
+bash coder/worker/tests/install.Tests.sh
+bash coder/worker/tests/overlay.Tests.sh
+bash coder/worker/tests/gen-docker-tls.Tests.sh
+pwsh -NoProfile -File coder/worker/tests/install.Tests.ps1
+shellcheck coder/worker/tools/*.sh coder/worker/runtime/coder-worker-overlay \
+  coder/worker/tests/*.sh
 ```
 
 The shell suites run inside an Ubuntu 26.04 container and need Docker. The

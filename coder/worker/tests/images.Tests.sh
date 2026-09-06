@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-overlay="$repo_root/coder-worker/wsl/coder-worker-overlay"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+overlay="$repo_root/coder/worker/runtime/coder-worker-overlay"
 backend="$repo_root/coder/templates/backends/docker.tf"
 
 test -f "$overlay"

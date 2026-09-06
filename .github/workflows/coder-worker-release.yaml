@@ -37,8 +37,8 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             tag=$GITHUB_REF_NAME
           else
-            test "$(grep -c '^readonly RELEASE_VERSION=' coder-worker/wsl/coder-worker-overlay)" = 1
-            version=$(sed -n 's/^readonly RELEASE_VERSION=//p' coder-worker/wsl/coder-worker-overlay)
+            test "$(grep -c '^readonly RELEASE_VERSION=' coder/worker/runtime/coder-worker-overlay)" = 1
+            version=$(sed -n 's/^readonly RELEASE_VERSION=//p' coder/worker/runtime/coder-worker-overlay)
             if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
               echo "::error::RELEASE_VERSION '$version' in coder-worker-overlay is not a release version"
               exit 1
@@ -49,7 +49,7 @@ jobs:
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            if ! grep -Fxq "\$DefaultRelease = \"$tag\"" coder-worker/windows/install.ps1; then
+            if ! grep -Fxq "\$DefaultRelease = \"$tag\"" coder/worker/install/install.ps1; then
               echo "::error::install.ps1 does not pin $tag; finish the version bump before merging"
               exit 1
             fi
@@ -75,20 +75,20 @@ jobs:
           ')
           test -n "$tag_commit"
           test "$tag_commit" = "$GITHUB_SHA"
-          grep -Fxq "\$DefaultRelease = \"$tag\"" coder-worker/windows/install.ps1
-          grep -Fxq "readonly RELEASE_VERSION=$VERSION" coder-worker/wsl/coder-worker-overlay
-          bash coder-worker/tests/release.Tests.sh
-          bash coder-worker/tests/profile.Tests.sh
-          bash coder-worker/tests/install.Tests.sh
-          bash coder-worker/tests/overlay.Tests.sh
-          bash coder-worker/tests/gen-docker-tls.Tests.sh
-          bash coder-worker/tests/images.Tests.sh
+          grep -Fxq "\$DefaultRelease = \"$tag\"" coder/worker/install/install.ps1
+          grep -Fxq "readonly RELEASE_VERSION=$VERSION" coder/worker/runtime/coder-worker-overlay
+          bash coder/worker/tests/release.Tests.sh
+          bash coder/worker/tests/profile.Tests.sh
+          bash coder/worker/tests/install.Tests.sh
+          bash coder/worker/tests/overlay.Tests.sh
+          bash coder/worker/tests/gen-docker-tls.Tests.sh
+          bash coder/worker/tests/images.Tests.sh
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1
-          find coder-worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
-          shellcheck coder-worker/wsl/coder-worker-overlay
+            pwsh -NoProfile -File coder/worker/tests/install.Tests.ps1
+          find coder/worker tools/coder-worker -type f -name '*.sh' -print0 | xargs -0 shellcheck
+          shellcheck coder/worker/runtime/coder-worker-overlay
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Assemble assets, sign checksums.txt and gate on the embedded key
@@ -100,7 +100,7 @@ jobs:
           set -euo pipefail
           tag=$RELEASE_TAG
           release="$RUNNER_TEMP/release"
-          bash coder-worker/scripts/release-checksums.sh --out "$release" > /dev/null
+          bash tools/coder-worker/release-checksums.sh --out "$release" > /dev/null
           if [ -z "${SIGNING_KEY:-}" ]; then
             echo "::error::CODER_WORKER_SIGNING_KEY is not set; the release would ship a checksums.txt install.ps1 rejects"
             exit 1
@@ -110,7 +110,7 @@ jobs:
           payload="$RUNNER_TEMP/signing-payload"
           { printf '%s\n' "$tag"; cat "$release/checksums.txt"; } > "$payload"
           openssl dgst -sha256 -sign "$private" -out "$release/checksums.txt.sig" "$payload"
-          embedded=$(grep -Eo '^[$]ReleaseSigningKey = "[A-Za-z0-9+/]+={0,2}"$' coder-worker/windows/install.ps1 | cut -d'"' -f2)
+          embedded=$(grep -Eo '^[$]ReleaseSigningKey = "[A-Za-z0-9+/]+={0,2}"$' coder/worker/install/install.ps1 | cut -d'"' -f2)
           if [ -z "$embedded" ]; then
             echo '::error::install.ps1 must embed ReleaseSigningKey as a base64 SubjectPublicKeyInfo'
             exit 1
