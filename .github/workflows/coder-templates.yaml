@@ -11,12 +11,16 @@ on:
       - coder/templates/**/*.tf
       - coder/templates/*/backend
       - coder/templates/backends/*.tf
+      - coder/templates/shared/**
+      - coder/templates/tests/**
   pull_request:
     paths:
       - coder/templates/*.tf
       - coder/templates/**/*.tf
       - coder/templates/*/backend
       - coder/templates/backends/*.tf
+      - coder/templates/shared/**
+      - coder/templates/tests/**
   workflow_dispatch:
 
 concurrency:
@@ -93,6 +97,7 @@ jobs:
           TEMPLATE_DIR="coder/templates"
 
           bash "$TEMPLATE_DIR/tests/prepare-dotfiles.sh"
+          bash "$TEMPLATE_DIR/tests/wow-sync.sh"
 
           while IFS= read -r dir; do
             [ -z "$dir" ] && continue
