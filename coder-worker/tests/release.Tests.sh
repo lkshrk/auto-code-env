@@ -58,6 +58,10 @@ for required in "${required_in_workflow[@]}"; do
 done
 grep -q 'ReleaseSigningKey.*coder-worker/windows/install\.ps1' "$workflow" ||
   { echo 'the release workflow must read the public key out of install.ps1'; exit 1; }
+grep -Fq '= checksums.txt.sig ]; then' "$workflow" ||
+  { echo 'a republished release must not compare the signature by digest; ECDSA is not deterministic'; exit 1; }
+grep -Fq 'the published checksums.txt.sig does not verify against ReleaseSigningKey' "$workflow" ||
+  { echo 'a republished release must verify the published signature'; exit 1; }
 grep -A1 -F -e '- name: Remove the signing key' "$workflow" | grep -Fq 'if: always()' ||
   { echo 'the private key removal step must always run'; exit 1; }
 if grep -Fq 'DefaultChecksumsSha256' "$workflow"; then

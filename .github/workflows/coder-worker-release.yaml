@@ -123,11 +123,25 @@ jobs:
               ;;
             false)
               for asset in "${assets[@]}"; do
+                # An ECDSA signature differs on every run, so the published one is checked by verifying it, below.
+                if [ "$asset" = checksums.txt.sig ]; then
+                  continue
+                fi
                 digest="sha256:$(sha256sum "$release/$asset" | awk '{print $1}')"
                 jq -e --arg asset "$asset" --arg digest "$digest" \
                   '.assets[] | select(.name == $asset and .state == "uploaded" and .digest == $digest)' \
                   "$release_json" >/dev/null
               done
+              published="$RUNNER_TEMP/published"
+              rm -rf "$published"
+              mkdir -p "$published"
+              gh release download "$tag" --dir "$published" \
+                --pattern checksums.txt --pattern checksums.txt.sig
+              if ! openssl dgst -sha256 -verify "$RUNNER_TEMP/release-signing-key.pem" \
+                -signature "$published/checksums.txt.sig" "$published/checksums.txt"; then
+                echo '::error::the published checksums.txt.sig does not verify against ReleaseSigningKey'
+                exit 1
+              fi
               ;;
             *)
               echo "::error::Unexpected release draft state: $release_draft"
