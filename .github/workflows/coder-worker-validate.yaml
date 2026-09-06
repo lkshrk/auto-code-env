@@ -50,4 +50,4 @@ jobs:
 
       - name: Run the installer suite on the runtime the README documents
         shell: powershell
-        run: .\coder-worker\tests\install.Tests.ps1
+        run: .\coder\worker\tests\install.Tests.ps1
