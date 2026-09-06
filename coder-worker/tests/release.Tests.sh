@@ -69,6 +69,81 @@ if grep -Fq 'DefaultChecksumsSha256' "$workflow"; then
 fi
 echo 'PASS: the release workflow signs checksums.txt and gates it on the embedded key'
 
+trigger="$work/trigger"
+sed -n '/^on:/,/^permissions:/p' "$workflow" > "$trigger"
+grep -Fq '      - main' "$trigger" ||
+  { echo 'the release workflow must trigger on a push to main'; exit 1; }
+grep -Fq '      - coder-worker-v*' "$trigger" ||
+  { echo 'the release workflow must still trigger on a release tag'; exit 1; }
+if grep -Eq '^ *paths(-ignore)?:' "$trigger"; then
+  echo 'a paths filter interacts badly with tag pushes and would silently skip releases'; exit 1
+fi
+
+resolve="$work/resolve-step"
+awk '/^      - name: / { current = substr($0, 15); next } current == "Resolve the release tag" { print }' \
+  "$workflow" > "$resolve"
+test -s "$resolve" || { echo 'the release workflow must resolve its own tag'; exit 1; }
+# shellcheck disable=SC2016
+required_in_resolve=(
+  'readonly RELEASE_VERSION='
+  'coder-worker/wsl/coder-worker-overlay'
+  'tag="coder-worker-v$version"'
+  'git ls-remote --tags origin "refs/tags/$tag"'
+  'echo "skip=true" >> "$GITHUB_OUTPUT"'
+  'git tag "$tag" "$GITHUB_SHA"'
+  'git push origin "refs/tags/$tag"'
+)
+for required in "${required_in_resolve[@]}"; do
+  grep -Fq "$required" "$resolve" ||
+    { echo "the tag-resolving step must contain: $required"; exit 1; }
+done
+
+line_of() { grep -n -F -e "$2" "$1" | head -1 | cut -d: -f1; }
+# shellcheck disable=SC2016
+create=$(line_of "$resolve" 'git tag "$tag" "$GITHUB_SHA"')
+# shellcheck disable=SC2016
+already=$(line_of "$resolve" 'echo "skip=true" >> "$GITHUB_OUTPUT"')
+pinned=$(line_of "$resolve" 'DefaultRelease')
+test "$already" -lt "$create" ||
+  { echo 'an already-released tag must be detected before the workflow creates one'; exit 1; }
+test "$pinned" -lt "$create" ||
+  { echo 'a half-finished version bump must be refused before the workflow creates a tag'; exit 1; }
+echo 'PASS: the release workflow tags the built commit, and only when the version is new and consistent'
+
+awk '
+  /^      - name: / {
+    name = substr($0, 15); n++; step[n] = name; body[n] = ""
+    if (name == "Resolve the release tag") resolve = n
+    next
+  }
+  n { body[n] = body[n] $0 "\n" }
+  END {
+    if (!resolve) { print "the workflow has no tag-resolving step"; exit 1 }
+    for (i = resolve + 1; i <= n; i++)
+      if (index(body[i], "steps.tag.outputs.skip") == 0) {
+        printf "step \"%s\" would run on a merge that releases nothing\n", step[i]
+        bad = 1
+      }
+    exit bad
+  }
+' "$workflow" || exit 1
+
+# shellcheck disable=SC2016
+gates_in_workflow=(
+  'test "$tag_commit" = "$GITHUB_SHA"'
+  'grep -Fxq "\$DefaultRelease = \"$tag\"" coder-worker/windows/install.ps1'
+  'grep -Fxq "readonly RELEASE_VERSION=$VERSION" coder-worker/wsl/coder-worker-overlay'
+  'pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1'
+)
+for suite in release profile install overlay gen-docker-tls images; do
+  gates_in_workflow+=("bash coder-worker/tests/$suite.Tests.sh")
+done
+for required in "${gates_in_workflow[@]}"; do
+  grep -Fq "$required" "$workflow" ||
+    { echo "the release workflow must keep the gate: $required"; exit 1; }
+done
+echo 'PASS: every release gate survives, and no step past the tag runs when nothing is released'
+
 openssl ecparam -name prime256v1 -genkey -noout -out "$work/throwaway.pem"
 openssl dgst -sha256 -sign "$work/throwaway.pem" -out "$work/one/checksums.txt.sig" "$work/one/checksums.txt"
 openssl pkey -in "$work/throwaway.pem" -pubout -out "$work/throwaway.pub.pem"
