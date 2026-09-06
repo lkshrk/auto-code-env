@@ -48,6 +48,7 @@ workflow="$repo_root/.github/workflows/coder-worker-release.yaml"
 # shellcheck disable=SC2016
 required_in_workflow=(
   'openssl dgst -sha256 -sign "$private" -out "$release/checksums.txt.sig" "$release/checksums.txt"'
+  'git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}"'
   'openssl dgst -sha256 -verify "$RUNNER_TEMP/release-signing-key.pem"'
   'rm -f "$RUNNER_TEMP/signing-key.pem"'
   'umask 077'

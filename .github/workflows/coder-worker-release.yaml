@@ -68,7 +68,7 @@ jobs:
           [[ "$tag" == coder-worker-v* ]]
           VERSION=${tag#coder-worker-v}
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
-          tag_commit=$(git ls-remote --tags origin "refs/tags/$tag" | awk -v direct="refs/tags/$tag" -v peeled="refs/tags/$tag^{}" '
+          tag_commit=$(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}" | awk -v direct="refs/tags/$tag" -v peeled="refs/tags/$tag^{}" '
             $2 == direct { direct_oid = $1 }
             $2 == peeled { peeled_oid = $1 }
             END { print peeled_oid != "" ? peeled_oid : direct_oid }
