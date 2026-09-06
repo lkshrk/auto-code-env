@@ -82,9 +82,16 @@ grep -Fq '      - main' "$trigger" ||
   { echo 'the release workflow must trigger on a push to main'; exit 1; }
 grep -Fq '      - coder-worker-v*' "$trigger" ||
   { echo 'the release workflow must still trigger on a release tag'; exit 1; }
-if grep -Eq '^ *paths(-ignore)?:' "$trigger"; then
-  echo 'a paths filter interacts badly with tag pushes and would silently skip releases'; exit 1
-fi
+# GitHub does not evaluate path filters for tag pushes, so this scopes merges only.
+grep -Eq '^ *paths:' "$trigger" ||
+  { echo 'the release workflow must scope merges to its own inputs with a paths filter'; exit 1; }
+for covered in 'coder/worker/**' 'tools/coder-worker/**'; do
+  grep -Fq "      - $covered" "$trigger" ||
+    { echo "the paths filter must cover $covered, or a version bump there would not release"; exit 1; }
+done
+for constant in coder/worker/runtime/coder-worker-overlay coder/worker/install/install.ps1; do
+  case $constant in coder/worker/*) ;; *) echo "the version constant $constant is outside the filter"; exit 1 ;; esac
+done
 
 resolve="$work/resolve-step"
 awk '/^      - name: / { current = substr($0, 15); next } current == "Resolve the release tag" { print }' \

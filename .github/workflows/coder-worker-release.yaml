@@ -8,13 +8,18 @@ on:
       - main
     tags:
       - coder-worker-v*
+    # Path filters are not evaluated for tag pushes, so this scopes merges only.
+    paths:
+      - .github/workflows/coder-worker-release.yaml
+      - coder/worker/**
+      - tools/coder-worker/**
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-coder-worker-${{ github.ref_name }}
+  group: release-coder-worker
   cancel-in-progress: false
 
 jobs:
@@ -45,8 +50,15 @@ jobs:
             fi
             tag="coder-worker-v$version"
             if [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
-              echo "$tag is already released; this merge changes no version and publishes nothing."
-              echo "skip=true" >> "$GITHUB_OUTPUT"
+              # A tag proves an attempt, not a release: a run that failed after tagging leaves one behind.
+              if gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx false; then
+                echo "$tag is already released; this merge changes no version and publishes nothing."
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "::notice::$tag exists without a published release; finishing it from this run"
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
               exit 0
             fi
             if ! grep -Fxq "\$DefaultRelease = \"$tag\"" coder/worker/install/install.ps1; then
