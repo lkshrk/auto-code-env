@@ -4,7 +4,7 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 set -euo pipefail
 umask 022
 
-readonly RELEASE_VERSION=1.0.1
+readonly RELEASE_VERSION=1.0.2
 readonly UBUNTU_CODENAME=resolute
 readonly UBUNTU_VERSION_ID=26.04
 readonly DOCKER_GPG_URL=https://download.docker.com/linux/ubuntu/gpg
@@ -39,6 +39,7 @@ readonly PINENTRY="$PINENTRY_DIRECTORY/coder-worker-rbw-pinentry"
 readonly TLS_PORT=2376
 readonly PLAINTEXT_PORT=2375
 readonly TAB=$'\t'
+readonly VAULT_LOGIN_FAILED=65
 readonly -a WORKSPACE_IMAGES=(
     'codercom/enterprise-base:ubuntu'
     'docker:29-dind'
@@ -218,13 +219,22 @@ vault_run() {
     [ $# -eq 1 ] || fail 'vault_run needs exactly one script'
     umask 077
     trap 'rm -f "$MASTER_PASSWORD_FILE" "$VAULT_INDEX"' EXIT INT TERM
-    systemd-ask-password --echo=no 'Vaultwarden master password:' | tr -d '\n' > "$MASTER_PASSWORD_FILE"
-    [ -s "$MASTER_PASSWORD_FILE" ] || fail 'empty master password'
-    systemd-run --quiet --pipe --wait --collect \
-        -E HOME=/root -E USER=root "${env_args[@]}" \
-        -E OVERLAY_SCRIPT="$1" \
-        -p "LoadCredential=rbw_master:$MASTER_PASSWORD_FILE" \
-        /bin/sh -u -c 'umask 077; rbw login && rbw sync && sh -eu -c "$OVERLAY_SCRIPT"; rc=$?; rbw lock; rbw stop-agent; rbw purge; exit $rc'
+    local attempt=1 rc=0
+    while :; do
+        systemd-ask-password --echo=no 'Vaultwarden master password:' | tr -d '\n' > "$MASTER_PASSWORD_FILE"
+        [ -s "$MASTER_PASSWORD_FILE" ] || fail 'empty master password'
+        rc=0
+        systemd-run --quiet --pipe --wait --collect \
+            -E HOME=/root -E USER=root "${env_args[@]}" \
+            -E OVERLAY_SCRIPT="$1" \
+            -p "LoadCredential=rbw_master:$MASTER_PASSWORD_FILE" \
+            /bin/sh -u -c 'umask 077; rbw login || { rbw stop-agent; rbw purge; exit 65; }; rbw sync && sh -eu -c "$OVERLAY_SCRIPT"; rc=$?; rbw lock; rbw stop-agent; rbw purge; exit $rc' || rc=$?
+        [ "$rc" -eq "$VAULT_LOGIN_FAILED" ] || break
+        attempt=$((attempt + 1))
+        [ "$attempt" -le 3 ] || fail 'vault login failed three times'
+        echo 'vault login failed; check the account and try again' >&2
+    done
+    [ "$rc" -eq 0 ] || exit "$rc"
     rm -f "$MASTER_PASSWORD_FILE" "$VAULT_INDEX"
     trap - EXIT INT TERM
 }
@@ -243,7 +253,7 @@ resolve_item_argument() {
 
 secrets() {
     local profile_path=$PROFILE no_enable=0
-    local vault_url='' email='' folder=''
+    local vault_url='' email='' folder='' folder_set=0
     local ca_id='' crt_id='' key_id='' lan_ca_id='' env_id=''
     local ca_item='' crt_item='' key_item='' lan_ca_item='' env_item=''
     local ca crt key lan_ca env reference
@@ -254,7 +264,7 @@ secrets() {
             --no-enable) no_enable=1; shift ;;
             --vault-url) vault_url=${2:-}; shift 2 ;;
             --email) email=${2:-}; shift 2 ;;
-            --folder) folder=${2:-}; shift 2 ;;
+            --folder) folder=${2:-}; folder_set=1; shift 2 ;;
             --ca-item) ca_item=${2:-}; shift 2 ;;
             --crt-item) crt_item=${2:-}; shift 2 ;;
             --key-item) key_item=${2:-}; shift 2 ;;
@@ -276,7 +286,7 @@ secrets() {
     fi
     [ -n "$vault_url" ] || vault_url=$(profile_get VAULT_URL)
     [ -n "$email" ] || email=$(profile_get VAULT_EMAIL)
-    [ -n "$folder" ] || folder=$(profile_get VAULT_FOLDER)
+    [ "$folder_set" -eq 1 ] || folder=$(profile_get VAULT_FOLDER)
     [ -n "$ca_item" ] || ca_item=$(profile_get VAULT_ITEM_CA)
     [ -n "$crt_item" ] || crt_item=$(profile_get VAULT_ITEM_SERVER_CERT)
     [ -n "$key_item" ] || key_item=$(profile_get VAULT_ITEM_SERVER_KEY)
