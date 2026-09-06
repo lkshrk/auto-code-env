@@ -72,7 +72,7 @@ refuse 'a repeated key' 'repeats DISTRO_NAME'
 sed 's|^VAULT_URL=.*|VAULT_URL=-----BEGIN CERTIFICATE-----|' "$good" > /tmp/bad.env
 refuse 'PEM material in a value' 'looks like a credential'
 
-sed 's|^VAULT_FOLDER=.*|VAULT_FOLDER=ghp_0123456789012345678901234567890123456789|' "$good" > /tmp/bad.env
+sed 's|^VAULT_ITEM_CA=.*|VAULT_ITEM_CA=ghp_0123456789012345678901234567890123456789|' "$good" > /tmp/bad.env
 refuse 'a token in a value' 'looks like a credential'
 
 sed 's|^VAULT_URL=.*|VAULT_URL=http://vlt.h-cloud.io|' "$good" > /tmp/bad.env

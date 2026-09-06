@@ -81,11 +81,11 @@ EOF
 chmod 0755 /usr/bin/rbw
 
 write_index() {
-  printf '%s\tcoder-worker docker ca\tServer\n' 11111111-1111-1111-1111-111111111111 > /tmp/vault-index
-  printf '%s\tcoder-worker docker server cert\tServer\n' 22222222-2222-2222-2222-222222222222 >> /tmp/vault-index
-  printf '%s\tcoder-worker docker server key\tServer\n' 33333333-3333-3333-3333-333333333333 >> /tmp/vault-index
-  printf '%s\tlan root ca\tServer\n' 44444444-4444-4444-4444-444444444444 >> /tmp/vault-index
-  printf '%s\tcoder-worker workspace env\tServer\n' 77777777-7777-7777-7777-777777777777 >> /tmp/vault-index
+  printf '%s\tcoder-worker docker ca\t\n' 11111111-1111-1111-1111-111111111111 > /tmp/vault-index
+  printf '%s\tcoder-worker docker server cert\t\n' 22222222-2222-2222-2222-222222222222 >> /tmp/vault-index
+  printf '%s\tcoder-worker docker server key\t\n' 33333333-3333-3333-3333-333333333333 >> /tmp/vault-index
+  printf '%s\tlan root ca\t\n' 44444444-4444-4444-4444-444444444444 >> /tmp/vault-index
+  printf '%s\tcoder-worker workspace env\t\n' 77777777-7777-7777-7777-777777777777 >> /tmp/vault-index
   printf '%s\tcoder-worker docker ca\tPersonal\n' 99999999-9999-9999-9999-999999999999 >> /tmp/vault-index
 }
 write_index
@@ -257,7 +257,7 @@ grep -Fqx 'workspace env defines 4 variables: GH_TOKEN GITHUB_PERSONAL_ACCESS_TO
 if grep -Fq 'ghp_fixture' /tmp/status.log; then echo 'status leaked a workspace env value'; exit 1; fi
 echo 'PASS: status names the workspace variables without printing a value'
 
-printf '%s\t%s\t%s\n' 55555555-5555-5555-5555-555555555555 'lan root ca' Server >> /tmp/vault-index
+printf '%s\t%s\t%s\n' 55555555-5555-5555-5555-555555555555 'lan root ca' '' >> /tmp/vault-index
 if run secrets --profile /root/coder-worker/profile --no-enable > /tmp/ambiguous.log 2>&1; then
   echo 'an ambiguous vault item name must fail secrets'; exit 1
 fi
@@ -274,10 +274,16 @@ if run secrets --profile /tmp/missing-item.env --no-enable > /tmp/missing-item.l
   echo 'an unknown vault item name must fail secrets'; exit 1
 fi
 grep -Fq 'no vault item is named "no such item"' /tmp/missing-item.log
-sed 's/^VAULT_FOLDER=.*/VAULT_FOLDER=Empty/' /root/coder-worker/profile > /tmp/wrong-folder.env
+{ cat /root/coder-worker/profile; echo 'VAULT_FOLDER=Empty'; } > /tmp/wrong-folder.env
 if run secrets --profile /tmp/wrong-folder.env --no-enable > /tmp/wrong-folder.log 2>&1; then
   echo 'a folder mismatch must fail secrets'; exit 1
 fi
+write_index
+if ! run secrets --profile /tmp/wrong-folder.env --folder '' --no-enable > /tmp/empty-folder.log 2>&1; then
+  cat /tmp/empty-folder.log
+  echo 'an explicit empty --folder must override the profile rather than fall back to it'; exit 1
+fi
+grep -Fq 'overlay verified' /tmp/empty-folder.log
 grep -Fq 'no vault item is named "coder-worker docker ca"' /tmp/wrong-folder.log
 echo 'PASS: item names resolve exactly once inside one folder, ignoring rows a name forged'
 

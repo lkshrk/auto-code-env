@@ -349,7 +349,9 @@ $committed = Read-CoderWorkerProfile -Lines ([string[]][IO.File]::ReadAllLines($
 Assert-Equal "coder-worker" $committed["DISTRO_NAME"] "the committed profile names the distribution"
 Assert-Equal "Ubuntu-26.04" $committed["UBUNTU_DISTRIBUTION"] "the committed profile pins the Ubuntu flavour"
 Assert-Equal "2376" $committed["DOCKER_PORT"] "the committed profile exposes only the mutual-TLS port"
-Assert-Equal "Server" $committed["VAULT_FOLDER"] "the committed profile scopes vault lookups to one folder"
+# The items live in an organisation collection, which rbw reports with no folder.
+Assert-Equal $false $committed.ContainsKey("VAULT_FOLDER") "the committed profile scopes lookups by collection, not folder"
+Assert-Equal "coder@harke.me" $committed["VAULT_EMAIL"] "the committed profile names the account the worker logs in as"
 Assert-Equal "coder-worker docker ca" $committed["VAULT_ITEM_CA"] "the committed profile names the docker CA item"
 Assert-Equal "10.254.0.10,10.254.0.11,10.254.0.20,10.254.0.99" $committed["FIREWALL_REMOTE_ADDRESSES"] "the committed profile lists the node addresses"
 
