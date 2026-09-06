@@ -249,8 +249,11 @@ does not, the workflow refuses before creating the tag, so a half-finished bump
 fails the merge instead of leaving a tag that no release will ever fill.
 
 Those refusals are cheap and run first, but the test suite runs after the tag
-exists. If a release fails there, the tag remains and later merges skip it, so
-recover by dispatching the workflow against that tag rather than merging again.
+exists. A tag is therefore evidence of an attempt, not of a release, so the
+workflow skips only when the tag already carries a published release. A run that
+failed after tagging is finished by rerunning it, by dispatching against the tag,
+or by the next merge; none of them silently report success having published
+nothing.
 
 CI assembles the assets with `tools/coder-worker/release-checksums.sh`, signs
 `checksums.txt` with the release signing key and publishes `checksums.txt.sig`
