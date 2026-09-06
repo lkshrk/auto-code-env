@@ -33,6 +33,9 @@ provider "docker" {
 locals {
   backend_bootstrap = ""
 
+  # Windows AddOns directory, mounted through the worker distro's /mnt/c view.
+  wow_addons_container_dir = "/mnt/wow/addons"
+
   # Host-side env file from Vaultwarden (coder-worker-overlay); exported line by line so values are never evaluated.
   workspace_env_file   = "/run/coder-worker/workspace.env"
   workspace_entrypoint = <<-EOT
@@ -169,6 +172,9 @@ resource "docker_container" "workspace" {
       "DOCKER_TLS_VERIFY=1",
       "DOCKER_CERT_PATH=/certs/client",
     ] : [],
+    local.wow_addons_host_path != "" ? [
+      "WOW_ADDONS_DIR=${local.wow_addons_container_dir}",
+    ] : [],
   )
 
   cpus   = data.coder_parameter.cpu.value
@@ -201,6 +207,13 @@ resource "docker_container" "workspace" {
       container_path = "/certs"
       volume_name    = docker_volume.dind_certs[0].name
       read_only      = true
+    }
+  }
+  dynamic "volumes" {
+    for_each = local.wow_addons_host_path != "" ? [1] : []
+    content {
+      container_path = local.wow_addons_container_dir
+      host_path      = local.wow_addons_host_path
     }
   }
 

@@ -64,7 +64,7 @@ provisioner reaches that host's Docker API over mutual TLS.
 - `/etc/ssl/lan/lan-ca.pem` is bind-mounted read-only from the distro for
   `OMNI_OTEL_CA_PATH`, and the workspace images must already be pulled there.
 - With docker-in-docker enabled the workspace joins a private network with a
-  `docker:27-dind` sibling reachable as `docker`, TLS on
+  `docker:29-dind` sibling reachable as `docker`, TLS on
   (`DOCKER_TLS_CERTDIR=/certs`); the workspace reads the generated client
   certificate from the shared `/certs` volume.
 
@@ -80,6 +80,37 @@ desktop, two places on purpose. Desktop workspaces still get no
 `<template>-workspace-env` (project-scoped, intentional) and no
 service-account token or kubeconfig. Per-user Claude and Codex credentials
 are Coder user secrets and work unchanged.
+
+## WoW addon workspaces
+
+The `wow` preset on `desktop` selects the `lua` tool group and turns
+docker-in-docker off. It deliberately leaves `wow_addons_path` empty, because
+that path is specific to the machine.
+
+Setting `wow_addons_path` to the game's `Interface/AddOns` directory as the
+worker distro sees it, e.g.
+`/mnt/c/Games/World of Warcraft/_retail_/Interface/AddOns`, bind-mounts that
+directory at `/mnt/wow/addons` and exports `WOW_ADDONS_DIR`. The bootstrap
+then installs `inotify-tools`, `rsync`, and `~/.local/bin/wow-sync`. With the
+parameter empty none of that happens and the workspace is an ordinary desktop
+workspace.
+
+Development happens on the home volume, not on the mount. `wow-sync` copies
+each addon out to the game:
+
+- An addon is any directory holding a `.toc`. The addon name comes from the
+  `.toc`, not from the directory, so a repository may be named anything and may
+  ship several addons.
+- Each addon syncs into its own subdirectory of the AddOns root. `--delete` is
+  confined to that subdirectory, and a target that resolves to the root or to
+  anything outside it is refused, so other installed addons are never at risk.
+- With no arguments it syncs every checkout named by `CODER_REPO_DIRS`.
+  `--watch` resyncs on change.
+
+WoW reads addon files only at load, so reload in game to pick up a sync.
+Mechanic, the in-game diagnostic tool, is Windows-only and its file watcher
+does not receive events across the WSL boundary. Run it natively on the
+desktop, not in the workspace.
 
 A project that should be startable on both backends needs a preset on its
 Kubernetes stack template and a second one on `desktop`. They are separate
@@ -114,6 +145,7 @@ Reproduce what CI does:
 
 ```bash
 bash coder/templates/tests/prepare-dotfiles.sh
+bash coder/templates/tests/wow-sync.sh
 
 for dir in coder/templates/*/; do
   name=$(basename "$dir")

@@ -84,6 +84,9 @@ data "coder_parameter" "deployment_url" {
 #   local.stacks             list(string)  extra omni groups to hard-sync (may be empty)
 #   local.enable_dind        bool          run the docker-in-docker sidecar
 #   local.enable_playwright  bool          install playwright chromium + OS deps
+#
+# Templates on the docker backend MUST also define:
+#   local.wow_addons_host_path  string   host Interface/AddOns path, "" to skip
 # ---------------------------------------------------------------------------
 
 locals {
@@ -163,6 +166,9 @@ locals {
       case ",$CODER_OMNI_STACKS," in
         *,go,*) apt_packages="$apt_packages golang-go" ;;
       esac
+      if [ -n "$WOW_ADDONS_DIR" ]; then
+        apt_packages="$apt_packages inotify-tools rsync"
+      fi
       sudo apt-get install -y --no-install-recommends $apt_packages >/dev/null
     fi
 
@@ -177,6 +183,12 @@ locals {
     [ -L "$HOME/.local/bin/codex" ] || rm -f "$HOME/.local/bin/codex"
 
     bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder.sh"
+
+    if [ -n "$WOW_ADDONS_DIR" ]; then
+      mkdir -p "$HOME/.local/bin"
+      printf %s '${base64encode(file("${path.module}/shared/wow-sync.sh"))}' | base64 -d > "$HOME/.local/bin/wow-sync"
+      chmod 0755 "$HOME/.local/bin/wow-sync"
+    fi
 
     # No browser preinstall: shiplight and each project's @playwright/test
     # fetch their own pinned revision on demand into ~/.cache/ms-playwright on
