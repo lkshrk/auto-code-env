@@ -22,9 +22,9 @@ WSL2 "coder-worker": Ubuntu 26.04, systemd, mirrored networking
 
 ## Install
 
-Before the first install, prove the signature check works on the runtime you
-will actually use. The suite runs on Windows PowerShell 5.1 as well as `pwsh`,
-and exercises the real verification path:
+CI runs the installer suite on a Windows runner under `powershell.exe`, so the
+signature check is exercised on the runtime this command uses rather than only
+on `pwsh`. To repeat it on the target machine:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\coder-worker\tests\install.Tests.ps1
