@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-generator="$repo_root/coder-worker/scripts/gen-docker-tls.sh"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+generator="$repo_root/coder/worker/tools/gen-docker-tls.sh"
 fixture_image=auto-code-env-coder-worker-fixture:ubuntu-26.04
 
 test -f "$generator"
 if git -C "$repo_root" ls-files --error-unmatch \
-  'coder-worker/**/*.pem' 'coder-worker/**/*key*' >/dev/null 2>&1; then
-  echo 'no trust material may be committed under coder-worker'; exit 1
+  'coder/worker/**/*.pem' 'coder/worker/**/*key*' >/dev/null 2>&1; then
+  echo 'no trust material may be committed under coder/worker'; exit 1
 fi
 
 if ! docker image inspect "$fixture_image" >/dev/null 2>&1; then
@@ -21,12 +21,12 @@ fi
 
 script=$(cat <<'INNER'
 set -euo pipefail
-generator=/src/coder-worker/scripts/gen-docker-tls.sh
+generator=/src/coder/worker/tools/gen-docker-tls.sh
 
-if bash "$generator" --out /src/coder-worker/generated >/dev/null 2>&1; then
+if bash "$generator" --out /src/coder/worker/generated >/dev/null 2>&1; then
   echo 'the generator must refuse to write inside the repository'; exit 1
 fi
-test ! -e /src/coder-worker/generated
+test ! -e /src/coder/worker/generated
 if bash "$generator" >/dev/null 2>&1; then echo '--out is mandatory'; exit 1; fi
 for bad in '--server-ip 999.1.1.1' '--server-ip 172.16.20.195/24' '--server-dns bad_name' '--ca-cn a/b'; do
   # shellcheck disable=SC2086

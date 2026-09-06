@@ -2,8 +2,8 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-overlay="$repo_root/coder-worker/wsl/coder-worker-overlay"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+overlay="$repo_root/coder/worker/runtime/coder-worker-overlay"
 fixture_image=auto-code-env-coder-worker-fixture:ubuntu-26.04
 
 test -f "$overlay"
@@ -26,17 +26,17 @@ fi
 script=$(cat <<'INNER'
 set -euo pipefail
 umask 022
-. /src/coder-worker/tests/fixture.sh
+. /src/coder/worker/tests/fixture.sh
 fixture_install_host_stubs
 fixture_install_shims
 
 mkdir -p /root/coder-worker
-install -m 0644 /src/coder-worker/wsl/coder-worker-overlay /root/coder-worker/coder-worker-overlay
-install -m 0644 /src/coder-worker/hosts/towerr.profile /root/coder-worker/profile
+install -m 0644 /src/coder/worker/runtime/coder-worker-overlay /root/coder-worker/coder-worker-overlay
+install -m 0644 /src/coder/worker/hosts/towerr.profile /root/coder-worker/profile
 bash /root/coder-worker/coder-worker-overlay install --profile /root/coder-worker/profile > /tmp/setup.log
 
-bash /src/coder-worker/scripts/gen-docker-tls.sh --out /tmp/tls > /dev/null
-bash /src/coder-worker/scripts/gen-docker-tls.sh --out /tmp/other --ca-cn 'other CA' > /dev/null
+bash /src/coder/worker/tools/gen-docker-tls.sh --out /tmp/tls > /dev/null
+bash /src/coder/worker/tools/gen-docker-tls.sh --out /tmp/other --ca-cn 'other CA' > /dev/null
 printf 'hunter2' > /tmp/fixture.master
 
 mkdir -p /tmp/env
@@ -230,7 +230,7 @@ enable_output=$(cat /tmp/enable.log)
 printf '%s\n' "$enable_output" | grep -qx 'listen 2376'
 printf '%s\n' "$enable_output" | grep -Fq 'listening on 2376 with mutual TLS'
 grep -Fq 'systemctl enable --now docker.socket docker.service' /tmp/log/systemctl
-images=$(sed -n "/^readonly -a WORKSPACE_IMAGES=(/,/^)/p" /src/coder-worker/wsl/coder-worker-overlay | sed -n "s/^ *'\\(.*\\)'$/\\1/p")
+images=$(sed -n "/^readonly -a WORKSPACE_IMAGES=(/,/^)/p" /src/coder/worker/runtime/coder-worker-overlay | sed -n "s/^ *'\\(.*\\)'$/\\1/p")
 test -n "$images"
 while IFS= read -r image; do
     grep -Fq "docker image pull -- $image" /tmp/log/docker

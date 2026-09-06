@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-hosts="$repo_root/coder-worker/hosts"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+hosts="$repo_root/coder/worker/hosts"
 fixture_image=auto-code-env-coder-worker-fixture:ubuntu-26.04
 
 test -d "$hosts"
@@ -35,8 +35,8 @@ fi
 script=$(cat <<'INNER'
 set -euo pipefail
 umask 022
-overlay=/src/coder-worker/wsl/coder-worker-overlay
-good=/src/coder-worker/hosts/towerr.profile
+overlay=/src/coder/worker/runtime/coder-worker-overlay
+good=/src/coder/worker/hosts/towerr.profile
 
 refuse() {
   message=$1
@@ -105,7 +105,7 @@ fi
 grep -Fq 'is a symbolic link' /tmp/link.log
 echo 'PASS: the profile parser refuses secrets, unknown keys and unsafe values'
 
-for committed in /src/coder-worker/hosts/*.profile; do
+for committed in /src/coder/worker/hosts/*.profile; do
   if bash "$overlay" secrets --profile "$committed" > /tmp/committed.log 2>&1; then
     echo "$committed reached the vault without a pinentry helper"; exit 1
   fi

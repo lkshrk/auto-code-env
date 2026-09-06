@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-overlay="$repo_root/coder-worker/wsl/coder-worker-overlay"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+overlay="$repo_root/coder/worker/runtime/coder-worker-overlay"
 fixture_image=auto-code-env-coder-worker-fixture:ubuntu-26.04
 
 test -f "$overlay"
-test ! -e "$repo_root/coder-worker/wsl/setup.sh"
+test ! -e "$repo_root/coder/worker/runtime/setup.sh"
 grep -Fq 'set -euo pipefail' "$overlay"
 grep -Eq '^readonly DOCKER_GPG_SHA256=[0-9a-f]{64}$' "$overlay"
 grep -Eq "^readonly DOCKER_CE_VERSION='5:[0-9.]+-[0-9]+~ubuntu\.[0-9.]+~[a-z]+'$" "$overlay"
@@ -29,14 +29,14 @@ fi
 script=$(cat <<'INNER'
 set -euo pipefail
 umask 022
-. /src/coder-worker/tests/fixture.sh
+. /src/coder/worker/tests/fixture.sh
 fixture_install_host_stubs
 fixture_install_shims
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 mkdir -p /root/coder-worker
-install -m 0644 /src/coder-worker/wsl/coder-worker-overlay /root/coder-worker/coder-worker-overlay
-install -m 0644 /src/coder-worker/hosts/towerr.profile /root/coder-worker/profile
+install -m 0644 /src/coder/worker/runtime/coder-worker-overlay /root/coder-worker/coder-worker-overlay
+install -m 0644 /src/coder/worker/hosts/towerr.profile /root/coder-worker/profile
 run_install() { bash /root/coder-worker/coder-worker-overlay install --profile /root/coder-worker/profile; }
 
 run_install > /tmp/setup1.log
@@ -81,10 +81,10 @@ grep -Fxq 'Signed-By: /etc/apt/keyrings/docker.asc' /etc/apt/sources.list.d/dock
 grep -Fxq 'Suites: resolute' /etc/apt/sources.list.d/docker.sources
 test "$(stat -c '%U:%G %a' /usr/local/libexec/coder-worker-rbw-pinentry)" = 'root:root 755'
 test "$(stat -c '%U:%G %a' /usr/local/sbin/coder-worker-overlay)" = 'root:root 755'
-cmp -s /src/coder-worker/wsl/coder-worker-overlay /usr/local/sbin/coder-worker-overlay
+cmp -s /src/coder/worker/runtime/coder-worker-overlay /usr/local/sbin/coder-worker-overlay
 test "$(stat -c '%U:%G %a' /etc/coder-worker/profile)" = 'root:root 644'
-cmp -s /src/coder-worker/hosts/towerr.profile /etc/coder-worker/profile
-images=$(sed -n "/^readonly -a WORKSPACE_IMAGES=(/,/^)/p" /src/coder-worker/wsl/coder-worker-overlay | sed -n "s/^ *'\\(.*\\)'$/\\1/p")
+cmp -s /src/coder/worker/hosts/towerr.profile /etc/coder-worker/profile
+images=$(sed -n "/^readonly -a WORKSPACE_IMAGES=(/,/^)/p" /src/coder/worker/runtime/coder-worker-overlay | sed -n "s/^ *'\\(.*\\)'$/\\1/p")
 test -n "$images"
 while IFS= read -r image; do
     grep -Fxq "$image" /etc/coder-worker/images
@@ -96,7 +96,7 @@ grep -Fq 'docker-ce=5:' /tmp/log/apt-get
 grep -Fq 'containerd.io=' /tmp/log/apt-get
 grep -Fq 'rbw=' /tmp/log/apt-get
 grep -Fq 'apt-mark hold docker-ce docker-ce-cli containerd.io' /tmp/log/apt-mark
-test "$(cat /tmp/pkgstate/docker-ce)" = "$(sed -n "s/^readonly DOCKER_CE_VERSION='\\(.*\\)'$/\\1/p" /src/coder-worker/wsl/coder-worker-overlay)"
+test "$(cat /tmp/pkgstate/docker-ce)" = "$(sed -n "s/^readonly DOCKER_CE_VERSION='\\(.*\\)'$/\\1/p" /src/coder/worker/runtime/coder-worker-overlay)"
 
 fixture_snapshot > /tmp/snapshot1
 : > /tmp/log/apt-get

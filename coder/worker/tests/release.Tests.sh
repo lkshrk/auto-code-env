@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-assembler="$repo_root/coder-worker/scripts/release-checksums.sh"
-installer="$repo_root/coder-worker/windows/install.ps1"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+assembler="$repo_root/tools/coder-worker/release-checksums.sh"
+installer="$repo_root/coder/worker/install/install.ps1"
 
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
@@ -63,7 +63,7 @@ for required in "${required_in_workflow[@]}"; do
   grep -Fq "$required" "$workflow" ||
     { echo "the release workflow must contain: $required"; exit 1; }
 done
-grep -q 'ReleaseSigningKey.*coder-worker/windows/install\.ps1' "$workflow" ||
+grep -q 'ReleaseSigningKey.*coder/worker/install/install\.ps1' "$workflow" ||
   { echo 'the release workflow must read the public key out of install.ps1'; exit 1; }
 grep -Fq '= checksums.txt.sig ]; then' "$workflow" ||
   { echo 'a republished release must not compare the signature by digest; ECDSA is not deterministic'; exit 1; }
@@ -93,7 +93,7 @@ test -s "$resolve" || { echo 'the release workflow must resolve its own tag'; ex
 # shellcheck disable=SC2016
 required_in_resolve=(
   'readonly RELEASE_VERSION='
-  'coder-worker/wsl/coder-worker-overlay'
+  'coder/worker/runtime/coder-worker-overlay'
   'tag="coder-worker-v$version"'
   'git ls-remote --tags origin "refs/tags/$tag"'
   'echo "skip=true" >> "$GITHUB_OUTPUT"'
@@ -138,12 +138,12 @@ awk '
 # shellcheck disable=SC2016
 gates_in_workflow=(
   'test "$tag_commit" = "$GITHUB_SHA"'
-  'grep -Fxq "\$DefaultRelease = \"$tag\"" coder-worker/windows/install.ps1'
-  'grep -Fxq "readonly RELEASE_VERSION=$VERSION" coder-worker/wsl/coder-worker-overlay'
-  'pwsh -NoProfile -File coder-worker/tests/install.Tests.ps1'
+  'grep -Fxq "\$DefaultRelease = \"$tag\"" coder/worker/install/install.ps1'
+  'grep -Fxq "readonly RELEASE_VERSION=$VERSION" coder/worker/runtime/coder-worker-overlay'
+  'pwsh -NoProfile -File coder/worker/tests/install.Tests.ps1'
 )
 for suite in release profile install overlay gen-docker-tls images; do
-  gates_in_workflow+=("bash coder-worker/tests/$suite.Tests.sh")
+  gates_in_workflow+=("bash coder/worker/tests/$suite.Tests.sh")
 done
 for required in "${gates_in_workflow[@]}"; do
   grep -Fq "$required" "$workflow" ||

@@ -12,15 +12,20 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
   published as release assets. See
   [`worker/README.md`](worker/README.md) for architecture, installation,
   security, release, and verification details.
-- [`coder-worker/`](coder-worker/) turns a stock Ubuntu WSL2 distribution on the
-  Windows desktop into a Docker host for Coder workspaces, exposed only as a
-  mutual-TLS Docker API on TCP/2376. `wsl/` holds the in-distro tool that
-  installs and operates the distribution, `windows/` the installer, `hosts/` the
-  committed non-secret host profiles, and `scripts/` the trust-material
-  generator. There is no image build; the distribution is stock Ubuntu plus one
-  checksummed file. See
-  [`coder-worker/README.md`](coder-worker/README.md) for the runtime contract,
-  installation, firewall, secrets, and verification details.
+- [`coder/`](coder/) holds everything that targets Coder:
+  - `templates/` holds the Terraform sources for the workspace templates.
+    `.github/workflows/coder-templates.yaml` validates them and pushes changed
+    templates to `https://coder.h-cloud.io` on `main`. See
+    [`coder/README.md`](coder/README.md) for the CI flow, local validation, and
+    the cluster contract the templates depend on.
+  - `worker/` turns a stock Ubuntu WSL2 distribution on the Windows desktop into
+    a Docker host for Coder workspaces, exposed only as a mutual-TLS Docker API
+    on TCP/2376. `install/` holds the Windows installer, `runtime/` the in-distro
+    tool that installs and operates the distribution, `tools/` the trust-material
+    generator, and `hosts/` the committed non-secret host profiles. There is no
+    image build; the distribution is stock Ubuntu plus one checksummed file. See
+    [`coder/worker/README.md`](coder/worker/README.md) for the runtime contract,
+    installation, firewall, secrets, and verification details.
 - [`openhands/`](openhands/) holds everything that targets an Agent Canvas
   deployment:
   - `chart/` is the Helm chart release pipeline. `chart/upstream` is the
@@ -31,20 +36,3 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
     `agent-sandbox` namespace.
   - `automations/` holds automation definitions, one directory per backend.
   - `scripts/` holds operational one-off tooling.
-- [`coder/`](coder/) holds the Terraform sources for the Coder workspace
-  templates in `coder/templates/`.
-  `.github/workflows/coder-templates.yaml` validates them and pushes changed
-  templates to `https://coder.h-cloud.io` on `main`. See
-  [`coder/README.md`](coder/README.md) for the CI flow, local validation, and
-  the cluster contract the templates depend on.
-
-Documentation beyond these READMEs is not kept in this repository.
-
-## Automations and git-sync
-
-Each backend syncs exactly one path: the `orc` backend syncs
-`openhands/automations/orc`, and the `towerr` backend syncs
-`openhands/automations/towerr`. A backend never reads outside its own
-directory. Anything shared between backends lives in
-`openhands/automations/common` and is symlinked into each per-backend directory
-that needs it.

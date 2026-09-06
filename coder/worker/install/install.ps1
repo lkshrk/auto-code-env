@@ -26,7 +26,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$DefaultRelease = "coder-worker-v1.0.2"
+$DefaultRelease = "coder-worker-v1.0.3"
 $ReleaseSigningKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvgv5RXXPQPWPwPvvfFEkfpdSkQJQKXm2SYDazPi+gOlnsOgf1xBPke9HhBP3fT17rBq479ctngvC3N++//cB+w=="
 $ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
@@ -772,7 +772,7 @@ try {
     }
     if ([string]::IsNullOrWhiteSpace($ProfilePath)) {
         if ([string]::IsNullOrWhiteSpace($HostProfile)) {
-            throw "Specify -HostProfile <name> (see coder-worker/hosts) or -ProfilePath <file>."
+            throw "Specify -HostProfile <name> (see coder/worker/hosts) or -ProfilePath <file>."
         }
         if (-not (Test-DistributionName -Name $HostProfile)) {
             throw "Host profile name '$HostProfile' is not valid."
