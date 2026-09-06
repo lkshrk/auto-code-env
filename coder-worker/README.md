@@ -31,22 +31,24 @@ wsl.exe -d coder-worker -u root -- coder-worker-overlay secrets
 
 The first reads `hosts/towerr.profile`, downloads every other artifact from the
 release tag pinned in `$DefaultRelease`, verifies each against that release's
-`checksums.txt`, reconciles `.wslconfig`, applies the firewall rule, registers
+signed `checksums.txt`, reconciles `.wslconfig`, applies the firewall rule, registers
 the distribution, installs Docker and registers the keepalive task. The firewall
 rule goes on before the distribution exists, so 2376 is never briefly open to
 the LAN. The second asks for the Vaultwarden master password, fetches the trust
 material, verifies it and starts Docker. Nothing else is prompted for or typed.
 
-`install.ps1` is the trust anchor. It embeds `$DefaultChecksumsSha256`, the
-digest of its release's `checksums.txt`, and refuses that file unless it
-matches, so no artifact is ever trusted on the strength of an HTTPS fetch alone.
-GitHub lets release assets be replaced on an existing tag, so pinning only the
-tag would not have been enough.
+`install.ps1` is the trust anchor. It embeds `$ReleaseSigningKey`, a P-256
+public key as base64 SubjectPublicKeyInfo, downloads `checksums.txt` and
+`checksums.txt.sig` from the pinned tag, and refuses to stage anything unless
+that signature verifies against that key. Every other artifact is then pinned by
+its digest in the file that was just proved authentic, so nothing is ever
+trusted on the strength of an HTTPS fetch alone. GitHub lets release assets be
+replaced on an existing tag, so pinning only the tag would not have been enough.
 
-Verifying `install.ps1` against a digest published on the same release page
-proves nothing, because whoever could replace the assets could replace that
-digest too. Get it from the git tag instead, which is bound to a commit. From a
-clone of `lkshrk/auto-code-env`, once the tag exists:
+Verifying `install.ps1` against anything published on the same release page
+proves nothing, because whoever could replace the assets could replace that too.
+Get it from the git tag instead, which is bound to a commit. From a clone of
+`lkshrk/auto-code-env`, once the tag exists:
 
 ```sh
 git show coder-worker-v1.0.0:coder-worker/windows/install.ps1 | sha256sum
@@ -55,8 +57,11 @@ git show coder-worker-v1.0.0:coder-worker/windows/install.ps1 | sha256sum
 `fatal: invalid object name` there means the wrong checkout or an unreleased
 tag, not tampering.
 
-`-ReleaseTag` selects another release and then requires `-ChecksumsSha256`,
-since the embedded digest only covers the pinned one. `-OverlayPath`
+`-ReleaseTag` selects another release and needs nothing else, because the
+signing key is not per release. `-ChecksumsSha256` pins `checksums.txt` by
+digest instead of by signature, for an offline chain of custody or a local
+assembly that was never signed; it is the one way to install without a valid
+signature. `-OverlayPath`
 or `-OverlayUri` with `-OverlaySha256`, and likewise `-Firewall*`,
 `-Keepalive*`, `-Rootfs*`, supply an artifact by hand with a mandatory checksum;
 `-SkipFirewall` and `-SkipKeepalive` skip a step deliberately, and skipping the
@@ -202,19 +207,53 @@ Nothing uses a `latest` tag.
 
 ## Releasing
 
-`coder-worker/scripts/release-checksums.sh --out DIR` assembles the release and
-prints the digest of its `checksums.txt`. CI runs the same script, so there is
-one implementation and no drift. To cut a release, run it, put the digest in
-`$DefaultChecksumsSha256`, bump `$DefaultRelease` and `RELEASE_VERSION` to the
-new version in the same commit, then tag `coder-worker-v<version>`. CI rewrites
-nothing; it refuses the tag unless all three constants already agree with what
-it assembles.
+To cut a release, bump `$DefaultRelease` and `RELEASE_VERSION` to the new
+version in the same commit, then tag `coder-worker-v<version>`. CI assembles the
+assets with `coder-worker/scripts/release-checksums.sh`, signs `checksums.txt`
+with the release signing key and publishes `checksums.txt.sig` beside it. CI
+rewrites nothing; it refuses the tag unless both constants already agree and the
+signature it just produced verifies against `$ReleaseSigningKey` in
+`install.ps1`, so a key mismatch fails the release instead of shipping something
+the installer will reject.
+
+Nothing here is per-release except those two version constants. A Renovate bump
+to an image in `coder/templates/backends/docker.tf` changes the overlay, and the
+overlay's digest changes inside `checksums.txt`, which CI signs on the way out.
+No human recomputes a constant for it.
+
+`release-checksums.sh --out DIR` is the operator's half and needs no key: it
+assembles the same assets and prints the digest of its `checksums.txt`, which is
+what `-ChecksumsSha256` takes. Signing lives in the workflow rather than behind
+a flag on the script so the private key is never a script parameter and never
+reaches a workstation.
 
 `checksums.txt` covers the overlay, `firewall.ps1`, `keepalive.ps1`,
 `gen-docker-tls.sh` and each host profile as `host-<name>.profile`.
-`install.ps1` is published alongside them but deliberately left out of it: it
-embeds that file's digest, so covering it too would be circular. Its own digest
-is published as `install.ps1.sha256`, which is a convenience, not an anchor.
+`install.ps1` is published alongside them but deliberately left out of it: it is
+the anchor the operator already holds, and `checksums.txt` only covers what it
+fetches. Its own digest is published as `install.ps1.sha256`, which is a
+convenience, not an anchor.
+
+### Key rotation
+
+The private key is a P-256 PEM in the repository Actions secret
+`CODER_WORKER_SIGNING_KEY` and in Vaultwarden as "coder-worker release signing
+key". It exists nowhere else; the workflow writes it under `umask 077`, never
+echoes it, and removes it in a step that always runs.
+
+To rotate, generate a keypair on a trusted machine, replace both copies of the
+private key, put the new public key in `$ReleaseSigningKey`, and destroy the
+local copy:
+
+```sh
+openssl ecparam -name prime256v1 -genkey -noout -out signing-key.pem
+openssl pkey -in signing-key.pem -pubout -outform DER | base64 -w0
+```
+
+That is one constant in one file. Releases cut before the rotation keep their
+old signatures, so an installer from an older tag verifies against the key it
+shipped with, and a newer `install.ps1` will not accept an older release unless
+you pass `-ChecksumsSha256`.
 
 ## Verification
 
@@ -241,7 +280,8 @@ build before calling the backend done.
 |---|---|
 | `no vault item is named "..."` | The item was renamed, or `VAULT_FOLDER` does not match |
 | `N vault items are named "..."` | Duplicates in that folder; delete one or pass `--ca-id` and friends |
-| `checksums.txt SHA-256 does not match the expected digest` | The release assets changed, or `$DefaultChecksumsSha256` is stale. Do not bypass it; verify the release |
+| `checksums.txt is not signed by the release signing key` | The release assets changed, the signature is missing or truncated, or the key was rotated after that release. Do not bypass it; verify the release |
+| `checksums.txt SHA-256 does not match the expected digest` | The `-ChecksumsSha256` you passed does not describe that release's `checksums.txt` |
 | `<profile> is missing DOCKER_PORT` | A required profile key was dropped; both parsers require the same set |
 | `missing profile /etc/coder-worker/profile` | The distribution predates the profile; reinstall on a fresh one, or pass `--profile` |
 | `... exists but no LAN root CA is configured` | `VAULT_ITEM_LAN_CA` was dropped; remove the stale `lan-ca.pem` |
