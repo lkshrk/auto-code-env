@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "targets": {
+    "dev": {
+      "source": "dev",
+      "backend": "docker"
+    },
+    "dev-kubernetes": {
+      "source": "dev",
+      "backend": "kubernetes"
+    }
+  }
+}
