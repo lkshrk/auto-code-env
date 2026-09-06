@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016 # Literal workflow source patterns must not expand here.
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
 helper="$repo_root/openhands/chart/release.sh"
 workflow="$repo_root/.github/workflows/openhands-chart-release.yaml"
 validation="$repo_root/.github/workflows/openhands-chart-validate.yaml"

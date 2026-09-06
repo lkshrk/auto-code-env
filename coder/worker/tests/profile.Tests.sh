@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
 hosts="$repo_root/coder/worker/hosts"
 fixture_image=auto-code-env-coder-worker-fixture:ubuntu-26.04
 

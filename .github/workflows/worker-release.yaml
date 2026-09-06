@@ -59,7 +59,7 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           metadata="$RUNNER_TEMP/metadata.json"
           docker buildx build \
-            --file worker/Containerfile \
+            --file openhands/worker/image/Containerfile \
             --platform '${{ matrix.platform }}' \
             --target oci \
             --build-arg "OPENHANDS_WORKER_VERSION=$VERSION" \
@@ -71,7 +71,7 @@ jobs:
           digest=$(jq -r '."containerimage.digest"' "$metadata")
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           output="$RUNNER_TEMP/release"
-          worker/build-wsl.sh "$VERSION" '${{ matrix.arch }}' "$output"
+          openhands/worker/image/build-wsl.sh "$VERSION" '${{ matrix.arch }}' "$output"
           printf '%s\n' "$digest" > "$output/image-digest-${{ matrix.arch }}.txt"
           artifact="$output/openhands-worker-${VERSION}-${{ matrix.arch }}.wsl"
           tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
@@ -145,14 +145,14 @@ jobs:
             test -f "release/openhands-worker-${VERSION}-${arch}.wsl.sha256"
             test -f "release/image-digest-${arch}.txt"
           done
-          cp worker/windows/install.ps1 release/install.ps1
+          cp openhands/worker/install/install.ps1 release/install.ps1
           cp shared/windows/firewall.ps1 release/firewall.ps1
           cp shared/windows/keepalive.ps1 release/keepalive.ps1
-          cp worker/windows/common.ps1 release/common.ps1
-          cp worker/windows/setup.ps1 release/setup.ps1
-          cp worker/windows/update.ps1 release/update.ps1
-          cp worker/rootfs/usr/local/sbin/openhands-overlay release/openhands-overlay
-          cp worker/rootfs/usr/local/lib/openhands/apply-profile.py release/apply-profile.py
+          cp openhands/worker/install/common.ps1 release/common.ps1
+          cp openhands/worker/install/setup.ps1 release/setup.ps1
+          cp openhands/worker/install/update.ps1 release/update.ps1
+          cp openhands/worker/image/rootfs/usr/local/sbin/openhands-overlay release/openhands-overlay
+          cp openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py release/apply-profile.py
           profiles=()
           for source in openhands/profiles/*.json; do
             test -f "$source"

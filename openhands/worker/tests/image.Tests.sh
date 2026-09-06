@@ -2,12 +2,12 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-bake_file="$repo_root/worker/docker-bake.hcl"
-build_script="$repo_root/worker/build-wsl.sh"
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
+bake_file="$repo_root/openhands/worker/image/docker-bake.hcl"
+build_script="$repo_root/openhands/worker/image/build-wsl.sh"
 validation_workflow="$repo_root/.github/workflows/worker-validate.yaml"
 release_workflow="$repo_root/.github/workflows/worker-release.yaml"
-readme="$repo_root/worker/README.md"
+readme="$repo_root/openhands/worker/README.md"
 dockerignore="$repo_root/.dockerignore"
 
 for file in "$bake_file" "$build_script"; do
@@ -46,14 +46,14 @@ dockerignore = File.readlines(ARGV.fetch(3), chomp: true)
 assert(dockerignore == [
   '**',
   '!.dockerignore',
-  '!worker/Containerfile',
-  '!worker/provision.sh',
-  '!worker/omni/settings.json',
-  '!worker/patches/patch-agent-canvas-automation.mjs',
-  '!worker/rootfs/**',
-  '!worker/rootfs-oci/**',
-  '!worker/rootfs-wsl/**',
-  '!worker/tests/agent-canvas-ingress-smoke.mjs'
+  '!openhands/worker/image/Containerfile',
+  '!openhands/worker/image/provision.sh',
+  '!openhands/worker/image/omni/settings.json',
+  '!openhands/worker/image/patches/patch-agent-canvas-automation.mjs',
+  '!openhands/worker/image/rootfs/**',
+  '!openhands/worker/image/rootfs-oci/**',
+  '!openhands/worker/image/rootfs-wsl/**',
+  '!openhands/worker/tests/agent-canvas-ingress-smoke.mjs'
 ], 'Docker context must contain only worker build inputs')
 
 [
@@ -145,8 +145,9 @@ assert(trigger(validation).dig('pull_request', 'paths') == [
   '.github/workflows/worker-validate.yaml',
   '.github/workflows/worker-release.yaml',
   'openhands/profiles/**',
-  'worker/**',
-  'shared/windows/**'
+  'openhands/worker/**',
+  'shared/windows/**',
+  'tools/check-root-calculation.sh'
 ], 'validation paths must cover the worker, its released profiles and the shared scripts')
 assert(validation['permissions'] == { 'contents' => 'read' }, 'validation permissions must be read-only')
 validate = validation.fetch('jobs').fetch('validate')
@@ -215,14 +216,14 @@ assert(prepare.include?('git ls-remote') && prepare.include?('GITHUB_SHA'), 'rel
 assert(prepare.include?('gh release create "$tag"') && prepare.include?('--verify-tag') && prepare.include?('--draft'), 'release must create or reuse verified draft')
 assert(prepare.include?('gh release view "$tag" --json isDraft,tagName,assets'), 'release lookup must include drafts')
 assert(prepare.include?('gh release upload "$tag" --clobber'), 'draft asset upload must be idempotent')
-assert(prepare.include?('cp worker/windows/install.ps1 release/install.ps1'), 'release must stage the installer from the tagged tree')
+assert(prepare.include?('cp openhands/worker/install/install.ps1 release/install.ps1'), 'release must stage the installer from the tagged tree')
 assert(prepare.include?('cp shared/windows/firewall.ps1 release/firewall.ps1'), 'release must stage the firewall script from the tagged tree')
 assert(prepare.include?('cp shared/windows/keepalive.ps1 release/keepalive.ps1'), 'release must stage the keepalive script from the tagged tree')
-assert(prepare.include?('cp worker/windows/common.ps1 release/common.ps1'), 'release must stage the shared host helpers from the tagged tree')
-assert(prepare.include?('cp worker/windows/setup.ps1 release/setup.ps1'), 'release must stage the setup script from the tagged tree')
-assert(prepare.include?('cp worker/windows/update.ps1 release/update.ps1'), 'release must stage the update script from the tagged tree')
-assert(prepare.include?('cp worker/rootfs/usr/local/sbin/openhands-overlay release/openhands-overlay'), 'release must stage the overlay tool from the tagged tree')
-assert(prepare.include?('cp worker/rootfs/usr/local/lib/openhands/apply-profile.py release/apply-profile.py'), 'release must stage the profile applier from the tagged tree')
+assert(prepare.include?('cp openhands/worker/install/common.ps1 release/common.ps1'), 'release must stage the shared host helpers from the tagged tree')
+assert(prepare.include?('cp openhands/worker/install/setup.ps1 release/setup.ps1'), 'release must stage the setup script from the tagged tree')
+assert(prepare.include?('cp openhands/worker/install/update.ps1 release/update.ps1'), 'release must stage the update script from the tagged tree')
+assert(prepare.include?('cp openhands/worker/image/rootfs/usr/local/sbin/openhands-overlay release/openhands-overlay'), 'release must stage the overlay tool from the tagged tree')
+assert(prepare.include?('cp openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py release/apply-profile.py'), 'release must stage the profile applier from the tagged tree')
 assert(prepare.include?('for source in openhands/profiles/*.json; do'), 'release must stage every settings profile from the tagged tree')
 assert(prepare.include?('asset="profile-$(basename "$source")"'), 'each settings profile must be published as profile-<name>.json')
 assert(prepare.include?('test "${#profiles[@]}" -gt 0'), 'release must refuse to publish without a settings profile')
@@ -427,7 +428,7 @@ test -f "$checksum"
 gzip -t "$artifact"
 tar -tf "$artifact" | grep -Fx 'etc/wsl.conf' >/dev/null
 canonical_output=$(cd "$test_root/output" && pwd -P)
-grep -F "buildx bake --allow=fs.write=$canonical_output -f worker/docker-bake.hcl wsl-amd64 --set wsl-amd64.output=type=tar,dest=" "$test_root/docker.log"
+grep -F "buildx bake --allow=fs.write=$canonical_output -f openhands/worker/image/docker-bake.hcl wsl-amd64 --set wsl-amd64.output=type=tar,dest=" "$test_root/docker.log"
 (cd "$test_root/output" && sha256sum -c "$(basename "$checksum")")
 test -f "$test_root/output/openhands-worker-1.2.3-amd64.wsl"
 DOCKER_LOG="$test_root/docker.log" PATH="$fake_bin:$PATH" "$build_script" 1.2.3 arm64 "$test_root/output"

@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
 fixture_image=auto-code-env-wsl-stage5a-fixture:ubuntu-26.04
 
 ensure_fixture_image() {
@@ -31,9 +31,9 @@ setup_fixture() {
   mkdir -p "/tmp/fixture-src/$uv_directory" /fixtures
 
   mkdir -p /opt/openhands-build/omni
-  cp /src/worker/provision.sh /opt/openhands-build/provision.sh
-  cp /src/worker/rootfs-wsl/etc/wsl.conf /opt/openhands-build/wsl.conf
-  cp /src/worker/omni/settings.json /opt/openhands-build/omni/settings.json
+  cp /src/openhands/worker/image/provision.sh /opt/openhands-build/provision.sh
+  cp /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf /opt/openhands-build/wsl.conf
+  cp /src/openhands/worker/image/omni/settings.json /opt/openhands-build/omni/settings.json
 
   printf '%s\n' \
     '#!/bin/sh' \
@@ -323,7 +323,7 @@ run_container '
   fi
   test "$(stat -c "%U:%G %a" /etc/openhands/omni)" = "root:root 755"
   test "$(stat -c "%U:%G %a" /etc/openhands/omni/settings.json)" = "root:root 644"
-  cmp -s /etc/openhands/omni/settings.json /src/worker/omni/settings.json
+  cmp -s /etc/openhands/omni/settings.json /src/openhands/worker/image/omni/settings.json
   test ! -e /etc/openhands/omni/.omni-config.lock
   test ! -e /etc/openhands/omni/settings.json.bak
   ! compgen -G "/var/lib/openhands/omni/.config.*" >/dev/null
@@ -371,7 +371,7 @@ run_container '
   test ! -s /etc/openhands/npmrc
   test "$(stat -c "%U:%G %a" /etc/openhands/omni)" = "root:root 755"
   test "$(stat -c "%U:%G %a" /etc/openhands/omni/settings.json)" = "root:root 644"
-  cmp -s /etc/openhands/omni/settings.json /src/worker/omni/settings.json
+  cmp -s /etc/openhands/omni/settings.json /src/openhands/worker/image/omni/settings.json
   test ! -e /etc/openhands/omni/.omni-config.lock
   test ! -e /etc/openhands/omni/settings.json.bak
   ! compgen -G "/var/lib/openhands/omni/.config.*" >/dev/null
@@ -412,7 +412,7 @@ run_container '
   test "$(/home/agent/.local/bin/claude --version)" = "2.1.251 (Claude Code)"
   test "$(/home/agent/.local/bin/codex --version)" = "codex-cli 0.151.0"
   test "$(stat -c "%U:%G %a" /etc/wsl.conf)" = "root:root 644"
-  cmp -s /etc/wsl.conf /src/worker/rootfs-wsl/etc/wsl.conf
+  cmp -s /etc/wsl.conf /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf
 
   node_home=/opt/openhands/node-v24.20.0-linux-x64
   test "$("$node_home/bin/node" --version)" = "v24.20.0"
@@ -452,7 +452,7 @@ run_container '
   if bash /opt/openhands-build/provision.sh; then
     exit 1
   fi
-  cmp -s /etc/wsl.conf /src/worker/rootfs-wsl/etc/wsl.conf
+  cmp -s /etc/wsl.conf /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf
   test "$(stat -c "%U:%G %a" /etc/wsl.conf)" = "root:root 644"
   test ! -e /tmp/foreign-uv-executed
   test ! -e /opt/openhands/node-v24.20.0-linux-x64
@@ -675,7 +675,7 @@ run_container '
   if bash /opt/openhands-build/provision.sh; then
     exit 1
   fi
-  cmp -s /etc/wsl.conf /src/worker/rootfs-wsl/etc/wsl.conf
+  cmp -s /etc/wsl.conf /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf
   test ! -e /opt/openhands
 '
 
@@ -685,7 +685,7 @@ run_container '
   test -d /opt/openhands/node-v24.20.0-linux-arm64
   test "$(readlink /usr/local/bin/node)" = /opt/openhands/node-v24.20.0-linux-arm64/bin/node
   test "$(/usr/local/bin/uv --version)" = "uv 0.12.7 (a0b1c2d3 2026-08-29 aarch64-unknown-linux-gnu)"
-  cmp -s /etc/wsl.conf /src/worker/rootfs-wsl/etc/wsl.conf
+  cmp -s /etc/wsl.conf /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf
 '
 
 run_container '
@@ -717,7 +717,7 @@ run_container '
   if bash /opt/openhands-build/provision.sh; then
     exit 1
   fi
-  cmp -s /etc/wsl.conf /src/worker/rootfs-wsl/etc/wsl.conf
+  cmp -s /etc/wsl.conf /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf
   test -L /usr/local/bin
   test ! -e /opt/openhands
 '
@@ -726,7 +726,7 @@ run_container '
   export WSL_DISTRO_NAME=openhands-worker
   touch /tmp/fixture-corrupt-node-download
   bash /opt/openhands-build/provision.sh && exit 1
-  cmp -s /etc/wsl.conf /src/worker/rootfs-wsl/etc/wsl.conf
+  cmp -s /etc/wsl.conf /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf
   test ! -e /opt/openhands/node-v24.20.0-linux-x64
   test ! -e /usr/local/bin/uv
 '
@@ -737,7 +737,7 @@ run_container '
   if bash /opt/openhands-build/provision.sh; then
     exit 1
   fi
-  cmp -s /etc/wsl.conf /src/worker/rootfs-wsl/etc/wsl.conf
+  cmp -s /etc/wsl.conf /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf
   test ! -e /opt/openhands/node-v24.20.0-linux-x64
   test ! -e /usr/local/bin/uv
 '
@@ -815,13 +815,13 @@ run_container '
 run_container '
   ln -s /opt/openhands-build/provision.sh /tmp/provision
   env WSL_DISTRO_NAME=openhands-worker bash /tmp/provision
-  cmp -s /etc/wsl.conf /src/worker/rootfs-wsl/etc/wsl.conf
+  cmp -s /etc/wsl.conf /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf
 '
 
 run_container '
   mkdir /tmp/assets
   cp /opt/openhands-build/provision.sh /tmp/assets/provision.sh
-  ln -s /src/worker/rootfs-wsl/etc/wsl.conf /tmp/assets/wsl.conf
+  ln -s /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf /tmp/assets/wsl.conf
   if env WSL_DISTRO_NAME=openhands-worker bash /tmp/assets/provision.sh; then
     exit 1
   fi
@@ -1331,7 +1331,7 @@ run_container '
   test "$status" = 143
   test "$(stat -c "%U:%G %a" /etc/openhands/omni)" = "root:root 755"
   test "$(stat -c "%U:%G %a" /etc/openhands/omni/settings.json)" = "root:root 644"
-  cmp -s /etc/openhands/omni/settings.json /src/worker/omni/settings.json
+  cmp -s /etc/openhands/omni/settings.json /src/openhands/worker/image/omni/settings.json
   test ! -e /etc/openhands/omni/.omni-config.lock
   test ! -e /etc/openhands/omni/settings.json.bak
   ! compgen -G "/var/lib/openhands/omni/.config.*" >/dev/null

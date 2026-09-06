@@ -50,7 +50,7 @@ those directories.
 
 ## Build and release
 
-`worker/docker-bake.hcl` builds these targets:
+`openhands/worker/image/docker-bake.hcl` builds these targets:
 
 | Target | Output |
 |---|---|
@@ -61,7 +61,7 @@ those directories.
 Build a WSL artifact locally:
 
 ```sh
-worker/build-wsl.sh 1.2.3 amd64 dist
+openhands/worker/image/build-wsl.sh 1.2.3 amd64 dist
 (cd dist && sha256sum -c openhands-worker-1.2.3-amd64.wsl.sha256)
 ```
 
@@ -589,7 +589,7 @@ deployment-specific; image does not claim to configure them.
 
 `provision.sh` bootstraps exact Node `24.20.0`, uv/uvx `0.12.7`, and Omni `0.10.14`
 with vendor checksum verification. Omni desired state is
-`worker/omni/settings.json`, copied root-owned to
+`openhands/worker/image/omni/settings.json`, copied root-owned to
 `/etc/openhands/omni/settings.json`.
 
 Omni owns package installation only:
@@ -619,7 +619,7 @@ Current direct npm pins:
 - `@anthropic-ai/claude-code@2.1.251`
 - `@openai/codex@0.151.0`
 
-`worker/patches/patch-agent-canvas-automation.mjs` is temporary workaround for
+`openhands/worker/image/patches/patch-agent-canvas-automation.mjs` is temporary workaround for
 OpenHands issue #16217. Remove it only when PR #16635 ships in compatible Agent
 Canvas release, then validate Canvas automation without patch before removing
 it from build.
@@ -629,10 +629,10 @@ it from build.
 Run repository checks before release:
 
 ```sh
-bash worker/tests/provision.Tests.sh
-bash worker/tests/runtime.Tests.sh
-bash worker/tests/image.Tests.sh
-pwsh -NoProfile -File worker/tests/install.Tests.ps1
+bash openhands/worker/tests/provision.Tests.sh
+bash openhands/worker/tests/runtime.Tests.sh
+bash openhands/worker/tests/image.Tests.sh
+pwsh -NoProfile -File openhands/worker/tests/install.Tests.ps1
 ```
 
 Then run ShellCheck, `node --check` for runtime patches, `actionlint`, YAML and

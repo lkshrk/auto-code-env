@@ -15,7 +15,7 @@ $settings = @{
         PSUseCompatibleTypes    = @{ Enable = $true; TargetProfiles = @($windows51) }
     }
 }
-$scripts = Get-ChildItem -Path (Join-Path $PSScriptRoot "..\windows") -Filter *.ps1
+$scripts = Get-ChildItem -Path (Join-Path $PSScriptRoot "..\install") -Filter *.ps1
 $denied = @(
     @{ Pattern = '\.ArgumentList\b'; Message = "ProcessStartInfo.ArgumentList is .NET Core only; build Arguments instead" },
     @{ Pattern = '-AsHashtable\b'; Message = "ConvertFrom-Json -AsHashtable is PowerShell 7 only" },

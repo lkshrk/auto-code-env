@@ -2,22 +2,22 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-entrypoint="$repo_root/worker/rootfs-oci/usr/local/sbin/container-entrypoint"
-unit="$repo_root/worker/rootfs/etc/systemd/system/agent-canvas.service"
-modules_dropin="$repo_root/worker/rootfs-wsl/etc/systemd/system/systemd-modules-load.service.d/10-wsl.conf"
-prune_service="$repo_root/worker/rootfs-wsl/etc/systemd/system/openhands-run-prune.service"
-prune_timer="$repo_root/worker/rootfs-wsl/etc/systemd/system/openhands-run-prune.timer"
-overlay="$repo_root/worker/rootfs/usr/local/sbin/openhands-overlay"
-applier="$repo_root/worker/rootfs/usr/local/lib/openhands/apply-profile.py"
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
+entrypoint="$repo_root/openhands/worker/image/rootfs-oci/usr/local/sbin/container-entrypoint"
+unit="$repo_root/openhands/worker/image/rootfs/etc/systemd/system/agent-canvas.service"
+modules_dropin="$repo_root/openhands/worker/image/rootfs-wsl/etc/systemd/system/systemd-modules-load.service.d/10-wsl.conf"
+prune_service="$repo_root/openhands/worker/image/rootfs-wsl/etc/systemd/system/openhands-run-prune.service"
+prune_timer="$repo_root/openhands/worker/image/rootfs-wsl/etc/systemd/system/openhands-run-prune.timer"
+overlay="$repo_root/openhands/worker/image/rootfs/usr/local/sbin/openhands-overlay"
+applier="$repo_root/openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py"
 firewall="$repo_root/shared/windows/firewall.ps1"
 keepalive="$repo_root/shared/windows/keepalive.ps1"
-nginx_site="$repo_root/worker/rootfs/etc/nginx/conf.d/openhands.conf"
-distro_config="$repo_root/worker/rootfs-wsl/etc/wsl-distribution.conf"
-containerfile="$repo_root/worker/Containerfile"
-canvas_patch="$repo_root/worker/patches/patch-agent-canvas-automation.mjs"
-ingress_smoke="$repo_root/worker/tests/agent-canvas-ingress-smoke.mjs"
-omni_settings="$repo_root/worker/omni/settings.json"
+nginx_site="$repo_root/openhands/worker/image/rootfs/etc/nginx/conf.d/openhands.conf"
+distro_config="$repo_root/openhands/worker/image/rootfs-wsl/etc/wsl-distribution.conf"
+containerfile="$repo_root/openhands/worker/image/Containerfile"
+canvas_patch="$repo_root/openhands/worker/image/patches/patch-agent-canvas-automation.mjs"
+ingress_smoke="$repo_root/openhands/worker/tests/agent-canvas-ingress-smoke.mjs"
+omni_settings="$repo_root/openhands/worker/image/omni/settings.json"
 
 for file in "$entrypoint" "$unit" "$modules_dropin" "$prune_service" "$prune_timer" "$overlay" "$firewall" "$keepalive" "$nginx_site" "$distro_config" "$containerfile" "$canvas_patch" "$ingress_smoke" "$omni_settings"; do
   test -f "$file"
@@ -65,7 +65,7 @@ grep -F '/usr/sbin/userdel -r ubuntu' "$containerfile"
 if grep -F '/usr/sbin/groupdel ubuntu' "$containerfile"; then exit 1; fi
 grep -F '! -e /home/ubuntu' "$containerfile"
 grep -F 'OPENHANDS_IMAGE_BUILD=1' "$containerfile"
-grep -F 'worker/omni/settings.json /opt/openhands-build/omni/settings.json' "$containerfile"
+grep -F 'openhands/worker/image/omni/settings.json /opt/openhands-build/omni/settings.json' "$containerfile"
 if grep -F 'apt-get install -y --no-install-recommends nginx' "$containerfile"; then exit 1; fi
 grep -F 'openhands-agent-server==1.44.0' "$containerfile"
 grep -F 'openhands-automation==1.9.0' "$containerfile"
@@ -76,9 +76,9 @@ grep -F 'node --check /home/agent/.local/lib/node_modules/@openhands/agent-canva
 grep -F 'agent-canvas-ingress-smoke.mjs /home/agent/.local/lib/node_modules/@openhands/agent-canvas/scripts/ingress.mjs' "$containerfile"
 grep -F 'uv run --no-project --with openhands-automation==1.9.0 python -m uvicorn openhands.automation.app:app' "$containerfile"
 grep -F 'systemd-sysv' "$containerfile"
-rootfs_copy='COPY --chown=root:root worker/rootfs/ /'
-oci_copy='COPY --chown=root:root worker/rootfs-oci/ /'
-wsl_copy='COPY --chown=root:root worker/rootfs-wsl/ /'
+rootfs_copy='COPY --chown=root:root openhands/worker/image/rootfs/ /'
+oci_copy='COPY --chown=root:root openhands/worker/image/rootfs-oci/ /'
+wsl_copy='COPY --chown=root:root openhands/worker/image/rootfs-wsl/ /'
 wsl_stage=$(sed -n '/^FROM provisioned AS wsl$/,$p' "$containerfile")
 pre_wsl=$(sed '/^FROM provisioned AS wsl$/,$d' "$containerfile")
 oci_stage=$(sed -n '/^FROM provisioned AS oci$/,/^FROM oci AS smoke$/p' "$containerfile")
@@ -170,8 +170,8 @@ PY
 grep -Fx 'ARG OPENHANDS_WORKER_VERSION=dev' "$containerfile"
 grep -F 'printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release' "$containerfile"
 grep -F 'RELEASE_MARKER=/etc/openhands/release' "$overlay"
-grep -F 'VERSION="$version" docker buildx bake' "$repo_root/worker/build-wsl.sh"
-test "$(grep -c 'OPENHANDS_WORKER_VERSION = "${VERSION}"' "$repo_root/worker/docker-bake.hcl")" = 3
+grep -F 'VERSION="$version" docker buildx bake' "$repo_root/openhands/worker/image/build-wsl.sh"
+test "$(grep -c 'OPENHANDS_WORKER_VERSION = "${VERSION}"' "$repo_root/openhands/worker/image/docker-bake.hcl")" = 3
 grep -F '/etc/systemd/system/agent-canvas.service.d/10-overlay.conf' "$overlay"
 if grep -rn '= \[Runtime.InteropServices.RuntimeInformation\]' "$repo_root/worker/windows"; then
   echo 'RuntimeInformation must not be a parameter default'
@@ -192,7 +192,7 @@ grep -F '/usr/sbin/nginx -t' "$containerfile"
 grep -F '! -e /etc/nginx/tls/tls.key' "$containerfile"
 
 docker run --rm -v "$repo_root:/src:ro" ubuntu:26.04 bash -euo pipefail -c '
-  entrypoint=/src/worker/rootfs-oci/usr/local/sbin/container-entrypoint
+  entrypoint=/src/openhands/worker/image/rootfs-oci/usr/local/sbin/container-entrypoint
   mkdir -p /etc/nginx/tls
   existing_user=$(getent passwd 1000 | cut -d: -f1)
   existing_group=$(getent group 1000 | cut -d: -f1)

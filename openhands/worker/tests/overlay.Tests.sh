@@ -2,8 +2,8 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-overlay="$repo_root/worker/rootfs/usr/local/sbin/openhands-overlay"
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
+overlay="$repo_root/openhands/worker/image/rootfs/usr/local/sbin/openhands-overlay"
 fixture_image=auto-code-env-wsl-overlay-fixture:ubuntu-26.04-python3
 
 test -f "$overlay"
@@ -25,8 +25,8 @@ set -euo pipefail
 umask 022
 shim=/tmp/shim
 mkdir -p "$shim" /tmp/log /usr/local/libexec /etc/nginx && chmod 1777 /tmp/log && touch /tmp/log/omni /tmp/log/git && chmod 666 /tmp/log/omni /tmp/log/git
-install -m 0755 /src/worker/rootfs/usr/local/sbin/openhands-overlay /usr/local/sbin/openhands-overlay
-install -D -m 0755 /src/worker/rootfs/usr/local/lib/openhands/apply-profile.py /usr/local/lib/openhands/apply-profile.py
+install -m 0755 /src/openhands/worker/image/rootfs/usr/local/sbin/openhands-overlay /usr/local/sbin/openhands-overlay
+install -D -m 0755 /src/openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py /usr/local/lib/openhands/apply-profile.py
 userdel -r ubuntu 2>/dev/null || true; useradd -m -u 1000 -s /bin/bash agent
 mkdir -p /etc/openhands && printf 'openhands-worker 9.9.9-test\n' > /etc/openhands/release
 printf '#!/bin/sh\nexit 0\n' > /usr/local/libexec/openhands-rbw-pinentry
@@ -222,7 +222,7 @@ cat > /tmp/api/state.json <<'EOF'
 }
 EOF
 
-python3 /src/worker/tests/fake-agent-server.py --port 8000 --state /tmp/api/state.json \
+python3 /src/openhands/worker/tests/fake-agent-server.py --port 8000 --state /tmp/api/state.json \
   --log /tmp/log/api --bodies /tmp/log/api-bodies --api-key-file /etc/credstore/local_backend_api_key &
 for _ in $(seq 1 100); do
   if python3 -c 'import socket,sys; sys.exit(socket.socket().connect_ex(("127.0.0.1", 8000)))'; then break; fi

@@ -15,7 +15,7 @@ server_dns_names=()
 
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly script_directory
-repository_root=$(cd -- "${script_directory}/../.." && pwd)
+repository_root=$(cd -- "$script_directory" && until [ -e .git ]; do [ "$PWD" = / ] && exit 0; cd ..; done && pwd)
 readonly repository_root
 
 usage() {
@@ -67,9 +67,11 @@ done
 
 parent=$(cd -- "$(dirname -- "$out_directory")" && pwd) || fail "unable to resolve $(dirname -- "$out_directory")"
 resolved="${parent}/$(basename -- "$out_directory")"
-case $resolved in
-    "$repository_root" | "$repository_root"/*) fail 'refusing to write trust material inside the repository' ;;
-esac
+if [ -n "$repository_root" ]; then
+    case $resolved in
+        "$repository_root" | "$repository_root"/*) fail 'refusing to write trust material inside the repository' ;;
+    esac
+fi
 if [ -e "$resolved" ]; then
     [ -d "$resolved" ] || fail "$resolved exists and is not a directory"
     [ -z "$(ls -A "$resolved")" ] || fail "$resolved is not empty"
