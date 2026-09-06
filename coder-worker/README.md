@@ -63,7 +63,7 @@ verification failure rather than a silent downgrade. To check a release by hand,
 with `key.pem` extracted as under Key rotation below:
 
 ```sh
-{ printf 'coder-worker-v1.0.0\n'; cat checksums.txt; } |
+{ printf 'coder-worker-v1.0.1\n'; cat checksums.txt; } |
   openssl dgst -sha256 -verify key.pem -signature checksums.txt.sig
 ```
 
@@ -73,7 +73,7 @@ Get it from the git tag instead, which is bound to a commit. From a clone of
 `lkshrk/auto-code-env`, once the tag exists:
 
 ```sh
-git show coder-worker-v1.0.0:coder-worker/windows/install.ps1 | sha256sum
+git show coder-worker-v1.0.1:coder-worker/windows/install.ps1 | sha256sum
 ```
 
 `fatal: invalid object name` there means the wrong checkout or an unreleased

@@ -26,7 +26,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$DefaultRelease = "coder-worker-v1.0.0"
+$DefaultRelease = "coder-worker-v1.0.1"
 $ReleaseSigningKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvgv5RXXPQPWPwPvvfFEkfpdSkQJQKXm2SYDazPi+gOlnsOgf1xBPke9HhBP3fT17rBq479ctngvC3N++//cB+w=="
 $ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
@@ -595,6 +595,10 @@ function Invoke-Wsl {
 
     $output = & $WslPath @Arguments
     if ($LASTEXITCODE -ne 0) {
+        $detail = (@($output) -join " ").Trim() -replace "`0", ""
+        if ($detail) {
+            throw "$FailureMessage wsl.exe said: $detail"
+        }
         throw $FailureMessage
     }
     return $output
@@ -855,8 +859,14 @@ try {
             throw "WSL distribution '$DistroName' was not registered."
         }
 
-        Invoke-Wsl -WslPath $wslPath -Arguments @("--manage", $DistroName, "--set-sparse", "true") `
-            -FailureMessage "Unable to mark WSL distribution '$DistroName' sparse." | Out-Null
+        # Sparse conversion needs the distribution stopped, and only reclaims disk; never fail an install for it.
+        Invoke-Wsl -WslPath $wslPath -Arguments @("--terminate", $DistroName) `
+            -FailureMessage "Unable to terminate WSL distribution '$DistroName' before sparse conversion." | Out-Null
+        $sparse = & $wslPath --manage $DistroName --set-sparse true 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $detail = (@($sparse) -join " ").Trim() -replace "`0", ""
+            Write-Warning "Could not mark '$DistroName' sparse, so its disk will not shrink after pruning. wsl.exe said: $detail"
+        }
         Write-Host "Coder worker stage 1 completed: '$DistroName' registered."
     }
 
