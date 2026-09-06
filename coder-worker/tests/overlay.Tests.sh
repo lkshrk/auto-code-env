@@ -230,8 +230,11 @@ enable_output=$(cat /tmp/enable.log)
 printf '%s\n' "$enable_output" | grep -qx 'listen 2376'
 printf '%s\n' "$enable_output" | grep -Fq 'listening on 2376 with mutual TLS'
 grep -Fq 'systemctl enable --now docker.socket docker.service' /tmp/log/systemctl
-grep -Fq 'docker image pull -- codercom/enterprise-base:ubuntu' /tmp/log/docker
-grep -Fq 'docker image pull -- docker:27-dind' /tmp/log/docker
+images=$(sed -n "/^readonly -a WORKSPACE_IMAGES=(/,/^)/p" /src/coder-worker/wsl/coder-worker-overlay | sed -n "s/^ *'\\(.*\\)'$/\\1/p")
+test -n "$images"
+while IFS= read -r image; do
+    grep -Fq "docker image pull -- $image" /tmp/log/docker
+done <<< "$images"
 grep -Fq 'rbw list --fields id,name,folder' /tmp/log/rbw
 for uuid in 11111111-1111-1111-1111-111111111111 22222222-2222-2222-2222-222222222222 \
   33333333-3333-3333-3333-333333333333 44444444-4444-4444-4444-444444444444 \

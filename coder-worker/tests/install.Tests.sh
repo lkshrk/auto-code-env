@@ -84,8 +84,11 @@ test "$(stat -c '%U:%G %a' /usr/local/sbin/coder-worker-overlay)" = 'root:root 7
 cmp -s /src/coder-worker/wsl/coder-worker-overlay /usr/local/sbin/coder-worker-overlay
 test "$(stat -c '%U:%G %a' /etc/coder-worker/profile)" = 'root:root 644'
 cmp -s /src/coder-worker/hosts/towerr.profile /etc/coder-worker/profile
-grep -Fxq 'codercom/enterprise-base:ubuntu' /etc/coder-worker/images
-grep -Fxq 'docker:27-dind' /etc/coder-worker/images
+images=$(sed -n "/^readonly -a WORKSPACE_IMAGES=(/,/^)/p" /src/coder-worker/wsl/coder-worker-overlay | sed -n "s/^ *'\\(.*\\)'$/\\1/p")
+test -n "$images"
+while IFS= read -r image; do
+    grep -Fxq "$image" /etc/coder-worker/images
+done <<< "$images"
 grep -Fq 'coder-worker ' /etc/coder-worker/release
 echo 'PASS: one Linux file installs the distribution and its own copy'
 
@@ -115,8 +118,9 @@ echo 'PASS: docker is enabled once systemd is up'
 
 : > /tmp/docker-up
 run_install > /tmp/setup4.log
-grep -Fq 'docker image pull -- codercom/enterprise-base:ubuntu' /tmp/log/docker
-grep -Fq 'docker image pull -- docker:27-dind' /tmp/log/docker
+while IFS= read -r image; do
+    grep -Fq "docker image pull -- $image" /tmp/log/docker
+done <<< "$images"
 echo 'PASS: workspace images are pre-pulled once docker answers'
 
 printf 'not the docker signing key\n' > /opt/fixture/docker.asc

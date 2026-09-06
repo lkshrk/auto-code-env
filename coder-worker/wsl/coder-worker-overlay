@@ -41,7 +41,7 @@ readonly PLAINTEXT_PORT=2375
 readonly TAB=$'\t'
 readonly -a WORKSPACE_IMAGES=(
     'codercom/enterprise-base:ubuntu'
-    'docker:27-dind'
+    'docker:29-dind'
 )
 readonly -a BASE_PACKAGES=(ca-certificates curl openssl python3 iproute2)
 readonly -a PROFILE_KEYS=(
