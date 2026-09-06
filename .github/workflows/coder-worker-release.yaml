@@ -8,6 +8,7 @@ on:
       - main
     tags:
       - coder-worker-v*
+  workflow_dispatch:
 
 permissions:
   contents: read

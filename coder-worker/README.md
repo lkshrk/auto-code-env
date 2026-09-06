@@ -222,6 +222,10 @@ Bump both constants or neither. If the overlay names a version `install.ps1`
 does not, the workflow refuses before creating the tag, so a half-finished bump
 fails the merge instead of leaving a tag that no release will ever fill.
 
+Those refusals are cheap and run first, but the test suite runs after the tag
+exists. If a release fails there, the tag remains and later merges skip it, so
+recover by dispatching the workflow against that tag rather than merging again.
+
 CI assembles the assets with `coder-worker/scripts/release-checksums.sh`, signs
 `checksums.txt` with the release signing key and publishes `checksums.txt.sig`
 beside it. CI rewrites nothing; it refuses to publish unless the tag points at
