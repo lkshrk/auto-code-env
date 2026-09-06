@@ -349,6 +349,11 @@ try {
         $script:signature = [byte[]]$case.Signature
         Assert-ThrowsMessage { Get-ReleaseChecksums } "is not signed by the release signing key" $case.Message
     }
+    $script:checksums = $null
+    $script:staged = $null
+    Assert-ThrowsMessage { Get-Artifact -Label "Overlay" -Asset "coder-worker-overlay" -Destination (Join-Path $fetch "out") } `
+        "is not signed by the release signing key" "a bad signature stops the artifact fetch"
+    Assert-Equal $null $script:staged "no artifact is staged when the signature fails"
     $script:signature = $goodSignature
 
     $script:checksums = $null
