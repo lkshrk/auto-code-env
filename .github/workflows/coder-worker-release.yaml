@@ -58,17 +58,40 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
 
-      - name: Assemble assets and gate on the embedded checksums digest
+      - name: Assemble assets, sign checksums.txt and gate on the embedded key
         shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.CODER_WORKER_SIGNING_KEY }}
         run: |
           set -euo pipefail
           release="$RUNNER_TEMP/release"
-          digest=$(bash coder-worker/scripts/release-checksums.sh --out "$release")
-          if ! grep -Fxq "\$DefaultChecksumsSha256 = \"$digest\"" coder-worker/windows/install.ps1; then
-            echo "::error::install.ps1 must embed \$DefaultChecksumsSha256 = \"$digest\""
+          bash coder-worker/scripts/release-checksums.sh --out "$release" > /dev/null
+          if [ -z "${SIGNING_KEY:-}" ]; then
+            echo "::error::CODER_WORKER_SIGNING_KEY is not set; the release would ship a checksums.txt install.ps1 rejects"
+            exit 1
+          fi
+          private="$RUNNER_TEMP/signing-key.pem"
+          (umask 077 && printf '%s\n' "$SIGNING_KEY" > "$private")
+          openssl dgst -sha256 -sign "$private" -out "$release/checksums.txt.sig" "$release/checksums.txt"
+          embedded=$(grep -Eo '^[$]ReleaseSigningKey = "[A-Za-z0-9+/]+={0,2}"$' coder-worker/windows/install.ps1 | cut -d'"' -f2)
+          if [ -z "$embedded" ]; then
+            echo '::error::install.ps1 must embed ReleaseSigningKey as a base64 SubjectPublicKeyInfo'
+            exit 1
+          fi
+          printf '%s' "$embedded" | openssl base64 -d -A > "$RUNNER_TEMP/release-signing-key.der"
+          openssl pkey -pubin -inform DER -in "$RUNNER_TEMP/release-signing-key.der" \
+            -out "$RUNNER_TEMP/release-signing-key.pem"
+          if ! openssl dgst -sha256 -verify "$RUNNER_TEMP/release-signing-key.pem" \
+            -signature "$release/checksums.txt.sig" "$release/checksums.txt"; then
+            echo '::error::checksums.txt.sig does not verify against ReleaseSigningKey in install.ps1; rotate the key or the secret'
             exit 1
           fi
           (cd "$release" && ls -1) > "$RUNNER_TEMP/assets.txt"
+
+      - name: Remove the signing key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/signing-key.pem"
 
       - name: Publish immutable release
         shell: bash
