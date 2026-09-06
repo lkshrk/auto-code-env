@@ -49,7 +49,7 @@ digest too. Get it from the git tag instead, which is bound to a commit. From a
 clone of `lkshrk/auto-code-env`, once the tag exists:
 
 ```sh
-git show coder-worker-v2.0.0:coder-worker/windows/install.ps1 | sha256sum
+git show coder-worker-v1.0.0:coder-worker/windows/install.ps1 | sha256sum
 ```
 
 `fatal: invalid object name` there means the wrong checkout or an unreleased
@@ -101,11 +101,11 @@ override it on both sides; `coder-worker-overlay install` writes it to
 `/etc/coder-worker/profile`, where `secrets` and `verify` read it.
 
 `VAULT_ITEM_LAN_CA` is optional: omit it and `lan-ca.pem` is never written,
-while `verify` fails if a stale copy remains. The h-cloud Docker template
+while `verify` fails if a stale copy remains. `coder/templates/backends/docker.tf`
 bind-mounts that path unconditionally, so dropping the item without removing the
-bind mount there leaves Docker creating a directory at that path on the next
-workspace start. `verify` refuses the directory rather than reading it as a
-certificate; removing the mount is the operator's job in h-cloud.
+mount there leaves Docker creating a directory at that path on the next workspace
+start. `verify` refuses the directory rather than reading it as a certificate.
+Both files are in this repository, so drop the item and the mount together.
 
 ## Trust material and rotation
 

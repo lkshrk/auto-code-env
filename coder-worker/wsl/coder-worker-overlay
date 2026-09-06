@@ -4,7 +4,7 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 set -euo pipefail
 umask 022
 
-readonly RELEASE_VERSION=2.0.0
+readonly RELEASE_VERSION=1.0.0
 readonly UBUNTU_CODENAME=resolute
 readonly UBUNTU_VERSION_ID=26.04
 readonly DOCKER_GPG_URL=https://download.docker.com/linux/ubuntu/gpg
