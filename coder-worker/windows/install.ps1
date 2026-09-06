@@ -604,6 +604,19 @@ function Invoke-Wsl {
     return $output
 }
 
+# Start-Process joins ArgumentList without quoting, so no argument may contain a space or a shell operator.
+function Get-DistributionCopyArguments {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Target
+    )
+
+    if ($Target -match '\s' -or $Name -match '\s') {
+        throw "A distribution name or target path with whitespace cannot be passed to wsl.exe safely."
+    }
+    return @("--distribution", $Name, "--user", "root", "--exec", "/usr/bin/dd", "of=$Target", "status=none")
+}
+
 function Copy-FileIntoDistribution {
     param(
         [Parameter(Mandatory)][string]$WslPath,
@@ -614,7 +627,7 @@ function Copy-FileIntoDistribution {
     )
 
     $process = Start-Process -FilePath $WslPath -NoNewWindow -Wait -PassThru `
-        -ArgumentList @("--distribution", $Name, "--user", "root", "--exec", "/bin/sh", "-c", "cat > $Target") `
+        -ArgumentList (Get-DistributionCopyArguments -Name $Name -Target $Target) `
         -RedirectStandardInput $Source
     if ($process.ExitCode -ne 0) {
         throw "Unable to copy '$Source' into WSL distribution '$Name'."

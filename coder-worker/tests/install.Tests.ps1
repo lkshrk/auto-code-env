@@ -99,7 +99,7 @@ foreach ($name in "Set-WslMirroredNetworking", "Test-DistributionName", "Test-Ws
     "Test-ProfileKeySecretShaped", "Test-ProfileValueSecretShaped", "Test-ProfileValue",
     "Read-CoderWorkerProfile", "Get-ChecksumMap", "Get-ReleaseAssetUri", "Test-ReleaseSignature",
     "ConvertFrom-SubjectPublicKeyInfo", "ConvertFrom-DerSignature",
-    "Get-ReleaseChecksums", "Get-Artifact") {
+    "Get-ReleaseChecksums", "Get-Artifact", "Get-DistributionCopyArguments") {
     Invoke-Expression (Import-ScriptFunction -Path $scriptPath -Name $name)
 }
 
@@ -307,6 +307,20 @@ Assert-ArgumentCall @("--import", "coder-worker", "D:\wsl", "C:\rootfs.tar.gz", 
 Assert-ThrowsMessage { Get-DistributionInstallArguments -Name "coder-worker" -Flavor "Ubuntu-26.04" -Location "" -RootfsPath "C:\rootfs.tar.gz" } `
     "Location is required" "the fallback refuses to import without a location"
 Write-Host "PASS: distribution install arguments"
+
+$copyArgs = Get-DistributionCopyArguments -Name "coder-worker" -Target "/root/coder-worker/coder-worker-overlay"
+Assert-ArgumentCall @("--distribution", "coder-worker", "--user", "root", "--exec", "/usr/bin/dd",
+    "of=/root/coder-worker/coder-worker-overlay", "status=none") $copyArgs "the copy runs dd without a shell"
+foreach ($argument in $copyArgs) {
+    # Start-Process joins these unquoted, so a space or an operator would be reinterpreted by wsl.exe.
+    if ($argument -match '[\s><|&;]') {
+        throw "the copy argument '$argument' would not survive Start-Process argument joining."
+    }
+}
+Assert-ThrowsMessage { Get-DistributionCopyArguments -Name "coder-worker" -Target "/root/a b" } `
+    "whitespace" "a target path with whitespace is refused"
+Write-Host "PASS: files are copied into the distribution without a shell"
+
 
 foreach ($key in "VAULT_PASSWORD", "GITHUB_TOKEN", "CLIENT_SECRET", "SIGNING_KEY", "KEY_MATERIAL",
     "API_KEY_ID", "MY_CREDENTIAL", "PRIVATE_THING", "APIKEY", "VAULT_PASSPHRASE") {
