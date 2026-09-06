@@ -9,6 +9,7 @@ on:
       - .github/workflows/worker-release.yaml
       - openhands/profiles/**
       - worker/**
+      - shared/windows/**
 
 permissions:
   contents: read
@@ -37,11 +38,11 @@ jobs:
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File worker/tests/firewall.Tests.ps1
+            pwsh -NoProfile -File shared/windows/firewall.Tests.ps1
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File worker/tests/keepalive.Tests.ps1
+            pwsh -NoProfile -File shared/windows/keepalive.Tests.ps1
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \

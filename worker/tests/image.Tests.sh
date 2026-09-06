@@ -145,8 +145,9 @@ assert(trigger(validation).dig('pull_request', 'paths') == [
   '.github/workflows/worker-validate.yaml',
   '.github/workflows/worker-release.yaml',
   'openhands/profiles/**',
-  'worker/**'
-], 'validation paths must cover the worker and its released profiles')
+  'worker/**',
+  'shared/windows/**'
+], 'validation paths must cover the worker, its released profiles and the shared scripts')
 assert(validation['permissions'] == { 'contents' => 'read' }, 'validation permissions must be read-only')
 validate = validation.fetch('jobs').fetch('validate')
 assert(validate.dig('strategy', 'matrix', 'include') == native_matrix, 'validation must use exact native matrix')
@@ -215,8 +216,8 @@ assert(prepare.include?('gh release create "$tag"') && prepare.include?('--verif
 assert(prepare.include?('gh release view "$tag" --json isDraft,tagName,assets'), 'release lookup must include drafts')
 assert(prepare.include?('gh release upload "$tag" --clobber'), 'draft asset upload must be idempotent')
 assert(prepare.include?('cp worker/windows/install.ps1 release/install.ps1'), 'release must stage the installer from the tagged tree')
-assert(prepare.include?('cp worker/windows/firewall.ps1 release/firewall.ps1'), 'release must stage the firewall script from the tagged tree')
-assert(prepare.include?('cp worker/windows/keepalive.ps1 release/keepalive.ps1'), 'release must stage the keepalive script from the tagged tree')
+assert(prepare.include?('cp shared/windows/firewall.ps1 release/firewall.ps1'), 'release must stage the firewall script from the tagged tree')
+assert(prepare.include?('cp shared/windows/keepalive.ps1 release/keepalive.ps1'), 'release must stage the keepalive script from the tagged tree')
 assert(prepare.include?('cp worker/windows/common.ps1 release/common.ps1'), 'release must stage the shared host helpers from the tagged tree')
 assert(prepare.include?('cp worker/windows/setup.ps1 release/setup.ps1'), 'release must stage the setup script from the tagged tree')
 assert(prepare.include?('cp worker/windows/update.ps1 release/update.ps1'), 'release must stage the update script from the tagged tree')

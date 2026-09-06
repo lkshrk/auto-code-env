@@ -220,7 +220,7 @@ and 2376 never opens without mutual TLS configured. Everything in the
 distribution runs as root; there is no `agent` user and no sudo.
 
 The WSL Hyper-V firewall is one shared object, so both products drive
-`worker/windows/firewall.ps1` under their own rule name, leaving
+`shared/windows/firewall.ps1` under their own rule name, leaving
 `openhands-worker-https` untouched; `-RemoteAddresses` accepts only IPv4 hosts
 or /24-or-narrower ranges and `-Port` only 443 or 2376. That script and
 `keepalive.ps1` are copied into this release rather than referenced from the

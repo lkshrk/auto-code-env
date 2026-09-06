@@ -53,8 +53,8 @@ fi
 install -m 0644 "$repository_root/coder/worker/install/install.ps1" "$out_directory/install.ps1"
 install -m 0644 "$repository_root/coder/worker/runtime/coder-worker-overlay" "$out_directory/coder-worker-overlay"
 install -m 0644 "$repository_root/coder/worker/tools/gen-docker-tls.sh" "$out_directory/gen-docker-tls.sh"
-install -m 0644 "$repository_root/worker/windows/firewall.ps1" "$out_directory/firewall.ps1"
-install -m 0644 "$repository_root/worker/windows/keepalive.ps1" "$out_directory/keepalive.ps1"
+install -m 0644 "$repository_root/shared/windows/firewall.ps1" "$out_directory/firewall.ps1"
+install -m 0644 "$repository_root/shared/windows/keepalive.ps1" "$out_directory/keepalive.ps1"
 
 covered=(coder-worker-overlay gen-docker-tls.sh firewall.ps1 keepalive.ps1)
 profiles=("$repository_root"/coder/worker/hosts/*.profile)

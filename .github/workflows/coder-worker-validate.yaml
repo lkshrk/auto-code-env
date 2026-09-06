@@ -9,8 +9,8 @@ on:
       - .github/workflows/coder-worker-validate.yaml
       - coder/worker/**
       - tools/coder-worker/**
-      - worker/windows/firewall.ps1
-      - worker/windows/keepalive.ps1
+      - shared/windows/firewall.ps1
+      - shared/windows/keepalive.ps1
       - coder/templates/backends/docker.tf
 
 permissions:
