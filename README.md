@@ -26,6 +26,10 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
     image build; the distribution is stock Ubuntu plus one checksummed file. See
     [`coder/worker/README.md`](coder/worker/README.md) for the runtime contract,
     installation, firewall, secrets, and verification details.
+- [`shared/windows/`](shared/windows/) holds the two PowerShell scripts both
+  workers use, `firewall.ps1` and `keepalive.ps1`, with their suites. Each
+  worker's release publishes its own copy, so a host only ever runs the version
+  its release was built with.
 - [`openhands/`](openhands/) holds everything that targets an Agent Canvas
   deployment:
   - `chart/` is the Helm chart release pipeline. `chart/upstream` is the

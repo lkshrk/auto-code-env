@@ -146,8 +146,8 @@ jobs:
             test -f "release/image-digest-${arch}.txt"
           done
           cp worker/windows/install.ps1 release/install.ps1
-          cp worker/windows/firewall.ps1 release/firewall.ps1
-          cp worker/windows/keepalive.ps1 release/keepalive.ps1
+          cp shared/windows/firewall.ps1 release/firewall.ps1
+          cp shared/windows/keepalive.ps1 release/keepalive.ps1
           cp worker/windows/common.ps1 release/common.ps1
           cp worker/windows/setup.ps1 release/setup.ps1
           cp worker/windows/update.ps1 release/update.ps1
