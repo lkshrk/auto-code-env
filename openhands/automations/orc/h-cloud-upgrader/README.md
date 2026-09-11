@@ -44,7 +44,12 @@ operator answers instead of a silent change.
 Superseded Renovate PRs are closed with a comment naming the commit. There is no run
 deadline: every inventory row must end with a terminal disposition (`applied`,
 `asked:#N`, `reverted:#N`, `failed`, `skipped:embargo`, `skipped:already-decided`,
-`skipped:already-latest`), and the run ends only when the work list is empty. Risk and
+`skipped:already-latest`), and the run ends only when the work list is empty. The final
+report opens with a table of every available upgrade — one row per dependency with a
+newer upstream version, whatever its disposition — giving current, newest and target
+versions, the disposition, the concrete reason it was not upgraded (embargo expiry
+time, the deciding issue, the breaking change, the gate failure) and the verification
+performed or the gate's blind spot. Risk and
 "major" are reasons to ask, never to skip silently. `MAX_UPGRADES_PER_RUN` (`0` =
 unlimited, the default) is a testing knob that caps how many dependencies reach the bump
 step. The automation `timeout` (12 h) is the platform's hard stop, not a pacing target.

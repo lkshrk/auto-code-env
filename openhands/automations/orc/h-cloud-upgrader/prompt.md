@@ -378,17 +378,49 @@ Before reporting, do exactly one closing pass — not a recursive loop:
 4. **Confirm the final state:** working tree clean, local `main` equal to
    `origin/main`, all Flux Kustomizations Ready, no workload left unhealthy.
 
-Then finish with a summary, one line per dependency you looked at:
+Then finish with the report. It starts with the **available upgrades table**: one
+Markdown table row for every inventory row whose newest same-scheme upstream version
+is newer than the current pin — applied, asked, reverted, failed, embargoed,
+already-decided and budget-skipped alike. Only `skipped:already-latest` rows and
+digest-only false positives stay out of it. Never collapse rows into a count ("16
+embargoed"): every available upgrade is its own row, so the operator sees at a
+glance what is still outstanding and why. Sort by disposition, then name.
 
 ```
-<name>  <current> -> <target|none>  <disposition from section 0a>  <verify result + any gate blind spot>
+| Dependency | Class | Current | Newest | Target | Disposition | Reason not upgraded | Verification / blind spot |
+|---|---|---|---|---|---|---|---|
 ```
 
-followed by the inventory counts (total, up to date, embargoed, awaiting decision,
-applied this run, remaining — which must be 0 unless `max_upgrades` was set), the
-open bot PR count and how it reconciled against the manifest scan, and why the run
-ended: work list empty, budget reached, or unrecoverable failure. The counts must
-reconcile against the number of rows. A class you could not enumerate is reported as
+- `Newest` is the newest same-scheme version upstream; `Target` is the version this
+  run picked after the embargo (`none` when no eligible target exists yet).
+- `Disposition` is the terminal disposition from section 0a.
+- `Reason not upgraded` is the concrete reason, never the disposition repeated:
+  - `skipped:embargo` — publish timestamp, age, and the exact time the target becomes
+    eligible.
+  - `skipped:already-decided` — the issue (`#N`), its state and the last operator
+    decision: `open, unanswered`, `/skip`, or `/defer until <date>`.
+  - `asked:#N` — the breaking change, open upstream issue or verification gap that
+    triggered the ask, with its link.
+  - `reverted:#N` — what failed in the health gate, and the fix attempt if any.
+  - `failed` — the exact command and error.
+  - `skipped:budget` — `max_upgrades` and the position at which it was reached.
+  - `applied` — `-`. In a dry run, `would-apply` says `dry run` and `would-ask`
+    carries the same reason an `asked` row would.
+- `Verification / blind spot` — for applied rows, the functional check performed and
+  its result plus anything the gate could not cover; for every other row the check
+  you would rely on, or `-`.
+
+Directly under the table, list any `skipped:already-latest` row that discovery first
+flagged as outdated, with the one-line reason it was a false positive (for example a
+variant tag carrying the same app version) — the operator needs that to fix the scan,
+but it is not an available upgrade and does not belong in the table.
+
+After the table: the inventory counts (total, up to date, available upgrades — which
+must equal the number of table rows —, embargoed, awaiting decision, applied this
+run, remaining — which must be 0 unless `max_upgrades` was set), the open bot PR
+count and how it reconciled against the manifest scan, and why the run ended: work
+list empty, budget reached, or unrecoverable failure. The counts must reconcile
+against the number of inventory rows. A class you could not enumerate is reported as
 unknown, not omitted. Print any command that failed with its exact error, and mark
 clearly which failures were expected environmental limits (RBAC denials, the
 Receiver's non-2xx) versus real problems.

@@ -4,7 +4,9 @@
     "MAX_UPGRADES_PER_RUN": "3"
   },
   "expect": [
-    "^\\S+\\s+\\S+ -> \\S+\\s+(would-apply|would-ask|skipped:\\S+)",
+    "(?m)^\\| Dependency \\| Class \\| Current \\| Newest \\| Target \\| Disposition \\| Reason not upgraded \\| Verification / blind spot \\|$",
+    "(?m)^\\|(?:[^|\\n]+\\|){5} *(would-apply|would-ask|skipped:\\S+) *\\|",
+    "(?i)available upgrades",
     "(?i)\\btotal\\b"
   ],
   "forbid": [
