@@ -244,6 +244,9 @@ state = json.load(open('/tmp/api/state.json'))
 assert state['agent_settings']['agent_kind'] == 'openhands', state['agent_settings']
 assert state['agent_settings']['llm']['model'] == 'stale/model', state['agent_settings']
 assert sorted(state['secrets']) == ['CODER_SESSION_TOKEN', 'LITELLM_API'], state['secrets']
+coder = state['agent_settings']['mcp_config']['coder']
+assert coder['command'] == '/home/openhands/.openhands/bin/coder', coder
+assert coder['env']['CODER_SESSION_TOKEN'] == 'coder-FIXTURESESSION44444', coder
 PY
 
 echo 'applier tests passed'
