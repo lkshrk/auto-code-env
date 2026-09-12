@@ -10,6 +10,11 @@
       "source": "https://github.com/lkshrk/auto-code-env.git",
       "ref": "main",
       "repo_path": "openhands/skills/agent-sandbox-deploy"
+    },
+    {
+      "source": "https://github.com/OpenHands/extensions.git",
+      "ref": "main",
+      "repo_path": "skills/iterate"
     }
   ],
   "mcp_servers": {
