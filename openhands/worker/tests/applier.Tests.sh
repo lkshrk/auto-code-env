@@ -249,6 +249,41 @@ assert coder['url'] == 'https://api.ai.h-cloud.lan/mcp/coder', coder
 assert 'command' not in coder, coder
 PY
 
+python3 - <<'PYTEST'
+import json
+p = '/tmp/api/state.json'
+s = json.load(open(p))
+s['secrets']['CODER_SESSION_TOKEN'] = 'retired-fixture'
+s['secrets']['UNRELATED'] = 'keep-fixture'
+s['agent_settings']['mcp_config']['coder'] = {
+    'transport': 'stdio', 'command': 'coder', 'args': ['exp', 'mcp', 'server'],
+    'env': {'CODER_SESSION_TOKEN': 'retired-fixture'}, 'cwd': '/tmp', 'enabled': True
+}
+with open(p, 'w') as f:
+    json.dump(s, f)
+PYTEST
+run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json
+run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json
+python3 - <<'PYTEST'
+import json
+s = json.load(open('/tmp/api/state.json'))
+assert 'CODER_SESSION_TOKEN' not in s['secrets']
+assert s['secrets']['UNRELATED'] == 'keep-fixture'
+c = s['agent_settings']['mcp_config']['coder']
+assert c['transport'] == 'http'
+assert not {'command', 'args', 'env', 'cwd'} & c.keys()
+assert c['headers']['x-litellm-api-key'] == 'Bearer sk-llm-FIXTUREKEY111111111111'
+PYTEST
+
+printf '%s\n' '{"retired_secrets": ["BAD/name"]}' > /tmp/bad-retired.json
+if "$apply" --print secret-items /tmp/bad-retired.json >/dev/null 2>&1; then
+  echo 'invalid retired secret accepted'; exit 1
+fi
+printf '%s\n' '{"retired_secrets": ["LITELLM_API"]}' > /tmp/conflicting-retired.json
+if "$apply" --print secret-items /src/openhands/profiles/common.json /tmp/conflicting-retired.json >/dev/null 2>&1; then
+  echo 'declared secret can be retired'; exit 1
+fi
+
 echo 'applier tests passed'
 INNER
 )

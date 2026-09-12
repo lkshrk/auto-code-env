@@ -10,7 +10,7 @@ import sys
 import urllib.error
 import urllib.request
 
-SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync", "mcp_servers")
+SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync", "mcp_servers", "retired_secrets")
 MERGED_OBJECTS = ("llm", "agent", "git_sync")
 MERGED_MAPS = ("secrets", "mcp_servers")
 ACP_SERVERS = ("claude-code", "codex", "gemini-cli", "custom")
@@ -195,6 +195,10 @@ def load(path):
         validate_agent(profile["agent"])
     if "secrets" in profile:
         validate_secrets(profile["secrets"])
+    if "retired_secrets" in profile:
+        names = profile["retired_secrets"]
+        if not isinstance(names, list) or any(not isinstance(name, str) or not SECRET_NAME.fullmatch(name) for name in names):
+            fail("retired_secrets must be an array of valid secret names")
     if "skills" in profile:
         validate_skills(profile["skills"])
     if "git_sync" in profile:
@@ -233,6 +237,8 @@ def load_all(paths, skip):
     for section in dropped:
         del profile[section]
     secrets = profile.get("secrets") or {}
+    if set(profile.get("retired_secrets") or []) & {name for name, _ in wanted_secrets(profile)}:
+        fail("retired secrets must not also be declared")
     for name in profile.get("mcp_servers") or {}:
         server = profile["mcp_servers"][name] or {}
         for field in ("headers", "env"):
@@ -378,6 +384,13 @@ def apply_secrets(api, profile, secret):
     print("secrets applied: %s" % (", ".join(changed) if changed else "none changed"))
 
 
+def retire_secrets(api, profile):
+    for name in sorted(set(profile.get("retired_secrets") or [])):
+        status, _ = api.call("DELETE", "/api/settings/secrets/%s" % name)
+        if status != 404 and not 200 <= status < 300:
+            fail("retiring secret %s returned HTTP %d" % (name, status))
+
+
 def resolve_secret_map(values, secret, profile):
     return dict(
         (name, declared_secret(profile, secret, value["secret"]) if isinstance(value, dict) else value)
@@ -415,6 +428,14 @@ def apply_mcp_servers(api, profile, secret, settings):
             changed.append(name)
             continue
         diff = dict((key, body[key]) for key in body if current.get(key) != body[key])
+        if body["transport"] == "http":
+            for key in ("command", "args", "env", "cwd"):
+                if key in current:
+                    diff[key] = None
+        elif current.get("transport") in ("http", "sse"):
+            for key in ("url", "headers", "auth"):
+                if key in current:
+                    diff[key] = None
         if diff:
             api.json_call("PATCH", "/api/settings/mcp/%s" % name, diff)
             changed.append(name)
@@ -520,6 +541,7 @@ def main(argv):
     apply_mcp_servers(api, profile, secret, settings)
     apply_skills(api, profile)
     apply_git_sync(api, profile, secret, os.path.join(options.state_dir, TOKEN_STATE_FILE))
+    retire_secrets(api, profile)
 
 
 if __name__ == "__main__":

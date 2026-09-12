@@ -11,7 +11,9 @@ LOCK = threading.Lock()
 
 def merge(destination, source):
     for key, value in source.items():
-        if isinstance(value, dict) and isinstance(destination.get(key), dict):
+        if value is None:
+            destination.pop(key, None)
+        elif isinstance(value, dict) and isinstance(destination.get(key), dict):
             merge(destination[key], value)
         else:
             destination[key] = value
@@ -35,6 +37,12 @@ def route(state, method, path, body, expose):
         if name in state["secrets"]:
             return 200, state["secrets"][name]
         return 404, json.dumps({"detail": "Secret not found"})
+    if method == "DELETE" and path.startswith("/api/settings/secrets/"):
+        name = path.rsplit("/", 1)[1]
+        if name not in state["secrets"]:
+            return 404, json.dumps({"detail": "Secret not found"})
+        del state["secrets"][name]
+        return 204, ""
     if method == "PUT" and path == "/api/settings/secrets":
         state["secrets"][body["name"]] = body["value"]
         return 200, json.dumps({"name": body["name"]})
@@ -119,6 +127,9 @@ def handler_class(options):
 
         def do_PUT(self):
             self.dispatch("PUT")
+
+        def do_DELETE(self):
+            self.dispatch("DELETE")
 
         def do_PATCH(self):
             self.dispatch("PATCH")

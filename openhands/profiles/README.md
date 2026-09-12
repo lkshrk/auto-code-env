@@ -27,11 +27,17 @@ openhands-overlay settings --file /etc/openhands/profile-common.json --file /etc
 | `secrets` | by secret name; a later file replaces the entry that shares a name |
 | `mcp_servers` | by server key |
 | `skills` | by `repo_path` |
+| `retired_secrets` | a later file replaces the list |
 
 `common.json` holds what every host shares. A host profile such as
 `towerr.json` holds only what is specific to that host, which today is `llm`,
 `agent`, and `git_sync`. Each file is validated on its own, then the merged
 result is checked for cross-section references.
+
+`retired_secrets` explicitly names stored secrets to delete after all profile
+sections apply successfully. Missing names are harmless; unrelated secrets are
+preserved. A retired name cannot also be declared by the merged profile. Existing
+conversations must be restarted after migration.
 
 ## Backends without a worker
 

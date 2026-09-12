@@ -466,9 +466,11 @@ credential, restricts the server to the `coder-agents` access group, and enforce
 the tool allowlist at call time: read templates and workspaces, create and start
 or stop workspaces, and run commands and file operations inside them. Template
 administration, chat, port forwarding, and archive upload are not on the list.
-Workspace deletion is a build transition and therefore reachable; the
-`coder-workspaces` skill forbids it. No worker holds a Coder token, so a profile
-edit cannot widen that reach.
+The gateway token must omit workspace-deletion and template-administration
+scopes; the tool allowlist alone does not restrict build transitions. The
+profile explicitly retires the stored `CODER_SESSION_TOKEN` after successful
+application. Existing conversations must be restarted to discard their old
+configuration. Verify token-scope enforcement through the gateway before rollout.
 
 `GH_TOKEN` follows the same route for a different purpose. It is declared in the
 host profile, resolved from the worker's GitHub PAT vault item, and reaches the

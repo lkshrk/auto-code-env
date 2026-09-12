@@ -151,7 +151,8 @@ PY
 python3 - "$repo_root/openhands/profiles/common.json" <<'PY'
 import json, re, sys
 profile = json.load(open(sys.argv[1]))
-assert set(profile) == {"secrets", "skills", "mcp_servers"}, sorted(profile)
+assert set(profile) == {"secrets", "skills", "mcp_servers", "retired_secrets"}, sorted(profile)
+assert profile["retired_secrets"] == ["CODER_SESSION_TOKEN"], profile["retired_secrets"]
 assert re.fullmatch(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
     profile["secrets"]["LITELLM_API"]["item"],

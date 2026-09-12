@@ -5,6 +5,7 @@
       "prefix": "Bearer "
     }
   },
+  "retired_secrets": ["CODER_SESSION_TOKEN"],
   "skills": [
     {
       "source": "https://github.com/lkshrk/auto-code-env.git",
