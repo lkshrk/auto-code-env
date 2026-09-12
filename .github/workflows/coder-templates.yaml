@@ -21,6 +21,11 @@ on:
       - .github/workflows/coder-templates.yaml
   workflow_dispatch:
     inputs:
+      publish:
+        description: Publish after verifying dotfiles and preserved-checkout readiness
+        required: false
+        default: false
+        type: boolean
       legacy_templates:
         description: Additional legacy template names, comma-separated (no backend overrides)
         required: false
@@ -111,8 +116,21 @@ jobs:
           done < "$RUNNER_TEMP/coder-template-targets"
           bash coder/scripts/validate-templates.sh "${packages[@]}"
 
+      - name: Verify published dotfiles prerequisites
+        if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish && steps.selected.outputs.has_templates == 'true'
+        run: |
+          set -euo pipefail
+          dotfiles=$(mktemp -d "$RUNNER_TEMP/coder-dotfiles.XXXXXX")
+          trap 'rm -rf "$dotfiles"' EXIT
+          git clone --depth=1 https://github.com/lkshrk/dotfiles.git "$dotfiles"
+          for script in setup-coder-components.sh setup-hermes.sh setup-coder.sh; do
+            test -f "$dotfiles/$script"
+            bash -n "$dotfiles/$script"
+          done
+          git -C "$dotfiles" rev-parse HEAD
+
       - name: Install Coder CLI
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.selected.outputs.has_templates == 'true'
+        if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish && steps.selected.outputs.has_templates == 'true'
         env:
           CODER_URL: https://coder.h-cloud.io
         run: |
@@ -124,7 +142,7 @@ jobs:
           rm "$RUNNER_TEMP/coder.deb"
 
       - name: Push validated packages to Coder
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.selected.outputs.has_templates == 'true'
+        if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish && steps.selected.outputs.has_templates == 'true'
         env:
           CODER_URL: https://coder.h-cloud.io
           CODER_SESSION_TOKEN: ${{ secrets.CODER_SESSION_TOKEN }}

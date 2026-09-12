@@ -25,7 +25,7 @@ openhands-overlay settings --file /etc/openhands/profile-common.json --file /etc
 |---|---|
 | `llm`, `agent`, `git_sync` | per key; a later file overrides only the keys it sets |
 | `secrets` | by secret name; a later file replaces the entry that shares a name |
-| `mcp_servers` | by server key |
+| `mcp_servers` | by server key; `null` explicitly removes the persisted entry |
 | `skills` | by `repo_path` |
 | `retired_secrets` | a later file replaces the list |
 
@@ -51,7 +51,7 @@ apply-profile.py --api http://openhands:8000 --api-key-file /secrets/sessionApiK
   profile-common.json profile-orc.json
 ```
 
-An hourly CronJob downloads `apply-profile.py`, `profile-common.json`,
+A Kubernetes Job downloads `apply-profile.py`, `profile-common.json`,
 `profile-orc.json`, and `checksums.txt` from one pinned `openhands-worker-v*`
 release, verifies the checksums, and runs the command above.
 
@@ -60,7 +60,8 @@ projection of the `openhands-secret` Kubernetes Secret: key `LITE_LLM` is
 projected to the path `LITELLM_API`, matching the secret name `common.json`
 declares. The `item` UUIDs stay in the profile and are simply unused there. A
 name the directory does not provide fails the run before the first backend call.
-The `coder` server is reached through the LiteLLM MCP gateway, which holds the
+Coder tools are reached through the aggregate `litellm-tools` connection. The
+`coder: null` entry removes the old dedicated connection. LiteLLM holds the
 Coder credential and enforces the tool allowlist, so no host needs the Coder CLI
 or a Coder token. `llm.api_key_item` is read from the file `LLM_API_KEY` and
 `git_sync.token_item` from `GIT_SYNC_TOKEN`; every `secrets` entry is read from
@@ -69,6 +70,21 @@ its own name.
 `orc.json` sets only `agent.kind`. Its model, base URL, and API key come from the
 HelmRelease environment, and it has no git sync, so `common.json` supplies
 everything else it needs: `secrets`, `skills`, and `mcp_servers`.
+
+## Gateway cutover
+
+Publish and checksum-verify the applicator and profiles together, then update the
+infrastructure release pin. Old v0.5.1 assets cannot perform this migration.
+Before applying, verify aggregate gateway discovery, a harmless Coder call,
+unauthorized-key rejection, and non-allowlisted-tool rejection. Confirm the
+shared Coder identity and scopes match the intended workspace/template boundary;
+a tool-name allowlist does not constrain commands executed by workspace bash.
+
+Require successful profile Job completion, inspect persisted settings without
+printing credentials, and start fresh conversations. Existing conversations may
+retain old configuration. Prepare an explicit settings restore and a valid
+credential source for rollback; reverting the release pin does not restore a
+deleted connection or secret. Do not revoke the old credential until acceptance.
 
 ## Schema
 

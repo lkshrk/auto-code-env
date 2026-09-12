@@ -19,14 +19,7 @@
     }
   ],
   "mcp_servers": {
-    "coder": {
-      "url": "https://api.ai.h-cloud.lan/mcp/coder",
-      "headers": {
-        "x-litellm-api-key": {
-          "secret": "LITELLM_API"
-        }
-      }
-    },
+    "coder": null,
     "litellm-tools": {
       "url": "https://api.ai.h-cloud.lan/mcp/",
       "headers": {

@@ -90,20 +90,20 @@ templates and nothing keeps the two preset lists in sync.
 `coder-templates.yaml` runs on pull requests, on pushes to `main`, and on
 `workflow_dispatch`.
 
-- It resolves the changed template directories from the diff. A change to
-  `common.tf`, `shared/`, `tests/`, or `backends/` selects every template; a
-  `workflow_dispatch` run does the same.
-- For each selected template it builds a temporary directory holding
-  `common.tf`, `shared/`, the template's `backend` marker, the
-  `backends/<backend>.tf` that marker names, and the template's `*.tf`, then
-  runs
-  `terraform fmt -check -diff`, `terraform init -backend=false`, and
-  `terraform validate`. Terraform is installed at a pinned version with its
-  SHA256 verified against HashiCorp's checksum file.
-- On `main` only, it installs the Coder CLI at the version the server reports
-  from `/api/v2/buildinfo` and runs `coder templates push <name>` for each
-  selected template, authenticating with the `CODER_SESSION_TOKEN` repository
-  secret.
+- Pull requests package affected catalog targets and changed legacy templates.
+  Main pushes and manual runs validate catalog targets; manual runs may also
+  select additional legacy templates.
+- Packages are built once and validated with pinned OpenTofu before publication.
+- Pushes to `main` validate only. Publication requires `workflow_dispatch` on
+  `main` with `publish: true`.
+- Before publication, CI checks that the default dotfiles branch contains valid
+  `setup-coder-components.sh`, `setup-hermes.sh`, and `setup-coder.sh` scripts.
+  It records the checked commit without executing those scripts.
+- Operators must verify fresh bootstrap and explicitly update preserved dotfiles
+  checkouts before opting into publication. CI cannot verify existing workspace
+  volumes, and does not reset user checkouts.
+- Publication installs the Coder CLI matching `/api/v2/buildinfo` and pushes
+  validated packages using the `CODER_SESSION_TOKEN` repository secret.
 
 Deleting a template directory does not delete the template in Coder. Remove it
 in Coder as a separate operator step.

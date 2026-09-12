@@ -169,10 +169,8 @@ profile = json.load(open(sys.argv[1]))
 common = json.load(open(sys.argv[2]))
 assert set(profile) == {"agent"}, sorted(profile)
 assert profile["agent"] == {"kind": "openhands"}, profile["agent"]
-common_coder = common["mcp_servers"]["coder"]
-assert common_coder["url"] == "https://api.ai.h-cloud.lan/mcp/coder", common_coder
-assert common_coder["headers"]["x-litellm-api-key"] == {"secret": "LITELLM_API"}, common_coder
-assert "command" not in common_coder, common_coder
+assert common["mcp_servers"]["coder"] is None
+assert common["mcp_servers"]["litellm-tools"]["url"] == "https://api.ai.h-cloud.lan/mcp/"
 PY
 grep -Fx 'ARG OPENHANDS_WORKER_VERSION=dev' "$containerfile"
 grep -F 'printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release' "$containerfile"

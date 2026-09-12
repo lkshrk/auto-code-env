@@ -234,7 +234,7 @@ fresh_state
 : > /tmp/log/api
 orc=$(run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json)
 printf '%s\n' "$orc" | grep -Fq 'secrets applied: LITELLM_API'
-printf '%s\n' "$orc" | grep -Fq 'mcp_servers applied: coder, litellm-tools, openaiDeveloperDocs'
+printf '%s\n' "$orc" | grep -Fq 'mcp_servers applied: litellm-tools, openaiDeveloperDocs'
 printf '%s\n' "$orc" | grep -Fq 'skills applied: agent-sandbox-deploy, coder-workspaces'
 if printf '%s\n' "$orc" | grep -Fq 'git_sync'; then echo 'the orc profile must not configure git sync'; exit 1; fi
 test ! -e /tmp/state/git-sync-token.sha256
@@ -244,9 +244,7 @@ state = json.load(open('/tmp/api/state.json'))
 assert state['agent_settings']['agent_kind'] == 'openhands', state['agent_settings']
 assert state['agent_settings']['llm']['model'] == 'stale/model', state['agent_settings']
 assert sorted(state['secrets']) == ['LITELLM_API'], state['secrets']
-coder = state['agent_settings']['mcp_config']['coder']
-assert coder['url'] == 'https://api.ai.h-cloud.lan/mcp/coder', coder
-assert 'command' not in coder, coder
+assert 'coder' not in state['agent_settings']['mcp_config']
 PY
 
 python3 - <<'PYTEST'
@@ -269,9 +267,9 @@ import json
 s = json.load(open('/tmp/api/state.json'))
 assert 'CODER_SESSION_TOKEN' not in s['secrets']
 assert s['secrets']['UNRELATED'] == 'keep-fixture'
-c = s['agent_settings']['mcp_config']['coder']
-assert c['transport'] == 'http'
-assert not {'command', 'args', 'env', 'cwd'} & c.keys()
+assert 'coder' not in s['agent_settings']['mcp_config']
+c = s['agent_settings']['mcp_config']['litellm-tools']
+assert c['url'] == 'https://api.ai.h-cloud.lan/mcp/'
 assert c['headers']['x-litellm-api-key'] == 'Bearer sk-llm-FIXTUREKEY111111111111'
 PYTEST
 
@@ -283,6 +281,221 @@ printf '%s\n' '{"retired_secrets": ["LITELLM_API"]}' > /tmp/conflicting-retired.
 if "$apply" --print secret-items /src/openhands/profiles/common.json /tmp/conflicting-retired.json >/dev/null 2>&1; then
   echo 'declared secret can be retired'; exit 1
 fi
+
+python3 - <<'PYTEST'
+import copy
+import json
+import subprocess
+from pathlib import Path
+
+apply = '/src/openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py'
+state_path = Path('/tmp/api/state.json')
+log_path = Path('/tmp/log/api')
+body_path = Path('/tmp/log/api-bodies')
+profile_path = Path('/tmp/reconciliation.json')
+base = {
+    'agent_settings': {'agent_kind': 'openhands', 'mcp_config': {}},
+    'secrets': {'CODER_SESSION_TOKEN': 'keep-until-reconciled'},
+    'skills': [], 'git_sync': {},
+}
+
+def seed(servers=None, **extra):
+    state = copy.deepcopy(base)
+    state['agent_settings']['mcp_config'] = servers or {}
+    state.update(extra)
+    state_path.write_text(json.dumps(state))
+    log_path.write_text('')
+    body_path.write_text('')
+
+def invoke(profile, *flags, success=True):
+    profile_path.write_text(json.dumps(profile))
+    result = subprocess.run([
+        apply, '--api', 'http://127.0.0.1:8000', '--api-key-file', '/tmp/api-key',
+        '--secrets-dir', '/tmp/secrets', '--state-dir', '/tmp/state',
+        str(profile_path), *flags,
+    ], capture_output=True, text=True)
+    assert (result.returncode == 0) == success, (result.stdout, result.stderr)
+    assert 'keep-until-reconciled' not in result.stdout + result.stderr
+    return json.loads(state_path.read_text())
+
+def no_writes():
+    assert not any(line.startswith(('PATCH ', 'POST ', 'PUT ', 'DELETE '))
+                   for line in log_path.read_text().splitlines()), log_path.read_text()
+
+retirement = {'mcp_servers': {'coder': None}, 'retired_secrets': ['CODER_SESSION_TOKEN']}
+seed({'coder': {'transport': 'stdio', 'command': 'coder'}})
+state = invoke(retirement, '--skip', 'mcp_servers')
+assert 'coder' in state['agent_settings']['mcp_config']
+assert 'CODER_SESSION_TOKEN' in state['secrets']
+no_writes()
+for skip in ('secrets', 'retired_secrets'):
+    seed()
+    profile = dict(retirement, secrets={'CODER_SESSION_TOKEN': {'item': '99999999-9999-9999-9999-999999999999'}})
+    invoke(profile, '--skip', skip, success=False)
+    no_writes()
+seed()
+invoke({'llm': {'api_key_item': '11111111-1111-1111-1111-111111111111'},
+        'secrets': {'LLM_API_KEY': {'item': '22222222-2222-2222-2222-222222222222'}}},
+       '--skip', 'llm', success=False)
+no_writes()
+
+for field, server, current in (
+    ('env', {'command': 'coder'}, {'transport': 'stdio', 'command': 'coder', 'args': ['old']}),
+    ('headers', {'url': 'https://example.test/mcp'}, {'transport': 'http', 'url': 'https://example.test/mcp'}),
+):
+    current[field] = {'KEEP': 'same', 'DROP': 'old'}
+    current['enabled'] = False
+    seed({'target': current, 'unmanaged': {'transport': 'stdio', 'command': 'keep'}})
+    state = invoke({'mcp_servers': {'target': server}})
+    assert state['agent_settings']['mcp_config']['target'] == current
+    no_writes()
+    desired = dict(server, **{field: {'KEEP': 'same'}})
+    state = invoke({'mcp_servers': {'target': desired}})
+    assert state['agent_settings']['mcp_config']['target'][field] == {'KEEP': 'same'}
+    assert '"DROP": null' in body_path.read_text()
+    desired[field] = {}
+    if field == 'env':
+        desired['args'] = []
+    state = invoke({'mcp_servers': {'target': desired}})
+    target = state['agent_settings']['mcp_config']['target']
+    assert target[field] == {}, target
+    assert target['enabled'] is False
+    if field == 'env':
+        assert target['args'] == []
+    assert 'unmanaged' in state['agent_settings']['mcp_config']
+    log_path.write_text('')
+    invoke({'mcp_servers': {'target': desired}})
+    no_writes()
+    seed()
+    state = invoke({'mcp_servers': {'target': desired}})
+    assert state['agent_settings']['mcp_config']['target'][field] == {}
+    if field == 'env':
+        assert state['agent_settings']['mcp_config']['target']['args'] == []
+
+for transport in ('http', 'sse', 'streamable-http', 'stdio', None):
+    seed({'target': {'transport': transport, 'url': 'https://old.test',
+                     'headers': {'Authorization': 'old'}, 'auth': {'token': 'old'}}})
+    state = invoke({'mcp_servers': {'target': {'command': 'coder'}}})
+    target = state['agent_settings']['mcp_config']['target']
+    assert not set(target) & {'url', 'headers', 'auth'}, target
+seed({'target': {'transport': 'stdio', 'command': 'old', 'args': ['old'],
+                 'env': {'OLD': 'old'}, 'cwd': '/old'}})
+state = invoke({'mcp_servers': {'target': {'url': 'https://new.test'}}})
+assert not set(state['agent_settings']['mcp_config']['target']) & {'command', 'args', 'env', 'cwd'}
+
+seed()
+invoke({'mcp_servers': {'target': {'command': 'coder', 'env': {'TOKEN': {'secret': 'MISSING'}}}}},
+       '--skip', 'mcp_servers', success=False)
+no_writes()
+
+invalid = [
+    {'mcp_servers': {'bad\n': {'command': 'coder'}}},
+    {'mcp_servers': {'target': {'command': 'coder', 'env': {'BAD\n': 'x'}}}},
+    {'mcp_servers': {'target': {'url': 'https://x.test', 'headers': {'Bad\n': 'x'}}}},
+    {'mcp_servers': {'target': {'command': 'coder', 'headers': {}}}},
+]
+for server in ({'command': 'co\x00der'}, {'command': 'coder', 'args': ['x\x00']},
+               {'command': 'coder', 'env': {'TOKEN': 'x\x00'}},
+               {'url': 'https://x.test/\x00'}, {'url': 'https://x.test', 'headers': {'Token': 'x\x00'}}):
+    invalid.append({'mcp_servers': {'target': server}})
+for profile in invalid:
+    seed()
+    invoke(profile, success=False)
+    assert not log_path.read_text()
+
+for material, prefix in (('x\x00y', ''), ('safe', 'x\x00')):
+    seed()
+    secret_path = Path('/tmp/secrets/TEST_TOKEN')
+    secret_path.write_text(material)
+    profile = {'agent': {'kind': 'acp'},
+               'secrets': {'TEST_TOKEN': {'item': '11111111-1111-1111-1111-111111111111', 'prefix': prefix}},
+               'mcp_servers': {'target': {'command': 'coder', 'env': {'TOKEN': {'secret': 'TEST_TOKEN'}}}}}
+    result = invoke(profile, success=False)
+    assert not log_path.read_text()
+    secret_path.unlink()
+
+for servers in ({}, {'target': {'transport': 'stdio', 'command': 'replacement'}}):
+    seed({'target': {'transport': 'stdio', 'command': 'coder'}}, kind_change_mcp_config=servers)
+    state = invoke({'agent': {'kind': 'acp'}, 'mcp_servers': {'target': {'command': 'coder'}}})
+    assert state['agent_settings']['mcp_config']['target']['command'] == 'coder'
+    lines = log_path.read_text().splitlines()
+    assert lines.index('PATCH /api/settings') < len(lines) - 1
+    assert lines[lines.index('PATCH /api/settings') + 1] == 'GET /api/settings'
+
+for failure in ({'method': 'PATCH', 'path': '/api/settings'},
+                {'method': 'GET', 'path': '/api/settings', 'skip': 1}):
+    seed({'coder': {'transport': 'stdio', 'command': 'coder'}},
+         kind_change_mcp_config={}, failure=failure)
+    state = invoke(dict(retirement, agent={'kind': 'acp'}), success=False)
+    assert 'CODER_SESSION_TOKEN' in state['secrets']
+    assert not any('/api/settings/mcp/' in line or '/api/settings/secrets' in line
+                   for line in log_path.read_text().splitlines())
+
+for method, path in (('DELETE', '/api/settings/mcp/coder'), ('PATCH', '/api/settings/mcp/target'),
+                     ('POST', '/api/settings/mcp/target')):
+    servers = {'coder': {'transport': 'stdio', 'command': 'coder'}}
+    if method == 'PATCH':
+        servers['target'] = {'transport': 'stdio', 'command': 'old'}
+    seed(servers, failure={'method': method, 'path': path})
+    profile = copy.deepcopy(retirement)
+    profile['mcp_servers']['target'] = {'command': 'coder'}
+    state = invoke(profile, success=False)
+    assert 'CODER_SESSION_TOKEN' in state['secrets']
+    assert 'DELETE /api/settings/secrets/' not in log_path.read_text()
+seed({'coder': {'transport': 'stdio', 'command': 'coder'}})
+state = invoke(retirement)
+assert 'coder' not in state['agent_settings']['mcp_config']
+assert 'CODER_SESSION_TOKEN' not in state['secrets']
+assert log_path.read_text().index('DELETE /api/settings/mcp/coder') < log_path.read_text().index('DELETE /api/settings/secrets/CODER_SESSION_TOKEN')
+
+try:
+    from openhands.sdk.mcp.config import MCPServer
+    from openhands.sdk.settings.api_models import MCPServerPatch
+    from openhands.sdk.settings.model import apply_agent_settings_diff
+except ImportError as error:
+    print('installed OpenHands model tests skipped: %s' % error)
+else:
+    cases = [
+        ({'transport': 'stdio', 'command': 'coder', 'args': ['old'], 'env': {'KEEP': 'x', 'DROP': 'y'}},
+         {'command': 'coder', 'args': [], 'env': {'KEEP': 'x'}}),
+        ({'transport': 'http', 'url': 'https://x.test', 'headers': {'KEEP': 'x', 'DROP': 'y'}},
+         {'url': 'https://x.test', 'headers': {}}),
+        ({'transport': 'streamable-http', 'url': 'https://x.test', 'headers': {'TOKEN': 'y'}},
+         {'command': 'coder', 'args': [], 'env': {}}),
+        ({'transport': 'stdio', 'command': 'coder', 'args': ['old'], 'env': {'TOKEN': 'y'}, 'cwd': '/old'},
+         {'url': 'https://x.test', 'headers': {}}),
+    ]
+    for current, desired in cases:
+        seed({'target': current})
+        before = json.loads(state_path.read_text())['agent_settings']
+        invoke({'mcp_servers': {'target': desired}})
+        for line in body_path.read_text().splitlines():
+            method, path, raw = line.split(' ', 2)
+            assert method == 'PATCH' and path == '/api/settings/mcp/target'
+            patch = MCPServerPatch.model_validate(json.loads(raw)).model_dump(
+                mode='python', exclude_unset=True, context={'expose_secrets': 'plaintext'})
+            after = apply_agent_settings_diff(before, {'mcp_config': {'target': patch}})
+            target = after.mcp_config['target']
+            MCPServer.model_validate(target)
+            if 'env' in desired:
+                assert set(target.env or {}) == set(desired['env'])
+            if 'headers' in desired:
+                assert set(target.headers or {}) == set(desired['headers'])
+            if 'args' in desired:
+                assert target.args == desired['args']
+            if 'command' in desired:
+                assert target.url is None and target.headers is None and target.auth is None
+            else:
+                assert target.command is None and target.args is None and target.env is None and target.cwd is None
+        serialized = json.loads(after.model_dump_json(context={'expose_secrets': 'plaintext'}))
+        seed(serialized['mcp_config'])
+        invoke({'mcp_servers': {'target': desired}})
+        assert not body_path.read_text().strip(), body_path.read_text()
+    before = {'agent_kind': 'openhands', 'mcp_config': {'target': {'transport': 'stdio', 'command': 'coder'}}}
+    after = apply_agent_settings_diff(before, {'agent_kind': 'acp'})
+    assert not after.mcp_config
+    print('installed OpenHands model tests passed (4 MCP patches and agent-kind reset)')
+PYTEST
 
 echo 'applier tests passed'
 INNER
