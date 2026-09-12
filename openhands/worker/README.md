@@ -405,11 +405,11 @@ checksummed in `checksums.txt` like every other asset.
 ### mcp_servers
 
 Each key is one MCP server on the OpenHands agent. A remote server sets `url` and
-may set `headers`; a stdio server sets `command` and may set `args`. The two
-shapes are mutually exclusive. A header value is either a literal string or
-`{"secret": "NAME"}`, which resolves to the Canvas secret of that name, so the
-material stays in the vault and reaches the header without ever being written
-into a profile:
+may set `headers`; a stdio server sets `command` and may set `args` and `env`.
+The two shapes are mutually exclusive. A header or env value is either a literal
+string or `{"secret": "NAME"}`, which resolves to the Canvas secret of that
+name, so the material stays in the vault and reaches the header or the
+subprocess environment without ever being written into a profile:
 
 ```json
 {
@@ -427,7 +427,7 @@ into a profile:
 The overlay reads `agent_settings.mcp_config` from `GET /api/settings` with
 `X-Expose-Secrets: plaintext` and writes only the difference: a server the
 backend does not know is created with `POST /api/settings/mcp/<key>`, one whose
-url, transport, headers, command, or args drifted is corrected with a sparse
+url, transport, headers, command, args, or env drifted is corrected with a sparse
 `PATCH /api/settings/mcp/<key>`, and one that already matches is left alone.
 Servers the backend holds but the profile does not name are never touched.
 
@@ -459,6 +459,16 @@ The overlay resolves it into the `x-litellm-api-key` header of the
 `litellm-tools` entry, with the `Bearer ` prefix the gateway requires. One vault
 item therefore serves every consumer, and neither the profile nor the dotfiles
 repository ever holds the key.
+
+`CODER_SESSION_TOKEN` reaches the `coder` stdio server the same way, through
+`env`. The server is `coder exp mcp server` from the image's own Coder CLI with
+an explicit `--allowed-tools` list: read templates and workspaces, create and
+start or stop workspaces, and run commands and file operations inside them.
+Template administration, chat, port forwarding, and archive upload are not on
+the list. Workspace deletion is a build transition and therefore reachable; the
+`coder-workspaces` skill forbids it, and the token is a dedicated Coder token,
+so the worker's reach is bounded by that token's user and scopes, not by the
+profile.
 
 `GH_TOKEN` follows the same route for a different purpose. It is declared in the
 host profile, resolved from the worker's GitHub PAT vault item, and reaches the
@@ -587,8 +597,10 @@ deployment-specific; image does not claim to configure them.
 
 ## Tool convergence and updates
 
-`provision.sh` bootstraps exact Node `24.20.0`, uv/uvx `0.12.7`, and Omni `0.10.14`
-with vendor checksum verification. Omni desired state is
+`provision.sh` bootstraps exact Node `24.20.0`, uv/uvx `0.12.7`, Omni `0.10.14`,
+and the Coder CLI `2.37.1` with vendor checksum verification. The Coder CLI is
+the stdio MCP server the `coder` entry in `openhands/profiles/common.json`
+launches; it is never used interactively on the worker. Omni desired state is
 `openhands/worker/image/omni/settings.json`, copied root-owned to
 `/etc/openhands/omni/settings.json`.
 

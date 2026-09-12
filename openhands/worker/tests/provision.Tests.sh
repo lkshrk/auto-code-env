@@ -163,6 +163,18 @@ setup_fixture() {
   tar -czf /fixtures/omni_linux_x86_64.tar.gz -C /tmp/fixture-src/omni LICENSE README.md omni
   cp /fixtures/omni_linux_x86_64.tar.gz /fixtures/omni_linux_arm64.tar.gz
 
+  mkdir -p /tmp/fixture-src/coder
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'test "${1:-}" = version || exit 95' \
+    'printf "%s\\n" "Coder v2.37.1+22f4284 Fri Sep  4 08:39:11 UTC 2026" "https://github.com/coder/coder/commit/22f4284"' > /tmp/fixture-src/coder/coder
+  chmod 0755 /tmp/fixture-src/coder/coder
+  printf license > /tmp/fixture-src/coder/LICENSE
+  printf enterprise > /tmp/fixture-src/coder/LICENSE.enterprise
+  printf readme > /tmp/fixture-src/coder/README.md
+  tar -czf /fixtures/coder_2.37.1_linux_amd64.tar.gz -C /tmp/fixture-src/coder ./LICENSE ./LICENSE.enterprise ./README.md ./coder
+  cp /fixtures/coder_2.37.1_linux_amd64.tar.gz /fixtures/coder_2.37.1_linux_arm64.tar.gz
+
   cp /usr/bin/mv /usr/bin/mv.fixture-real
   printf '%s\n' \
     '#!/bin/sh' \
@@ -253,6 +265,13 @@ setup_fixture() {
     '    case "$(cat /tmp/fixture-machine-arch)" in x86_64|amd64) omni_target=x86_64 ;; aarch64|arm64) omni_target=arm64 ;; *) exit 72 ;; esac' \
     '    test "$url" = "https://github.com/lkshrk/omni/releases/download/v0.10.14/omni_linux_$omni_target.tar.gz" || exit 72' \
     '    /usr/bin/cp -- "/fixtures/omni_linux_$omni_target.tar.gz" "$output" ;;' \
+    '  https://github.com/coder/coder/releases/download/v2.37.1/coder_2.37.1_checksums.txt)' \
+    '    case "$(cat /tmp/fixture-machine-arch)" in x86_64|amd64) coder_target=amd64 ;; aarch64|arm64) coder_target=arm64 ;; *) exit 72 ;; esac' \
+    '    hash=$(/usr/bin/sha256sum "/fixtures/coder_2.37.1_linux_$coder_target.tar.gz"); hash=${hash%% *}; printf "%s  coder_2.37.1_linux_%s.tar.gz\\ndeadbeef  coder_2.37.1_linux_amd64.deb\\n" "$hash" "$coder_target" > "$output" ;;' \
+    '  https://github.com/coder/coder/releases/download/v2.37.1/coder_2.37.1_linux_*.tar.gz)' \
+    '    case "$(cat /tmp/fixture-machine-arch)" in x86_64|amd64) coder_target=amd64 ;; aarch64|arm64) coder_target=arm64 ;; *) exit 72 ;; esac' \
+    '    test "$url" = "https://github.com/coder/coder/releases/download/v2.37.1/coder_2.37.1_linux_$coder_target.tar.gz" || exit 72' \
+    '    /usr/bin/cp -- "/fixtures/coder_2.37.1_linux_$coder_target.tar.gz" "$output" ;;' \
     '  *) exit 72 ;;' \
     'esac' > /usr/bin/curl
   for command in find sha256sum stat tar; do
@@ -420,6 +439,10 @@ run_container '
   test "$(/usr/local/bin/npx --version)" = "11.19.0"
   test "$(/usr/local/bin/uv --version)" = "uv 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)"
   test "$(/usr/local/bin/uvx --version)" = "uvx 0.12.7 (a0b1c2d3 2026-08-29 x86_64-unknown-linux-gnu)"
+  test "$(/usr/local/bin/coder version | head -n 1)" = "Coder v2.37.1+22f4284 Fri Sep  4 08:39:11 UTC 2026"
+  test "$(stat -c "%U:%G %a" /usr/local/bin/coder)" = "root:root 755"
+  cmp -s /usr/local/bin/coder /tmp/fixture-src/coder/coder
+  ! compgen -G "/usr/local/bin/.coder-stage.*" >/dev/null
   mkdir /tmp/poison
   printf "%s\n" "#!/bin/sh" "exit 99" > /tmp/poison/node
   chmod 0755 /tmp/poison/node
@@ -457,6 +480,18 @@ run_container '
   test ! -e /tmp/foreign-uv-executed
   test ! -e /opt/openhands/node-v24.20.0-linux-x64
   test ! -e /usr/local/bin/node
+'
+
+run_container '
+  export WSL_DISTRO_NAME=openhands-worker
+  printf "%s\n" "#!/bin/sh" "touch /tmp/foreign-coder-executed" > /usr/local/bin/coder
+  chmod 0755 /usr/local/bin/coder
+  if bash /opt/openhands-build/provision.sh; then
+    exit 1
+  fi
+  test ! -e /tmp/foreign-coder-executed
+  test "$(cat /usr/local/bin/coder | tail -n 1)" = "touch /tmp/foreign-coder-executed"
+  ! compgen -G "/usr/local/bin/.coder*" >/dev/null
 '
 
 run_container '
@@ -685,6 +720,7 @@ run_container '
   test -d /opt/openhands/node-v24.20.0-linux-arm64
   test "$(readlink /usr/local/bin/node)" = /opt/openhands/node-v24.20.0-linux-arm64/bin/node
   test "$(/usr/local/bin/uv --version)" = "uv 0.12.7 (a0b1c2d3 2026-08-29 aarch64-unknown-linux-gnu)"
+  test "$(/usr/local/bin/coder version | head -n 1)" = "Coder v2.37.1+22f4284 Fri Sep  4 08:39:11 UTC 2026"
   cmp -s /etc/wsl.conf /src/openhands/worker/image/rootfs-wsl/etc/wsl.conf
 '
 

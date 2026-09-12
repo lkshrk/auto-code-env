@@ -52,8 +52,11 @@ release, verifies the checksums, and runs the command above.
 `--secrets-dir` holds one file per referenced secret name, and on orc it is a
 projection of the `openhands-secret` Kubernetes Secret: key `LITE_LLM` is
 projected to the path `LITELLM_API`, matching the secret name `common.json`
-declares. The `item` UUIDs stay in the profile and are simply unused there. A
-name the directory does not provide fails the run before the first backend call.
+declares, and a Coder token is projected to `CODER_SESSION_TOKEN`. The `item`
+UUIDs stay in the profile and are simply unused there. A name the directory does
+not provide fails the run before the first backend call. The `coder` stdio server
+also needs the Coder CLI on the agent-server `PATH`; the worker image installs
+it, orc's image must carry it too.
 `llm.api_key_item` is read from the file `LLM_API_KEY` and `git_sync.token_item`
 from `GIT_SYNC_TOKEN`; every `secrets` entry is read from its own name.
 
@@ -123,12 +126,13 @@ optional. Layering keys these by `repo_path`.
 ### `mcp_servers`
 
 A map of server key to one server. A remote server sets `url` and may set
-`headers`; a stdio server sets `command` and may set `args`. A server cannot set
-both `url` and `command`.
+`headers`; a stdio server sets `command` and may set `args` and `env`. A server
+cannot set both `url` and `command`.
 
-A header value is either a literal string or `{"secret": "NAME"}`, which resolves
-to the Canvas secret of that name. The name must be declared in the merged
-`secrets` section or the profile is refused.
+A header or env value is either a literal string or `{"secret": "NAME"}`, which
+resolves to the Canvas secret of that name. The name must be declared in the
+merged `secrets` section or the profile is refused. Env names are upper-case
+environment variable names.
 
 ```json
 {

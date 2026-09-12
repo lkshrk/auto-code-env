@@ -35,6 +35,7 @@ printf 'sk-llm-FIXTUREKEY111111111111' > /tmp/secrets/LLM_API_KEY
 printf 'sk-llm-FIXTUREKEY111111111111\n' > /tmp/secrets/LITELLM_API
 printf 'sk-ant-FIXTUREANTHROPIC22222' > /tmp/secrets/ANTHROPIC_API_KEY
 printf 'ghs_FIXTUREGITSYNCTOKEN33333' > /tmp/secrets/GIT_SYNC_TOKEN
+printf 'coder-FIXTURESESSION44444' > /tmp/secrets/CODER_SESSION_TOKEN
 
 fresh_state() {
   cat > /tmp/api/state.json <<'EOF'
@@ -70,6 +71,7 @@ cat > /tmp/common.json <<'EOF'
   "llm": {"model": "common/model", "base_url": "https://common.example/v1"},
   "secrets": {
     "ANTHROPIC_API_KEY": {"item": "77777777-7777-7777-7777-777777777777"},
+    "CODER_SESSION_TOKEN": {"item": "99999999-9999-9999-9999-999999999999"},
     "LITELLM_API": {"item": "66666666-6666-6666-6666-666666666666", "prefix": "Bearer "}
   },
   "skills": [
@@ -77,6 +79,11 @@ cat > /tmp/common.json <<'EOF'
     {"source": "https://github.com/lkshrk/auto-code-env.git", "ref": "main", "repo_path": "openhands/skills/common-only"}
   ],
   "mcp_servers": {
+    "coder": {
+      "command": "coder",
+      "args": ["exp", "mcp", "server", "--allowed-tools", "coder_list_workspaces"],
+      "env": {"CODER_URL": "https://coder.example", "CODER_SESSION_TOKEN": {"secret": "CODER_SESSION_TOKEN"}}
+    },
     "litellm-tools": {
       "url": "https://api.ai.h-cloud.lan/mcp/",
       "headers": {"x-litellm-api-key": {"secret": "LITELLM_API"}}
@@ -117,6 +124,7 @@ EOF
 
 items=$("$apply" --print secret-items /tmp/common.json /tmp/host.json)
 test "$items" = 'ANTHROPIC_API_KEY 77777777-7777-7777-7777-777777777777
+CODER_SESSION_TOKEN 99999999-9999-9999-9999-999999999999
 GIT_SYNC_TOKEN 88888888-8888-8888-8888-888888888888
 LITELLM_API 66666666-6666-6666-6666-666666666666
 LLM_API_KEY 66666666-6666-6666-6666-666666666666'
@@ -124,11 +132,11 @@ LLM_API_KEY 66666666-6666-6666-6666-666666666666'
 test ! -e /tmp/log/api
 applied=$(run /tmp/common.json /tmp/host.json)
 printf '%s\n' "$applied" | grep -Fq 'settings applied: llm'
-printf '%s\n' "$applied" | grep -Fq 'secrets applied: ANTHROPIC_API_KEY, LITELLM_API'
-printf '%s\n' "$applied" | grep -Fq 'mcp_servers applied: litellm-tools, openaiDeveloperDocs'
+printf '%s\n' "$applied" | grep -Fq 'secrets applied: ANTHROPIC_API_KEY, CODER_SESSION_TOKEN, LITELLM_API'
+printf '%s\n' "$applied" | grep -Fq 'mcp_servers applied: coder, litellm-tools, openaiDeveloperDocs'
 printf '%s\n' "$applied" | grep -Fq 'skills applied: agent-sandbox-deploy, common-only'
 printf '%s\n' "$applied" | grep -Fq 'git_sync applied: branch, interval_seconds, path, repo_url, token'
-if printf '%s\n' "$applied" | grep -Eq 'sk-llm|sk-ant|ghs_'; then echo 'secret leaked to stdout'; exit 1; fi
+if printf '%s\n' "$applied" | grep -Eq 'sk-llm|sk-ant|ghs_|coder-FIXTURE'; then echo 'secret leaked to stdout'; exit 1; fi
 test "$(stat -c '%a' /tmp/state/git-sync-token.sha256)" = 600
 
 python3 - <<'PY'
@@ -139,10 +147,18 @@ assert agent['llm']['model'] == 'openai/gpt-5.6-sol', agent
 assert agent['llm']['base_url'] == 'https://api.ai.h-cloud.lan/v1', agent
 assert agent['llm']['api_key'] == 'sk-llm-FIXTUREKEY111111111111', agent
 servers = agent['mcp_config']
-assert sorted(servers) == ['litellm-tools', 'openaiDeveloperDocs'], servers
+assert sorted(servers) == ['coder', 'litellm-tools', 'openaiDeveloperDocs'], servers
 assert servers['litellm-tools']['headers'] == {'x-litellm-api-key': 'Bearer sk-llm-FIXTUREKEY111111111111'}, servers
+assert servers['coder'] == {
+    'transport': 'stdio',
+    'command': 'coder',
+    'args': ['exp', 'mcp', 'server', '--allowed-tools', 'coder_list_workspaces'],
+    'env': {'CODER_URL': 'https://coder.example', 'CODER_SESSION_TOKEN': 'coder-FIXTURESESSION44444'},
+    'enabled': True,
+}, servers
 assert state['secrets'] == {
     'ANTHROPIC_API_KEY': 'sk-ant-FIXTUREANTHROPIC22222',
+    'CODER_SESSION_TOKEN': 'coder-FIXTURESESSION44444',
     'LITELLM_API': 'Bearer sk-llm-FIXTUREKEY111111111111',
 }, state['secrets']
 assert state['git_sync_token'] == 'ghs_FIXTUREGITSYNCTOKEN33333', state
@@ -196,15 +212,30 @@ if "$apply" --print secret-items /tmp/bad-section.json >/dev/null 2>&1; then
   echo 'unknown section must be rejected'
   exit 1
 fi
+printf '{"mcp_servers": {"coder": {"command": "coder", "env": {"CODER_SESSION_TOKEN": {"secret": "CODER_SESSION_TOKEN"}}}}}' > /tmp/bad-env-secret.json
+if "$apply" --print secret-items /tmp/bad-env-secret.json >/dev/null 2>&1; then
+  echo 'an env secret must be declared'
+  exit 1
+fi
+printf '{"mcp_servers": {"coder": {"command": "coder", "env": {"coder-url": "x"}}}}' > /tmp/bad-env-name.json
+if "$apply" --print secret-items /tmp/bad-env-name.json >/dev/null 2>&1; then
+  echo 'an env name must be an environment variable name'
+  exit 1
+fi
+printf '{"mcp_servers": {"remote": {"url": "https://x.example/mcp", "env": {"A": "b"}}}}' > /tmp/bad-env-remote.json
+if "$apply" --print secret-items /tmp/bad-env-remote.json >/dev/null 2>&1; then
+  echo 'a remote server must not set env'
+  exit 1
+fi
 
 rm -rf /tmp/state
 mkdir -p /tmp/state
 fresh_state
 : > /tmp/log/api
 orc=$(run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json)
-printf '%s\n' "$orc" | grep -Fq 'secrets applied: LITELLM_API'
-printf '%s\n' "$orc" | grep -Fq 'mcp_servers applied: litellm-tools, openaiDeveloperDocs'
-printf '%s\n' "$orc" | grep -Fq 'skills applied: agent-sandbox-deploy'
+printf '%s\n' "$orc" | grep -Fq 'secrets applied: CODER_SESSION_TOKEN, LITELLM_API'
+printf '%s\n' "$orc" | grep -Fq 'mcp_servers applied: coder, litellm-tools, openaiDeveloperDocs'
+printf '%s\n' "$orc" | grep -Fq 'skills applied: agent-sandbox-deploy, coder-workspaces'
 if printf '%s\n' "$orc" | grep -Fq 'git_sync'; then echo 'the orc profile must not configure git sync'; exit 1; fi
 test ! -e /tmp/state/git-sync-token.sha256
 python3 - <<'PY'
@@ -212,7 +243,7 @@ import json
 state = json.load(open('/tmp/api/state.json'))
 assert state['agent_settings']['agent_kind'] == 'openhands', state['agent_settings']
 assert state['agent_settings']['llm']['model'] == 'stale/model', state['agent_settings']
-assert list(state['secrets']) == ['LITELLM_API'], state['secrets']
+assert sorted(state['secrets']) == ['CODER_SESSION_TOKEN', 'LITELLM_API'], state['secrets']
 PY
 
 echo 'applier tests passed'

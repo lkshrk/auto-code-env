@@ -27,6 +27,8 @@ readonly -a AGENT_PACKAGES=(
     '@openai/codex@0.151.0'
 )
 readonly UV_VERSION=0.12.7
+readonly CODER_VERSION=2.37.1
+readonly CODER_BINARY=/usr/local/bin/coder
 readonly RBW_PACKAGE_VERSION=1.13.2-7
 readonly RBW_BINARY=/usr/bin/rbw
 readonly RBW_PINENTRY_DIRECTORY=/usr/local/libexec
@@ -597,6 +599,9 @@ preflight_tool_paths() {
     if path_exists /usr/local/bin/uvx; then
         assert_root_file /usr/local/bin/uvx 755
     fi
+    if path_exists "$CODER_BINARY"; then
+        assert_root_file "$CODER_BINARY" 755
+    fi
 }
 
 download() {
@@ -846,6 +851,71 @@ stage_omni() {
     assert_omni_version "$staged_omni" archive
 }
 
+assert_safe_coder_archive() {
+    local archive=$1
+    local members_file member
+    local -a members=()
+
+    members_file=$(/usr/bin/mktemp "$coder_stage_root/archive-members.XXXXXX") ||
+        fail 'unable to list Coder archive members'
+    register_cleanup "$members_file"
+    run_clean /usr/bin/tar -tzf "$archive" > "$members_file" || fail 'unreadable Coder archive'
+    mapfile -t members < "$members_file" || fail 'unable to read Coder archive members'
+    [ "${#members[@]}" -eq 4 ] || fail 'invalid Coder archive contents'
+    for member in "${members[@]}"; do
+        case $member in ./LICENSE|./LICENSE.enterprise|./README.md|./coder) ;; *) fail "unsafe Coder archive member: $member" ;; esac
+    done
+    [ "${members[3]}" = ./coder ] || fail 'invalid Coder archive contents'
+}
+
+assert_coder_version() {
+    local binary=$1
+    local context=$2
+    local output
+
+    output=$(run_clean "$binary" version 2>/dev/null) || fail "unable to run Coder $context"
+    case $output in "Coder v${CODER_VERSION}+"*) ;; *) fail "invalid Coder $context" ;; esac
+}
+
+stage_coder() {
+    local checksums="$coder_stage_root/checksums.txt"
+    local archive="$coder_stage_root/$CODER_ARCHIVE"
+    local checksum
+
+    download "https://github.com/coder/coder/releases/download/v${CODER_VERSION}/coder_${CODER_VERSION}_checksums.txt" "$checksums"
+    download "https://github.com/coder/coder/releases/download/v${CODER_VERSION}/${CODER_ARCHIVE}" "$archive"
+    checksum=$(/usr/bin/awk -v archive="$CODER_ARCHIVE" '$2 == archive { print; count++ } END { if (count != 1) exit 1 }' "$checksums") ||
+        fail 'Coder checksum is missing or ambiguous'
+    printf '%s\n' "$checksum" | (cd "$coder_stage_root" && run_clean /usr/bin/sha256sum -c -) ||
+        fail 'Coder checksum verification failed'
+    assert_safe_coder_archive "$archive"
+    staged_coder="$coder_stage_root/coder"
+    run_clean /usr/bin/tar -xOzf "$archive" ./coder > "$staged_coder" || fail 'unable to extract Coder binary'
+    /usr/bin/chown root:root "$staged_coder"
+    /usr/bin/chmod 0755 "$staged_coder"
+    assert_root_file "$staged_coder" 755
+    assert_coder_version "$staged_coder" archive
+}
+
+install_coder() {
+    local temp
+
+    if path_exists "$CODER_BINARY"; then
+        assert_root_file "$CODER_BINARY" 755
+        /usr/bin/cmp -s "$CODER_BINARY" "$staged_coder" || fail 'foreign Coder installation'
+        assert_coder_version "$CODER_BINARY" installation
+        return
+    fi
+    temp=$(/usr/bin/mktemp /usr/local/bin/.coder.XXXXXX) || fail 'unable to stage Coder binary'
+    register_cleanup "$temp"
+    /usr/bin/install -T -o root -g root -m 0755 "$staged_coder" "$temp"
+    /usr/bin/mv -T -n -- "$temp" "$CODER_BINARY"
+    /usr/bin/rm -f -- "$temp"
+    assert_root_file "$CODER_BINARY" 755
+    /usr/bin/cmp -s "$CODER_BINARY" "$staged_coder" || fail 'invalid Coder installation'
+    assert_coder_version "$CODER_BINARY" installation
+}
+
 install_omni_config() {
     ensure_openhands_etc
     if path_exists "$OMNI_CONFIG_DIRECTORY"; then
@@ -1045,10 +1115,13 @@ stage_toolchain() {
     register_cleanup "$uv_stage_root"
     omni_stage_root=$(/usr/bin/mktemp -d /usr/local/bin/.omni-stage.XXXXXX)
     register_cleanup "$omni_stage_root"
+    coder_stage_root=$(/usr/bin/mktemp -d /usr/local/bin/.coder-stage.XXXXXX)
+    register_cleanup "$coder_stage_root"
 
     stage_node
     stage_uv
     stage_omni
+    stage_coder
 }
 
 validate_installed_node_tree() {
@@ -1203,8 +1276,8 @@ fi
 
 machine_arch=$(/usr/bin/uname -m)
 case "$machine_arch" in
-    x86_64|amd64) node_arch=x64; uv_target=x86_64-unknown-linux-gnu; omni_target=x86_64 ;;
-    aarch64|arm64) node_arch=arm64; uv_target=aarch64-unknown-linux-gnu; omni_target=arm64 ;;
+    x86_64|amd64) node_arch=x64; uv_target=x86_64-unknown-linux-gnu; omni_target=x86_64; coder_target=amd64 ;;
+    aarch64|arm64) node_arch=arm64; uv_target=aarch64-unknown-linux-gnu; omni_target=arm64; coder_target=arm64 ;;
     *) fail "unsupported architecture: $machine_arch" ;;
 esac
 readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-${node_arch}"
@@ -1218,6 +1291,7 @@ readonly UV_DIRECTORY="uv-${UV_TARGET}"
 readonly UV_ARCHIVE="${UV_DIRECTORY}.tar.gz"
 readonly OMNI_TARGET="$omni_target"
 readonly OMNI_ARCHIVE="omni_linux_${OMNI_TARGET}.tar.gz"
+readonly CODER_ARCHIVE="coder_${CODER_VERSION}_linux_${coder_target}.tar.gz"
 
 resolve_assets
 if ! /usr/bin/id agent >/dev/null 2>&1; then
@@ -1244,6 +1318,7 @@ validate_existing_tool_paths
 commit_toolchain
 verify_toolchain
 install_omni
+install_coder
 install_omni_config
 prepare_omni_state
 preflight_agent_npm_paths

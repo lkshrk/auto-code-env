@@ -19,6 +19,7 @@ UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 SECRET_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 MCP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 LLM_API_KEY = "LLM_API_KEY"
 GIT_SYNC_TOKEN = "GIT_SYNC_TOKEN"
 STATE_DIRECTORY = "/var/lib/openhands/overlay"
@@ -118,9 +119,9 @@ def validate_mcp_servers(servers):
         if not MCP_NAME.match(name):
             fail("mcp_servers key %r must be a server name" % name)
         server = servers[name]
-        object_keys(label, server, ("url", "headers", "command", "args"))
+        object_keys(label, server, ("url", "headers", "command", "args", "env"))
         if "url" in server:
-            if "command" in server or "args" in server:
+            if "command" in server or "args" in server or "env" in server:
                 fail("%s must set either url or command, not both" % label)
             url = as_text("%s.url" % label, server["url"])
             if not url.startswith(("http://", "https://")):
@@ -133,24 +134,29 @@ def validate_mcp_servers(servers):
                 fail("%s.args must be an array" % label)
             for part in args:
                 as_text("%s.args entry" % label, part)
+            validate_secret_map("%s.env" % label, server.get("env", {}), ENV_NAME, "an environment variable name")
         else:
             fail("%s must set url for a remote server or command for a stdio one" % label)
 
 
 def validate_mcp_headers(label, headers):
-    if not isinstance(headers, dict):
-        fail("%s.headers must be an object" % label)
-    for name in headers:
-        if not HEADER_NAME.match(name):
-            fail("%s.headers name %r is not an HTTP header name" % (label, name))
-        value = headers[name]
+    validate_secret_map("%s.headers" % label, headers, HEADER_NAME, "an HTTP header name")
+
+
+def validate_secret_map(label, values, pattern, kind):
+    if not isinstance(values, dict):
+        fail("%s must be an object" % label)
+    for name in values:
+        if not pattern.match(name):
+            fail("%s name %r is not %s" % (label, name, kind))
+        value = values[name]
         if isinstance(value, dict):
-            object_keys("%s.headers.%s" % (label, name), value, ("secret",))
+            object_keys("%s.%s" % (label, name), value, ("secret",))
             reference = value.get("secret")
             if not isinstance(reference, str) or not SECRET_NAME.match(reference):
-                fail("%s.headers.%s.secret must be a secret name" % (label, name))
+                fail("%s.%s.secret must be a secret name" % (label, name))
         else:
-            as_text("%s.headers.%s" % (label, name), value)
+            as_text("%s.%s" % (label, name), value)
 
 
 def validate_git_sync(git_sync):
@@ -228,14 +234,16 @@ def load_all(paths, skip):
         del profile[section]
     secrets = profile.get("secrets") or {}
     for name in profile.get("mcp_servers") or {}:
-        headers = (profile["mcp_servers"][name] or {}).get("headers") or {}
-        for header in headers:
-            value = headers[header]
-            if isinstance(value, dict) and value["secret"] not in secrets:
-                fail(
-                    "mcp_servers.%s.headers.%s references undeclared secret %s"
-                    % (name, header, value["secret"])
-                )
+        server = profile["mcp_servers"][name] or {}
+        for field in ("headers", "env"):
+            values = server.get(field) or {}
+            for key in values:
+                value = values[key]
+                if isinstance(value, dict) and value["secret"] not in secrets:
+                    fail(
+                        "mcp_servers.%s.%s.%s references undeclared secret %s"
+                        % (name, field, key, value["secret"])
+                    )
     return profile, dropped
 
 
@@ -370,19 +378,26 @@ def apply_secrets(api, profile, secret):
     print("secrets applied: %s" % (", ".join(changed) if changed else "none changed"))
 
 
+def resolve_secret_map(values, secret, profile):
+    return dict(
+        (name, declared_secret(profile, secret, value["secret"]) if isinstance(value, dict) else value)
+        for name, value in values.items()
+    )
+
+
 def mcp_body(server, secret, profile):
     if "url" in server:
         body = {"transport": "http", "url": server["url"]}
         headers = server.get("headers") or {}
         if headers:
-            body["headers"] = dict(
-                (name, declared_secret(profile, secret, value["secret"]) if isinstance(value, dict) else value)
-                for name, value in headers.items()
-            )
+            body["headers"] = resolve_secret_map(headers, secret, profile)
         return body
     body = {"transport": "stdio", "command": server["command"]}
     if server.get("args"):
         body["args"] = list(server["args"])
+    env = server.get("env") or {}
+    if env:
+        body["env"] = resolve_secret_map(env, secret, profile)
     return body
 
 
