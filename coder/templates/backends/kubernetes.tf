@@ -286,7 +286,9 @@ resource "kubernetes_pod_v1" "workspace" {
       for_each = local.enable_dind ? [1] : []
       content {
         name = "dind-storage"
-        empty_dir {}
+        empty_dir {
+          size_limit = "50Gi"
+        }
       }
     }
   }
