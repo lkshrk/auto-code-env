@@ -8,6 +8,7 @@
     {
       "matchManagers": ["git-submodules"],
       "matchPackageNames": ["https://github.com/OpenHands/OpenHands.git"],
+      "versioning": "semver",
       "allowedVersions": "/^v\\d+\\.\\d+\\.\\d+$/",
     },
   ],
