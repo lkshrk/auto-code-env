@@ -51,9 +51,10 @@ apply-profile.py --api http://openhands:8000 --api-key-file /secrets/sessionApiK
   profile-common.json profile-orc.json
 ```
 
-A Kubernetes Job downloads `apply-profile.py`, `profile-common.json`,
-`profile-orc.json`, and `checksums.txt` from one pinned `openhands-worker-v*`
-release, verifies the checksums, and runs the command above.
+Live settings are managed directly in OpenHands. Normal Kubernetes deployment
+does not apply these profiles. Run the command above explicitly for bootstrap
+or recovery only, using reviewed assets and verifying their release checksums
+when downloading them. A worker release is not required for live settings edits.
 
 `--secrets-dir` holds one file per referenced secret name, and on orc it is a
 projection of the `openhands-secret` Kubernetes Secret: key `LITE_LLM` is
@@ -73,18 +74,17 @@ everything else it needs: `secrets`, `skills`, and `mcp_servers`.
 
 ## Gateway cutover
 
-Publish and checksum-verify the applicator and profiles together, then update the
-infrastructure release pin. Old v0.5.1 assets cannot perform this migration.
-Before applying, verify aggregate gateway discovery, a harmless Coder call,
-unauthorized-key rejection, and non-allowlisted-tool rejection. Confirm the
-shared Coder identity and scopes match the intended workspace/template boundary;
-a tool-name allowlist does not constrain commands executed by workspace bash.
+Before changing live settings, verify aggregate gateway discovery, a harmless
+Coder call, unauthorized-key rejection, and non-allowlisted-tool rejection.
+Confirm the shared Coder identity and scopes match the intended workspace/template
+boundary; a tool-name allowlist does not constrain workspace bash commands.
 
-Require successful profile Job completion, inspect persisted settings without
-printing credentials, and start fresh conversations. Existing conversations may
-retain old configuration. Prepare an explicit settings restore and a valid
-credential source for rollback; reverting the release pin does not restore a
-deleted connection or secret. Do not revoke the old credential until acceptance.
+Back up live settings privately, then explicitly remove the dedicated Coder
+connection and retired OpenHands token through the settings UI/API or the reviewed
+migration profile. Verify settings without printing credentials and start fresh
+conversations; existing conversations may retain old configuration. Keep the
+LiteLLM upstream token. Prepare rollback before retiring any old credential.
+Neither worker publication nor a profile Job is a live cutover prerequisite.
 
 ## Schema
 
@@ -179,3 +179,114 @@ environment variable names.
 | `token_item` | string | Vaultwarden item UUID holding the sync token |
 | `interval_seconds` | non-negative integer | poll interval, `0` disables polling |
 
+
+## Private backup / restore of active settings
+
+`backup-profile.py` is a standalone **stdlib Python 3 CLI for POSIX hosts**. It is
+an operator-triggered snapshot, not a reconciliation loop. Its
+`openhands-settings-snapshot` version 1 JSON format is **not** the declarative
+profile schema above and must not be passed to `apply-profile.py`.
+
+```sh
+umask 077
+mkdir -p "$HOME/private-backups"
+python3 openhands/profiles/backup-profile.py backup "$HOME/private-backups/settings.json" \
+  --api http://127.0.0.1:18000 --api-key-file /private/session-api-key
+python3 openhands/profiles/backup-profile.py preview "$HOME/private-backups/settings.json"
+python3 openhands/profiles/backup-profile.py restore "$HOME/private-backups/settings.json"
+# Explicit mutation, only after reviewing the scope below:
+python3 openhands/profiles/backup-profile.py restore "$HOME/private-backups/settings.json" \
+  --api http://127.0.0.1:18000 --api-key-file /private/session-api-key --apply
+```
+
+Use the actual **agent-server origin**, not an automation backend; the script
+calls `/api/settings`. `--api` accepts HTTPS or HTTP on a literal loopback IP
+(not `localhost`). URL credentials, paths, queries, fragments, redirects and
+proxies are refused/disabled. TLS uses normal certificate verification. Each
+request has a 15-second socket timeout and a 16 MiB response limit. No retries
+are automatic. The API key is read from a private regular file, never a CLI
+argument value. Symlink input files and group/world-accessible input files are
+refused; use a trusted private parent directory too. Output is newly created
+0600, never overwritten (including symlinks). The complete serialized UTF-8
+snapshot is limited to 16 MiB, including all custom secrets; oversized backups
+fail before writing snapshot bytes. A failed backup removes its
+incomplete output; an interrupted process may leave an incomplete private file.
+
+**Backups may contain plaintext credentials**, even without `--include-secrets`.
+The settings GET explicitly requests `X-Expose-Secrets: plaintext` so embedded
+LLM/MCP credentials can be restored. Redacted settings are not usable backups.
+Never commit, publish, attach, or place snapshots in web/workspace/shared roots.
+Encrypt them with your approved at-rest encryption tool before transporting or
+archiving them; protect decryption keys separately and minimize plaintext
+retention. File permissions alone are not at-rest encryption. Preview and errors
+print counts/status only, not settings values, secret names, URLs, or response
+bodies.
+
+### Scope and completeness
+
+* Replaces **all active `agent_settings`**, including LLM, MCP, agent context,
+  and agent-kind-specific configuration. It also restores all persisted
+  `conversation_settings` defaults. New conversations pick up these defaults;
+  existing conversations are not changed.
+* The API is recursive merge-patch, not PUT. The script computes nested deletion
+  markers so stale MCP servers, headers, environment variables and other managed
+  map entries are removed. Lists are replaced.
+* Restore eligibility depends on the destination. Explicit agent nulls are
+  supported only when unchanged and omitted from the patch. Changing a value
+  to null, introducing a null-bearing subtree, or replacing a null-bearing array
+  fails before mutation. Agent-kind switches compare against an empty base;
+  null-bearing switches, including current SDK default variants, are rejected.
+  This conservative contract avoids guessing schema-dependent default resets.
+  Conversation-default nulls follow their separate API semantics.
+* Successful backup or offline preview does not guarantee restoration onto a
+  fresh or different destination. For full disaster recovery, use a tested backup
+  of OpenHands persisted state. Restored settings are read back and compared
+  exactly before custom-secret writes; other normalization mismatches cause a
+  reported partial failure rather than silently reporting success.
+* Default `custom_secrets: null` means **custom secrets were omitted**, not that
+  there were none. Restore leaves the custom-secret store untouched and is
+  incomplete if the restored configuration needs missing custom secrets.
+  Use `--include-secrets` on **backup and applied restore** to include all custom
+  secret names, descriptions and plaintext values. An included empty list means
+  the source had none. Included secrets are **upserted**, never deleted; unrelated
+  destination secrets always survive. Thus this is complete for the captured
+  managed scope, not an exact replacement of the entire secret store.
+* Excludes `misc_settings`, active profile pointers, saved profile catalogs,
+  provider-connection stores, OAuth/subscription state outside agent settings,
+  automation/git-sync configuration, installed skill files, conversations,
+  history, workspaces, and filesystem data. Referenced provider connections,
+  skills, binaries and paths must already exist at the destination. This is not
+  a full instance disaster-recovery backup.
+
+Snapshot envelope, complete known agent field set, schema versions, conversation
+fields, basic credential/map shapes, secret names/types, duplicate keys and
+non-finite JSON values are checked before mutation. The stdlib CLI deliberately
+does not reimplement every SDK model validator: the server validates the settings
+PATCH. Supported contracts are agent schema 5 (`openhands`/`acp`) and conversation
+schema 1, tested against SDK 1.46.0. Other versions/agent field sets fail closed.
+Do not hand-edit snapshots or restore across untested server versions.
+
+Restore without `--apply` and `preview` are **offline**, validate the snapshot and
+print counts only; they do not predict a destination diff or validate remote
+compatibility. Quiesce other settings writers before backup/restore: there is no
+cross-request snapshot lock or compare-and-swap. A restore applies one settings
+PATCH, verifies it, then upserts custom secrets individually. This sequence is
+**nontransactional**; a failure or timeout can leave some changes applied, and no
+rollback is attempted. Investigate privately before retrying. Backup with custom
+secrets also spans several reads and requires a quiet source for consistency.
+
+### Tests
+
+```sh
+OPENHANDS_SUPPRESS_BANNER=1 python -m unittest discover \
+  -s openhands/worker/tests -p test_backup_profile.py -v
+```
+
+Tests need an already-installed OpenHands agent-server/SDK; the CLI itself needs
+only the standard library. Model roundtrips call the real `PersistedSettings`
+merge implementation with synthetic settings, including fail-closed agent-kind
+changes, null transitions and unchanged nulls.
+A loopback-only HTTP fixture is necessary to exercise the subprocess CLI's file
+permissions, exposure/auth headers, redirect/proxy behavior, output redaction,
+opt-in gates and partial failures without exporting or modifying user settings.
+The fixture delegates settings mutation to the real model, not a mock merge.
