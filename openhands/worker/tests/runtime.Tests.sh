@@ -162,10 +162,20 @@ assert litellm["url"] == "https://api.ai.h-cloud.lan/mcp/", litellm
 assert litellm["headers"]["x-litellm-api-key"] == {"secret": "LITELLM_API"}, litellm
 assert profile["mcp_servers"]["openaiDeveloperDocs"]["url"] == "https://developers.openai.com/mcp", profile["mcp_servers"]
 PY
-python3 - "$repo_root/openhands/profiles/orc.json" <<'PY'
+python3 - "$repo_root/openhands/profiles/orc.json" "$repo_root/openhands/profiles/common.json" <<'PY'
 import json, sys
 profile = json.load(open(sys.argv[1]))
-assert profile == {"agent": {"kind": "openhands"}}, profile
+common = json.load(open(sys.argv[2]))
+assert set(profile) == {"agent", "mcp_servers"}, sorted(profile)
+assert profile["agent"] == {"kind": "openhands"}, profile["agent"]
+assert set(profile["mcp_servers"]) == {"coder"}, sorted(profile["mcp_servers"])
+orc_coder = profile["mcp_servers"]["coder"]
+common_coder = common["mcp_servers"]["coder"]
+assert orc_coder["command"] == "/home/openhands/.openhands/bin/coder", orc_coder
+assert common_coder["command"] == "coder", common_coder
+assert {k: v for k, v in orc_coder.items() if k != "command"} == {
+    k: v for k, v in common_coder.items() if k != "command"
+}, orc_coder
 PY
 grep -Fx 'ARG OPENHANDS_WORKER_VERSION=dev' "$containerfile"
 grep -F 'printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release' "$containerfile"
@@ -173,7 +183,7 @@ grep -F 'RELEASE_MARKER=/etc/openhands/release' "$overlay"
 grep -F 'VERSION="$version" docker buildx bake' "$repo_root/openhands/worker/image/build-wsl.sh"
 test "$(grep -c 'OPENHANDS_WORKER_VERSION = "${VERSION}"' "$repo_root/openhands/worker/image/docker-bake.hcl")" = 3
 grep -F '/etc/systemd/system/agent-canvas.service.d/10-overlay.conf' "$overlay"
-if grep -rn '= \[Runtime.InteropServices.RuntimeInformation\]' "$repo_root/worker/windows"; then
+if grep -rn '= \[Runtime.InteropServices.RuntimeInformation\]' "$repo_root/shared/windows"; then
   echo 'RuntimeInformation must not be a parameter default'
   exit 1
 fi
