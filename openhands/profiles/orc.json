@@ -1,24 +1,5 @@
 {
   "agent": {
     "kind": "openhands"
-  },
-  "mcp_servers": {
-    "coder": {
-      "command": "/home/openhands/.openhands/bin/coder",
-      "args": [
-        "exp",
-        "mcp",
-        "server",
-        "--allowed-tools",
-        "coder_get_authenticated_user,coder_list_templates,coder_get_template,coder_list_workspaces,coder_get_workspace,coder_create_workspace,coder_create_workspace_build,coder_get_workspace_build_logs,coder_get_workspace_agent_logs,coder_workspace_bash,coder_workspace_ls,coder_workspace_read_file,coder_workspace_write_file,coder_workspace_edit_file,coder_workspace_list_apps"
-      ],
-      "env": {
-        "CODER_URL": "https://coder.h-cloud.io",
-        "CODER_DISABLE_TELEMETRY": "true",
-        "CODER_SESSION_TOKEN": {
-          "secret": "CODER_SESSION_TOKEN"
-        }
-      }
-    }
   }
 }

@@ -166,16 +166,12 @@ python3 - "$repo_root/openhands/profiles/orc.json" "$repo_root/openhands/profile
 import json, sys
 profile = json.load(open(sys.argv[1]))
 common = json.load(open(sys.argv[2]))
-assert set(profile) == {"agent", "mcp_servers"}, sorted(profile)
+assert set(profile) == {"agent"}, sorted(profile)
 assert profile["agent"] == {"kind": "openhands"}, profile["agent"]
-assert set(profile["mcp_servers"]) == {"coder"}, sorted(profile["mcp_servers"])
-orc_coder = profile["mcp_servers"]["coder"]
 common_coder = common["mcp_servers"]["coder"]
-assert orc_coder["command"] == "/home/openhands/.openhands/bin/coder", orc_coder
-assert common_coder["command"] == "coder", common_coder
-assert {k: v for k, v in orc_coder.items() if k != "command"} == {
-    k: v for k, v in common_coder.items() if k != "command"
-}, orc_coder
+assert common_coder["url"] == "https://api.ai.h-cloud.lan/mcp/coder", common_coder
+assert common_coder["headers"]["x-litellm-api-key"] == {"secret": "LITELLM_API"}, common_coder
+assert "command" not in common_coder, common_coder
 PY
 grep -Fx 'ARG OPENHANDS_WORKER_VERSION=dev' "$containerfile"
 grep -F 'printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release' "$containerfile"

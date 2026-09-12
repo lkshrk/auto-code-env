@@ -460,15 +460,15 @@ The overlay resolves it into the `x-litellm-api-key` header of the
 item therefore serves every consumer, and neither the profile nor the dotfiles
 repository ever holds the key.
 
-`CODER_SESSION_TOKEN` reaches the `coder` stdio server the same way, through
-`env`. The server is `coder exp mcp server` from the image's own Coder CLI with
-an explicit `--allowed-tools` list: read templates and workspaces, create and
-start or stop workspaces, and run commands and file operations inside them.
-Template administration, chat, port forwarding, and archive upload are not on
-the list. Workspace deletion is a build transition and therefore reachable; the
-`coder-workspaces` skill forbids it, and the token is a dedicated Coder token,
-so the worker's reach is bounded by that token's user and scopes, not by the
-profile.
+The `coder` entry resolves the same item into the same header, because it is the
+LiteLLM MCP gateway rather than a local process. The gateway holds the Coder
+credential, restricts the server to the `coder-agents` access group, and enforces
+the tool allowlist at call time: read templates and workspaces, create and start
+or stop workspaces, and run commands and file operations inside them. Template
+administration, chat, port forwarding, and archive upload are not on the list.
+Workspace deletion is a build transition and therefore reachable; the
+`coder-workspaces` skill forbids it. No worker holds a Coder token, so a profile
+edit cannot widen that reach.
 
 `GH_TOKEN` follows the same route for a different purpose. It is declared in the
 host profile, resolved from the worker's GitHub PAT vault item, and reaches the

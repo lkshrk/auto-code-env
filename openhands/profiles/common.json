@@ -3,9 +3,6 @@
     "LITELLM_API": {
       "item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57",
       "prefix": "Bearer "
-    },
-    "CODER_SESSION_TOKEN": {
-      "item": "eef6d757-6b12-4d0b-a10f-4d549bb6a7e0"
     }
   },
   "skills": [
@@ -22,19 +19,10 @@
   ],
   "mcp_servers": {
     "coder": {
-      "command": "coder",
-      "args": [
-        "exp",
-        "mcp",
-        "server",
-        "--allowed-tools",
-        "coder_get_authenticated_user,coder_list_templates,coder_get_template,coder_list_workspaces,coder_get_workspace,coder_create_workspace,coder_create_workspace_build,coder_get_workspace_build_logs,coder_get_workspace_agent_logs,coder_workspace_bash,coder_workspace_ls,coder_workspace_read_file,coder_workspace_write_file,coder_workspace_edit_file,coder_workspace_list_apps"
-      ],
-      "env": {
-        "CODER_URL": "https://coder.h-cloud.io",
-        "CODER_DISABLE_TELEMETRY": "true",
-        "CODER_SESSION_TOKEN": {
-          "secret": "CODER_SESSION_TOKEN"
+      "url": "https://api.ai.h-cloud.lan/mcp/coder",
+      "headers": {
+        "x-litellm-api-key": {
+          "secret": "LITELLM_API"
         }
       }
     },

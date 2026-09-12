@@ -233,7 +233,7 @@ mkdir -p /tmp/state
 fresh_state
 : > /tmp/log/api
 orc=$(run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json)
-printf '%s\n' "$orc" | grep -Fq 'secrets applied: CODER_SESSION_TOKEN, LITELLM_API'
+printf '%s\n' "$orc" | grep -Fq 'secrets applied: LITELLM_API'
 printf '%s\n' "$orc" | grep -Fq 'mcp_servers applied: coder, litellm-tools, openaiDeveloperDocs'
 printf '%s\n' "$orc" | grep -Fq 'skills applied: agent-sandbox-deploy, coder-workspaces'
 if printf '%s\n' "$orc" | grep -Fq 'git_sync'; then echo 'the orc profile must not configure git sync'; exit 1; fi
@@ -243,10 +243,10 @@ import json
 state = json.load(open('/tmp/api/state.json'))
 assert state['agent_settings']['agent_kind'] == 'openhands', state['agent_settings']
 assert state['agent_settings']['llm']['model'] == 'stale/model', state['agent_settings']
-assert sorted(state['secrets']) == ['CODER_SESSION_TOKEN', 'LITELLM_API'], state['secrets']
+assert sorted(state['secrets']) == ['LITELLM_API'], state['secrets']
 coder = state['agent_settings']['mcp_config']['coder']
-assert coder['command'] == '/home/openhands/.openhands/bin/coder', coder
-assert coder['env']['CODER_SESSION_TOKEN'] == 'coder-FIXTURESESSION44444', coder
+assert coder['url'] == 'https://api.ai.h-cloud.lan/mcp/coder', coder
+assert 'command' not in coder, coder
 PY
 
 echo 'applier tests passed'

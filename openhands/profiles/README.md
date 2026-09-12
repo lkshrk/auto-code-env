@@ -52,16 +52,15 @@ release, verifies the checksums, and runs the command above.
 `--secrets-dir` holds one file per referenced secret name, and on orc it is a
 projection of the `openhands-secret` Kubernetes Secret: key `LITE_LLM` is
 projected to the path `LITELLM_API`, matching the secret name `common.json`
-declares, and a Coder token is projected to `CODER_SESSION_TOKEN`. The `item`
-UUIDs stay in the profile and are simply unused there. A name the directory does
-not provide fails the run before the first backend call. The `coder` stdio server
-needs the Coder CLI: the worker image installs it on `PATH`, while orc runs the
-stock Agent Canvas image and keeps its tools under `~/.openhands/bin`, so
-`orc.json` re-declares the `coder` server with that absolute `command`.
-`llm.api_key_item` is read from the file `LLM_API_KEY` and `git_sync.token_item`
-from `GIT_SYNC_TOKEN`; every `secrets` entry is read from its own name.
+declares. The `item` UUIDs stay in the profile and are simply unused there. A
+name the directory does not provide fails the run before the first backend call.
+The `coder` server is reached through the LiteLLM MCP gateway, which holds the
+Coder credential and enforces the tool allowlist, so no host needs the Coder CLI
+or a Coder token. `llm.api_key_item` is read from the file `LLM_API_KEY` and
+`git_sync.token_item` from `GIT_SYNC_TOKEN`; every `secrets` entry is read from
+its own name.
 
-`orc.json` sets `agent.kind` and the `coder` command path. Its model, base URL, and API key come from the
+`orc.json` sets only `agent.kind`. Its model, base URL, and API key come from the
 HelmRelease environment, and it has no git sync, so `common.json` supplies
 everything else it needs: `secrets`, `skills`, and `mcp_servers`.
 
