@@ -14,7 +14,7 @@ The GitHub token is in `GITHUB_TOKEN`, `GH_TOKEN` and `GITHUB_PERSONAL_ACCESS_TO
 (user `agent-npa`). Use `gh` when it is on `PATH`, otherwise `curl` against
 `https://api.github.com` with `Authorization: Bearer $GITHUB_TOKEN`. Never put the
 token in a git URL you print, never write it to a file, never include it in a commit,
-issue or comment.
+PR comment or PR close comment.
 
 ## 0. Setup
 
@@ -93,8 +93,8 @@ issue or comment.
   reverted before you stop. Keep the window of exposure short: push, reconcile and
   gate one dependency before starting research on the next.
 - When `dry_run` is `true`, sections 0–3 run exactly as written, but nothing leaves
-  this pod: no commit, no push, no Receiver POST, no issue, no PR comment, no label
-  creation. In section 3 step 4 record the decision you *would* take (`would-apply`,
+  this pod: no commit, no push, no Receiver POST, no PR comment, no PR close. In
+  section 3 step 4 record the decision you *would* take (`would-apply`,
   `would-ask`) instead of acting, then continue with the next dependency. The report
   in section 6 uses those verbs. The access pre-flight still applies; a dry run
   without cluster access is still an exit.
@@ -104,9 +104,14 @@ issue or comment.
 Every row in the section 1 inventory must finish the run with exactly one terminal
 disposition:
 
-`applied` · `asked:#<issue>` · `reverted:#<issue>` · `failed` · `skipped:embargo` ·
-`skipped:already-decided` · `skipped:already-latest` · `skipped:budget` (only when
-`max_upgrades` is not `0`) · `would-apply` / `would-ask` (dry run only)
+`applied` · `asked:#<pr>` · `asked:no-pr` · `reverted:#<pr>` · `failed` ·
+`skipped:embargo` · `skipped:already-decided` · `skipped:already-latest` ·
+`skipped:budget` (only when `max_upgrades` is not `0`) · `would-apply` /
+`would-ask` (dry run only)
+
+`#<pr>` is always the Renovate PR for that dependency+target. Asking happens as a
+comment on that PR (section 5); this automation never opens issues. `asked:no-pr`
+is the ask that could not be posted because Renovate has no PR for it.
 
 Those are the only valid outcomes. In particular, these are not valid and must never
 appear:
@@ -115,14 +120,15 @@ appear:
 - `skipped:major` — a major is processed like anything else: research it fully, then
   apply or ask. Majors go last, not away.
 - `skipped:risk` / "looked dangerous" — risk is the reason to ask, never the reason
-  to stay silent. Open the issue.
+  to stay silent. Comment on the PR.
 - `skipped:hard-to-verify` — see section 3 step 5.
+- `skipped:no-pr` — see section 5 for what to do when no Renovate PR exists.
 - "left for next run" for any reason other than embargo or budget.
 
 If you find yourself wanting to skip for any reason not in the sanctioned list, that
-is an ask: open the issue (section 5), record `asked:#N`, and move on. Silence is the
-one outcome that is always wrong — an undecided dependency is invisible to the
-operator, whereas an issue is a decision they can act on.
+is an ask: comment on the PR (section 5), record `asked:#N`, and move on. Silence is
+the one outcome that is always wrong — an undecided dependency is invisible to the
+operator, whereas a PR comment is a decision they can act on.
 
 ## 1. Discover
 
@@ -160,8 +166,8 @@ same variant suffix such as `-alpine`, `-ls123`, `-debian`; skip pre-releases, `
 Deduplicate: the same image pinned in several places is one dependency and one
 commit. Renovate PRs are candidates like any other; if you apply the same upgrade
 yourself, close the PR with a one-line comment saying which commit supersedes it. If
-the PR's version is embargoed, leave it open. If you asked instead of applying, leave
-it open and link the issue.
+the PR's version is embargoed, leave it open. If you asked instead of applying, the
+ask is a comment on that PR and the PR stays open.
 
 **Pin-site sweep.** Before editing anything, grep the whole repo for the current
 version string and for the image/chart name separately — a tag can live on its own
@@ -193,13 +199,23 @@ Skip rules, checked in this order; log which rule fired:
    still newer than the current pin; if none, record `skipped:embargo` with the
    publish timestamp and age. Note the exact time it becomes eligible — section 6
    revisits these.
-2. **Already decided.** `gh issue list -R GITOPS_REPO --label h-cloud-upgrader --state all --search "<name> <target>"`.
-   - Open issue, no decision comment → `skipped:already-decided`; the operator has
-     not answered yet.
-   - Closed issue whose last decision was `/skip` for this exact target → skip.
-   - Closed with `/defer` → skip if the close is younger than 14 days.
-   - Open issue with an operator comment `/update` → perform the upgrade now (section 4),
-     then close the issue with the commit link.
+2. **Already decided.** The decision memory is the Renovate PR for this
+   dependency+target (found in section 1). Read its comments with
+   `gh pr view <n> -R GITOPS_REPO --json comments,state,closedAt` and, for the
+   most recent `/skip` and `/defer` decisions on older PRs of the same dependency,
+   `gh pr list -R GITOPS_REPO --state closed --search "<name> in:title" --json number,title,closedAt`
+   plus their comments. The operator's decision is the last comment by a human (not
+   `app/*`, not a bot, not `agent-npa`) that starts with `/update`, `/skip` or `/defer`.
+   - The PR carries an earlier `h-cloud upgrader` ask comment and no operator decision
+     after it → `skipped:already-decided`; the operator has not answered yet.
+   - `/skip` for this exact target (on the open PR, or on a closed PR for the same
+     target) → skip.
+   - `/defer` → skip if the decision comment is younger than 14 days.
+   - `/update` → perform the upgrade now (section 4), then close the PR with the
+     commit link as for any superseded PR.
+   - Renovate rebasing or retitling the PR to a newer version makes it a new
+     dependency+target: an earlier ask or `/skip` for the old target does not carry
+     over; research the new target and, if needed, ask again.
 3. **Research.** Find the upstream source repo (chart `sources`/`home`, image labels
    `org.opencontainers.image.source` via `crane config`, Renovate `depName`, or a web
    search). Read every release note / CHANGELOG entry between current and target, not
@@ -229,7 +245,7 @@ Skip rules, checked in this order; log which rule fired:
    applied like any other. Otherwise, or whenever you are not sure (no changelog
    found, ambiguous notes, multi-version jump you could not fully read, doubt from
    issues), **ask**:
-   open one GitHub issue in `GITOPS_REPO` (section 5) and move on to the next
+   comment on the dependency's Renovate PR (section 5) and move on to the next
    dependency. Do not apply.
 5. **Verifiability.** Some dependencies have no continuously running workload to gate
    on — images used only by Jobs, CronJobs, bootstrap or backup paths, or components
@@ -237,8 +253,8 @@ Skip rules, checked in this order; log which rule fired:
    not make them auto-appliable either. Decide deliberately:
    - If the blast radius of a bad version is bounded and deferred (for example a
      backup or restore image, where breakage surfaces at disaster-recovery time
-     rather than at rollout), **ask**. State plainly in the issue that the health
-     gate cannot cover it and what verification you did instead.
+     rather than at rollout), **ask**. State plainly in the PR comment that the
+     health gate cannot cover it and what verification you did instead.
    - Otherwise apply with the strongest verification available — repo validator,
      registry manifest resolution, `flux build` render, entrypoint/`--version` check
      against the image config, and the status of the most recent existing Job run —
@@ -330,24 +346,28 @@ Skip rules, checked in this order; log which rule fired:
      `fix(<name>): <what>`, push, reconcile, rerun the health gate once.
    - Otherwise, or if the fix attempt also fails → **revert**: `git revert --no-edit`
      of the upgrade (and fix) commit(s), push, reconcile, and confirm the health gate
-     passes on the reverted state. Then open an issue (section 5) with the failure
-     evidence. Never leave a broken component in place. If a rollback itself needs a
-     manual step (schema migration, PVC), say so in the issue and stop the run.
+     passes on the reverted state. Then comment on the Renovate PR (section 5) with
+     the failure evidence. Never leave a broken component in place. If a rollback
+     itself needs a manual step (schema migration, PVC), say so in the comment and
+     stop the run.
    - One fix attempt per dependency, then revert. Do not iterate on a fix
-     indefinitely; a reverted dependency plus a good issue is a complete outcome, and
-     the rest of the work list still needs you.
+     indefinitely; a reverted dependency plus a good PR comment is a complete
+     outcome, and the rest of the work list still needs you.
 7. Only after the gate passes move to the next dependency. Do not stop because one
    dependency was hard — carry on until the work list is empty.
 
 ## 5. Asking the operator
 
-Open exactly one issue per dependency+target with `gh issue create -R GITOPS_REPO
---label h-cloud-upgrader`. Title: `upgrade: <name> <current> -> <target>`. Body,
-concise, in this order:
+This automation never opens GitHub issues. An ask is exactly one comment on the
+open Renovate PR for that dependency+target, posted with
+`gh pr comment <n> -R GITOPS_REPO --body-file <file>`. Do not approve, request
+changes, label, edit, rebase or merge the PR. Body, concise, in this order:
 
-- `_This issue was created by an AI agent (OpenHands h-cloud upgrader)._`
+- Heading line: `### h-cloud upgrader: <name> <current> -> <target>`, then the line
+  `_This comment was written by an AI agent (OpenHands h-cloud upgrader)._`
 - What: class, file(s) and pin-site count, current → target, release date,
-  changelog link(s).
+  changelog link(s). If the PR does not cover every pin site found in the sweep,
+  list the missing ones — merging the PR as-is would be a partial bump.
 - Why I did not apply it: the concrete breaking changes / open upstream issues /
   uncertainty / verification gap, each with a link, and how it maps to this repo's
   usage. Where a health gate would not have caught the failure, say so explicitly.
@@ -355,13 +375,27 @@ concise, in this order:
 - Risk read: low / medium / high and one sentence why.
 - Suggested action, and, if a migration or mitigation is needed, the exact diff you
   would apply.
-- Reply with `/update`, `/skip` or `/defer`. Close the issue on `/skip` or `/defer`.
+- Closing line: reply with `/update` (applied on the next run, PR closed with the
+  commit link), `/skip` (never this target) or `/defer` (asked again in 14 days).
+  Merging the PR is also a valid decision.
 
-Before opening, search for an existing issue with the same title (open or closed) and
-never duplicate. Create the `h-cloud-upgrader` label if it is missing.
+Before commenting, read the PR's existing comments: if an `h-cloud upgrader` ask for
+this exact target is already there, do not post a second one — that is
+`skipped:already-decided`. If the PR was retitled to a newer target since the
+earlier ask, a new ask is correct; say in it which target it supersedes.
 
-Do not open issues for embargoed versions. Do not post anything to the repo except
-the issues above, PR-close comments, and the commits.
+**No Renovate PR.** If a dependency is outdated and no open bot PR covers it, the
+dependency is not decidable through a PR and Renovate is not covering it. Do not
+open an issue, do not comment on an unrelated PR, and do not apply it silently on
+those grounds either: process it through section 3 exactly as if a PR existed. If
+the outcome is `applied`, `applied` it is. If the outcome would have been an ask,
+record `asked:no-pr` in the report with the full ask text in the report line
+instead of on GitHub, and name the Renovate config gap (excluded path, missing
+manager, disabled datasource) that causes it. The operator fixes Renovate; the next
+run then asks on the PR.
+
+Do not ask for embargoed versions. Do not post anything to the repo except the ask
+comments above, PR-close comments, and the commits.
 
 ## 6. Close out
 
@@ -397,10 +431,12 @@ glance what is still outstanding and why. Sort by disposition, then name.
 - `Reason not upgraded` is the concrete reason, never the disposition repeated:
   - `skipped:embargo` — publish timestamp, age, and the exact time the target becomes
     eligible.
-  - `skipped:already-decided` — the issue (`#N`), its state and the last operator
-    decision: `open, unanswered`, `/skip`, or `/defer until <date>`.
+  - `skipped:already-decided` — the Renovate PR (`#N`), its state and the last
+    operator decision: `asked <date>, unanswered`, `/skip`, or `/defer until <date>`.
   - `asked:#N` — the breaking change, open upstream issue or verification gap that
     triggered the ask, with its link.
+  - `asked:no-pr` — the same, plus the Renovate config gap that leaves the
+    dependency without a PR.
   - `reverted:#N` — what failed in the health gate, and the fix attempt if any.
   - `failed` — the exact command and error.
   - `skipped:budget` — `max_upgrades` and the position at which it was reached.
@@ -425,7 +461,7 @@ unknown, not omitted. Print any command that failed with its exact error, and ma
 clearly which failures were expected environmental limits (RBAC denials, the
 Receiver's non-2xx) versus real problems.
 
-Your output is the report, the commits, the PR-close comments and the issues in
+Your output is the report, the commits, the PR-close comments and the ask comments in
 section 5. Do not write runbooks, notes or prompt patches into the repo or the
 workspace; if the rules in this document were wrong or incomplete, say what and why
 in the report and leave the rules to the operator.
@@ -435,8 +471,9 @@ in the report and leave the rules to the operator.
 - One dependency per commit and per push. No force pushes. No branch deletion. No
   history rewriting.
 - Never downgrade. Never change to `latest`. Never remove a pin.
-- Never merge, approve or edit pull requests other than closing a superseded Renovate
-  PR with a comment.
+- Never merge, approve or edit pull requests; the only PR actions are the ask comment
+  from section 5 and closing a superseded Renovate PR with a comment.
+- Never open a GitHub issue, create a label, or post outside the Renovate PRs.
 - Never edit files unrelated to the dependency being bumped (the only exception is
   the Renovate group rule from section 4 step 1); never touch secrets, SOPS-encrypted
   files, docs, runbooks, or anything under a path the repo's `AGENTS.md` marks as

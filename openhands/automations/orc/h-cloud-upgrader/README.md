@@ -4,8 +4,9 @@ Nightly OpenHands automation that keeps the h-cloud GitOps repository's dependen
 current: Helm charts (HelmRepository, OCI), Flux `OCIRepository` refs, container image
 tags and renovate-annotated pins. Each dependency is handled on its own — researched,
 bumped in one commit, pushed, reconciled by Flux and verified live on the cluster —
-before the next one is touched. Anything risky or unclear becomes a GitHub issue the
-operator answers instead of a silent change.
+before the next one is touched. Anything risky or unclear becomes a comment on the
+dependency's Renovate PR that the operator answers instead of a silent change; the
+automation never opens issues.
 
 | File | Purpose |
 |---|---|
@@ -17,16 +18,19 @@ operator answers instead of a silent change.
 
 1. **Embargo**: a version younger than 48 h is not taken; the newest version older
    than 48 h is used instead, or the dependency waits for the next run.
-2. **Decision memory**: issues labelled `h-cloud-upgrader` in the GitOps repo are the
-   memory. Open + unanswered → skip. `/skip` → skip that target for good. `/defer` →
-   skip for 14 days. `/update` → apply on the next run and close the issue.
+2. **Decision memory**: the Renovate PR for the dependency+target is the memory.
+   Asked + unanswered → skip. `/skip` → skip that target for good. `/defer` → skip
+   for 14 days. `/update` → apply on the next run and close the PR with the commit
+   link. A PR retitled to a newer target is a new decision.
 3. **Research**: release notes for every version between current and target from the
    source repo (found via chart metadata / OCI labels / Renovate `depName`), open
    upstream issues about the target, web search (cluster-local SearXNG) as fallback.
    Findings are compared with how the repo actually uses the dependency.
 4. **Decide**: clean notes, no relevant issues, no CRD/value changes (majors included) →
-   apply. Anything else, or any doubt → open an issue `upgrade: <name> <cur> -> <new>`
-   with a summary, links, risk read and suggested action, then continue.
+   apply. Anything else, or any doubt → comment `h-cloud upgrader: <name> <cur> -> <new>`
+   on the Renovate PR with a summary, links, risk read and suggested action, then
+   continue. A dependency Renovate has no PR for is still researched and applied when
+   clean; an ask for it is reported as `asked:no-pr` with the Renovate config gap.
 5. **Apply**: edit only that dependency's pins, validate with the repo's validator
    (or `flux build ... --dry-run`), commit `chore(deps): update <name> to <target>`,
    push to `main`, `flux reconcile` source → kustomization → helmrelease.
@@ -39,16 +43,16 @@ operator answers instead of a silent change.
    error/panic lines. Polled up to `HEALTH_TIMEOUT_MINUTES`.
 7. **On failure**: one fix-forward attempt if the cause is clear (renamed value, new
    required value, CRD ordering), otherwise `git revert`, push, reconcile, confirm the
-   gate passes on the reverted state, open an issue with the evidence.
+   gate passes on the reverted state, comment on the Renovate PR with the evidence.
 
 Superseded Renovate PRs are closed with a comment naming the commit. There is no run
 deadline: every inventory row must end with a terminal disposition (`applied`,
-`asked:#N`, `reverted:#N`, `failed`, `skipped:embargo`, `skipped:already-decided`,
+`asked:#N`, `asked:no-pr`, `reverted:#N`, `failed`, `skipped:embargo`, `skipped:already-decided`,
 `skipped:already-latest`), and the run ends only when the work list is empty. The final
 report opens with a table of every available upgrade — one row per dependency with a
 newer upstream version, whatever its disposition — giving current, newest and target
 versions, the disposition, the concrete reason it was not upgraded (embargo expiry
-time, the deciding issue, the breaking change, the gate failure) and the verification
+time, the deciding PR, the breaking change, the gate failure) and the verification
 performed or the gate's blind spot. Risk and
 "major" are reasons to ask, never to skip silently. `MAX_UPGRADES_PER_RUN` (`0` =
 unlimited, the default) is a testing knob that caps how many dependencies reach the bump
@@ -56,8 +60,8 @@ step. The automation `timeout` (12 h) is the platform's hard stop, not a pacing 
 
 ## Prerequisites
 
-- The token behind `GITHUB_PERSONAL_ACCESS_TOKEN` (`agent-npa`) needs `contents:write`,
-  `issues:write` and `pull_requests:write` on the GitOps repo. Fill `vars.GITOPS_REPO`
+- The token behind `GITHUB_PERSONAL_ACCESS_TOKEN` (`agent-npa`) needs `contents:write`
+  and `pull_requests:write` on the GitOps repo. Fill `vars.GITOPS_REPO`
   in `automation.json`.
 - Cluster access is declared in `lkshrk/h-cloud`. The automation runs on the
   `openhands` pod in `ai` (sandboxless), so it uses that pod's service account, which
@@ -149,4 +153,4 @@ a small budget), registers it as `h-cloud-upgrader-smoke`, dispatches
 one run, waits for it, and checks the agent's final report against the `expect` and
 `forbid` regexes. The shadow automation is deleted afterwards (`--keep` retains it).
 With `DRY_RUN=true` the agent discovers, embargoes, researches and decides, but does not
-commit, push, reconcile or open issues.
+commit, push, reconcile or comment on PRs.

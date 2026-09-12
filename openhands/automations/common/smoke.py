@@ -34,8 +34,10 @@ def wait_for_run(base, key, automation_id, run_id, timeout):
 
 
 def final_message(base, key, conversation_id):
+    """The finish message if the agent called finish, else its last message."""
     page = None
-    message = None
+    finish = None
+    last = None
     while True:
         url = f"{base}/api/conversations/{conversation_id}/events/search?limit=100"
         if page:
@@ -43,10 +45,13 @@ def final_message(base, key, conversation_id):
         data = request("GET", url, key)
         for event in data["items"]:
             if event.get("kind") == "ActionEvent" and event.get("tool_name") == "finish":
-                message = event["action"].get("message", "")
+                finish = event["action"].get("message", "")
+            elif event.get("kind") == "MessageEvent" and event.get("source") == "agent":
+                content = event.get("llm_message", {}).get("content", [])
+                last = "".join(c.get("text", "") for c in content if isinstance(c, dict))
         page = data.get("next_page_id")
         if not page:
-            return message
+            return finish if finish is not None else last
 
 
 def main():

@@ -7,11 +7,13 @@
     "(?m)^\\| Dependency \\| Class \\| Current \\| Newest \\| Target \\| Disposition \\| Reason not upgraded \\| Verification / blind spot \\|$",
     "(?m)^\\|(?:[^|\\n]+\\|){5} *(would-apply|would-ask|skipped:\\S+) *\\|",
     "(?i)available upgrades",
-    "(?i)\\btotal\\b"
+    "(?i)\\bremaining\\b"
   ],
   "forbid": [
     "(?i)\\bpushed\\b",
     "(?i)\\bissue #\\d+ (opened|created)\\b",
+    "(?i)\\b(opened|created) (an )?issue\\b",
+    "(?i)\\bcommented on (PR )?#\\d+\\b",
     "(?i)\\bapplied\\b(?! this run)",
     "ghp_[A-Za-z0-9]{20,}"
   ]
