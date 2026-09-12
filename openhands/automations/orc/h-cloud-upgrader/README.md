@@ -19,9 +19,11 @@ automation never opens issues.
 1. **Embargo**: a version younger than 48 h is not taken; the newest version older
    than 48 h is used instead, or the dependency waits for the next run.
 2. **Decision memory**: the Renovate PR for the dependency+target is the memory.
-   Asked + unanswered → skip. `/skip` → skip that target for good. `/defer` → skip
-   for 14 days. `/update` → apply on the next run and close the PR with the commit
-   link. A PR retitled to a newer target is a new decision.
+   Asked + unanswered → skip for `RECHECK_DAYS` (7), then re-research and, if still
+   an ask, post a follow-up comment saying what changed. `/skip` → skip that target
+   for good. `/defer` → skip for `RECHECK_DAYS`, then the same recheck. `/update` →
+   apply on the next run and close the PR with the commit link. A PR retitled to a
+   newer target is a new decision.
 3. **Research**: release notes for every version between current and target from the
    source repo (found via chart metadata / OCI labels / Renovate `depName`), open
    upstream issues about the target, web search (cluster-local SearXNG) as fallback.

@@ -80,7 +80,9 @@ PR comment or PR close comment.
   source repo does not have what you need. Fetch pages with `curl -sL`.
 - Settings for this run: `max_upgrades=MAX_UPGRADES_PER_RUN`,
   `health_timeout=HEALTH_TIMEOUT_MINUTES` minutes (per dependency, for the health
-  gate poll), `dry_run=DRY_RUN`. `max_upgrades` is a testing knob: `0` means no
+  gate poll), `dry_run=DRY_RUN`, `recheck_days=RECHECK_DAYS` (how long an
+  unanswered ask or a `/defer` is honoured before the dependency is re-researched
+  and, if still an ask, asked again). `max_upgrades` is a testing knob: `0` means no
   limit; any other value caps how many dependencies reach section 4 (in a dry run:
   how many reach the decision in section 3), after which the rest are recorded
   `skipped:budget`. In production it is `0`.
@@ -207,10 +209,18 @@ Skip rules, checked in this order; log which rule fired:
    plus their comments. The operator's decision is the last comment by a human (not
    `app/*`, not a bot, not `agent-npa`) that starts with `/update`, `/skip` or `/defer`.
    - The PR carries an earlier `h-cloud upgrader` ask comment and no operator decision
-     after it → `skipped:already-decided`; the operator has not answered yet.
+     after it → `skipped:already-decided` while the newest such comment is younger
+     than RECHECK_DAYS days; the operator has not answered yet. Once it is older,
+     the ask is stale: run section 3 steps 3–4 again for the same target. If the
+     outcome is now apply, apply. If it is still ask, post a follow-up comment on
+     the same PR (section 5) stating what was re-checked and what changed since the
+     previous ask, and record `asked:#N` again. Only the newest ask comment counts
+     for the age, so an unanswered ask is revisited every RECHECK_DAYS days, not
+     every run.
    - `/skip` for this exact target (on the open PR, or on a closed PR for the same
      target) → skip.
-   - `/defer` → skip if the decision comment is younger than 14 days.
+   - `/defer` → skip if the decision comment is younger than RECHECK_DAYS days;
+     older, treat it like a stale ask above.
    - `/update` → perform the upgrade now (section 4), then close the PR with the
      commit link as for any superseded PR.
    - Renovate rebasing or retitling the PR to a newer version makes it a new
@@ -376,13 +386,17 @@ changes, label, edit, rebase or merge the PR. Body, concise, in this order:
 - Suggested action, and, if a migration or mitigation is needed, the exact diff you
   would apply.
 - Closing line: reply with `/update` (applied on the next run, PR closed with the
-  commit link), `/skip` (never this target) or `/defer` (asked again in 14 days).
+  commit link), `/skip` (never this target) or `/defer` (asked again in RECHECK_DAYS days).
   Merging the PR is also a valid decision.
 
 Before commenting, read the PR's existing comments: if an `h-cloud upgrader` ask for
-this exact target is already there, do not post a second one — that is
-`skipped:already-decided`. If the PR was retitled to a newer target since the
-earlier ask, a new ask is correct; say in it which target it supersedes.
+this exact target is already there and younger than RECHECK_DAYS days, do not post a
+second one — that is `skipped:already-decided`. An older unanswered ask gets a
+follow-up (section 3 step 2): same structure, but open with what was re-checked and
+what changed since the previous ask (new upstream releases in the same line, upstream
+issues closed or opened, changelog updates), or state plainly that nothing changed.
+If the PR was retitled to a newer target since the earlier ask, a new ask is correct;
+say in it which target it supersedes.
 
 **No Renovate PR.** If a dependency is outdated and no open bot PR covers it, the
 dependency is not decidable through a PR and Renovate is not covering it. Do not
@@ -432,7 +446,8 @@ glance what is still outstanding and why. Sort by disposition, then name.
   - `skipped:embargo` — publish timestamp, age, and the exact time the target becomes
     eligible.
   - `skipped:already-decided` — the Renovate PR (`#N`), its state and the last
-    operator decision: `asked <date>, unanswered`, `/skip`, or `/defer until <date>`.
+    operator decision: `asked <date>, unanswered, recheck <date>`, `/skip`, or
+    `/defer until <date>`.
   - `asked:#N` — the breaking change, open upstream issue or verification gap that
     triggered the ask, with its link.
   - `asked:no-pr` — the same, plus the Renovate config gap that leaves the
