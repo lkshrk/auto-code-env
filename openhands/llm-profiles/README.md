@@ -30,7 +30,7 @@ model; the `*-auto` profiles name a router that picks per request:
 | profile | routes to |
 | --- | --- |
 | `standard-auto` | failover ladder over the gateway's `standard` tier, best model first, degrading on failure |
-| `anthropic-auto` | complexity router across the Claude tiers |
+| `anthropic-auto` | complexity router across the Claude tiers, on the backend's anthropic connection, so requests take the gateway's `/v1/messages` surface natively |
 | `openai-auto` | complexity router across the GPT-5.6 and GPT-6 tiers |
 | `smart-auto` | complexity router across both vendors, cheapest adequate tier |
 
