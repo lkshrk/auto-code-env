@@ -58,7 +58,8 @@ grep -F 'proxy_read_timeout 86400;' "$nginx_site"
 grep -F 'proxy_send_timeout 86400;' "$nginx_site"
 grep -Fx 'defaultUid = 1000' "$distro_config"
 grep -Fx 'defaultName = openhands-worker' "$distro_config"
-grep -F 'ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b' "$containerfile"
+base_image=$(sed -n 's/^FROM \(ubuntu:26\.04@sha256:[0-9a-f]\{64\}\) AS provisioned$/\1/p' "$containerfile")
+test "$(printf '%s\n' "$base_image" | grep -c .)" = 1
 grep -F "ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash" "$containerfile"
 grep -F "ubuntu:x:1000:" "$containerfile"
 grep -F '/usr/sbin/userdel -r ubuntu' "$containerfile"
@@ -290,7 +291,7 @@ node --check "$ingress_fixture"
 grep -F 'server.listen(config.port, "127.0.0.1", () => {' "$ingress_fixture"
 if node "$canvas_patch" "$ingress_fixture"; then exit 1; fi
 
-docker run --rm ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b bash -euo pipefail -c '
+docker run --rm "$base_image" bash -euo pipefail -c '
   test "$(getent passwd ubuntu)" = "ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash"
   test "$(getent group ubuntu)" = "ubuntu:x:1000:"
   userdel -r ubuntu
