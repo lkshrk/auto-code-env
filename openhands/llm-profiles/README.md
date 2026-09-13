@@ -29,10 +29,15 @@ model; the `*-auto` profiles name a router that picks per request:
 
 | profile | routes to |
 | --- | --- |
-| `frontier-auto` | failover ladder, best model first, degrading on failure |
+| `standard-auto` | failover ladder over the gateway's `standard` tier, best model first, degrading on failure |
 | `anthropic-auto` | complexity router across the Claude tiers |
 | `openai-auto` | complexity router across the GPT-5.6 and GPT-6 tiers |
 | `smart-auto` | complexity router across both vendors, cheapest adequate tier |
+
+A `*-auto` name on the gateway is a failover ladder named after its access
+tier; a complexity router is named after what it routes across. `standard-auto`
+was called `frontier-auto` until 2026-09-13 and the old name still resolves
+through the gateway's `model_group_alias`.
 
 `reasoning_effort` is `high` on every profile, and the backend forces that
 default even when a create request sends null. A caller-sent `reasoning_effort`

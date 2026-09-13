@@ -30,7 +30,7 @@
   "max_input_tokens": null,
   "max_message_chars": 30000,
   "max_output_tokens": null,
-  "model": "openai/frontier-auto",
+  "model": "openai/standard-auto",
   "model_canonical_name": null,
   "modify_params": true,
   "native_tool_calling": true,
