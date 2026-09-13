@@ -102,9 +102,10 @@ verified like every other asset.
 `profile-common.json`. It is applied only when `checksums.txt` of the resolved
 release lists it, so a host pinned to an older release that predates the shared
 profile keeps working with its host profile alone. When it is present, both
-setup and update stage it at `/etc/openhands/profile-common.json` and pass it to
-`openhands-overlay settings` before the host profile, so the host profile wins on
-every key it sets.
+setup and update stage it at `/etc/openhands/profile-common.json`. Only new setup
+applies it through `openhands-overlay settings` before the host profile, so the
+host profile wins on every key it sets. Update stages the files for explicit
+recovery but does not apply them.
 
 This is the towerr configuration:
 
@@ -136,9 +137,33 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 -Release la
 existing distribution unless `-Replace` is passed, runs `install.ps1`,
 `firewall.ps1`, and `keepalive.ps1`, then pushes the release `openhands-overlay`
 and the settings profile into the distribution and runs `ca`, `secrets`,
-`github`, `origin`, `enable`, `settings`, `verify`, and `status` in that order.
+`github`, `origin`, `enable`, `verify`, `settings`, `verify`, and `status` in that order.
 `enable` precedes `settings` because the profile is applied through the running
-backend at `http://127.0.0.1:8000`. `-Replace` delegates to `update.ps1 -Force`.
+backend at `http://127.0.0.1:8000`. Bootstrap waits up to 120 seconds for an
+authenticated settings GET before applying the profile; failure leaves settings
+unmodified by the bootstrap applier. `-Replace` delegates to `update.ps1 -Force`.
+
+Ordinary updates, forced updates, `setup.ps1 -Replace`, scheduled updates, and
+service/container restarts do not apply settings profiles. Imported UI settings,
+MCP entries and custom secrets remain owned by the UI. Infrastructure provisioning
+still refreshes CA trust, TLS/session credentials, GitHub access and origins; it
+is not a profile or custom-secret restore. Full-state import and rollback are
+unchanged.
+
+To intentionally reapply the staged baseline after an update or recover a failed
+bootstrap, run this explicitly after the backend is responding:
+
+```sh
+openhands-overlay settings --file /etc/openhands/profile-common.json --file /etc/openhands/profile.json
+```
+
+Run as root inside the worker. Omit the common file for older releases without it;
+use the documented `--password-stdin` form for noninteractive Vaultwarden access.
+This can overwrite profile-declared UI fields and retire explicitly named secrets;
+it is not part of starting or updating the worker. Take a private manual
+[settings snapshot](../profiles/README.md#private-backup--restore-of-active-settings) first
+when needed. Snapshot restore remains a separate explicit operation, not an update
+hook or a replacement for the full-state archive.
 
 `update.ps1` compares `/etc/openhands/release` with the target version and stops
 at "already at" unless `-Force` is passed; a missing marker counts as older than
@@ -149,10 +174,9 @@ and provisions that staging distribution. The wait polls
 `systemctl is-system-running` in the staging distribution every two seconds for
 up to 120 seconds and continues on `running` or `degraded`, because a freshly
 imported distribution answers the first overlay call before systemd has finished
-starting nginx and the backend.
-completely. The old distribution is terminated only when the staging one is
+starting nginx and the backend completely. The old distribution is terminated only when the staging one is
 ready to bind TCP/443, and it is unregistered only after the staging
-distribution has passed `enable`, `settings`, and `verify`. The swap then
+distribution has passed `enable` and `verify`. The swap then
 renames the staging distribution by writing the `DistributionName` value under
 `HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss\{guid}`, which avoids
 a multi-gigabyte export and re-import. Any failure before the unregister removes
@@ -405,11 +429,11 @@ checksummed in `checksums.txt` like every other asset.
 ### mcp_servers
 
 Each key is one MCP server on the OpenHands agent. A remote server sets `url` and
-may set `headers`; a stdio server sets `command` and may set `args`. The two
-shapes are mutually exclusive. A header value is either a literal string or
-`{"secret": "NAME"}`, which resolves to the Canvas secret of that name, so the
-material stays in the vault and reaches the header without ever being written
-into a profile:
+may set `headers`; a stdio server sets `command` and may set `args` and `env`.
+The two shapes are mutually exclusive. A header or env value is either a literal
+string or `{"secret": "NAME"}`, which resolves to the Canvas secret of that
+name, so the material stays in the vault and reaches the header or the
+subprocess environment without ever being written into a profile:
 
 ```json
 {
@@ -427,7 +451,7 @@ into a profile:
 The overlay reads `agent_settings.mcp_config` from `GET /api/settings` with
 `X-Expose-Secrets: plaintext` and writes only the difference: a server the
 backend does not know is created with `POST /api/settings/mcp/<key>`, one whose
-url, transport, headers, command, or args drifted is corrected with a sparse
+url, transport, headers, command, args, or env drifted is corrected with a sparse
 `PATCH /api/settings/mcp/<key>`, and one that already matches is left alone.
 Servers the backend holds but the profile does not name are never touched.
 
@@ -459,6 +483,18 @@ The overlay resolves it into the `x-litellm-api-key` header of the
 `litellm-tools` entry, with the `Bearer ` prefix the gateway requires. One vault
 item therefore serves every consumer, and neither the profile nor the dotfiles
 repository ever holds the key.
+
+The `coder` entry resolves the same item into the same header, because it is the
+LiteLLM MCP gateway rather than a local process. The gateway holds the Coder
+credential, restricts the server to the `coder-agents` access group, and enforces
+the tool allowlist at call time: read templates and workspaces, create and start
+or stop workspaces, and run commands and file operations inside them. Template
+administration, chat, port forwarding, and archive upload are not on the list.
+The gateway token must omit workspace-deletion and template-administration
+scopes; the tool allowlist alone does not restrict build transitions. The
+profile explicitly retires the stored `CODER_SESSION_TOKEN` after successful
+application. Existing conversations must be restarted to discard their old
+configuration. Verify token-scope enforcement through the gateway before rollout.
 
 `GH_TOKEN` follows the same route for a different purpose. It is declared in the
 host profile, resolved from the worker's GitHub PAT vault item, and reaches the
@@ -587,8 +623,9 @@ deployment-specific; image does not claim to configure them.
 
 ## Tool convergence and updates
 
-`provision.sh` bootstraps exact Node `24.20.0`, uv/uvx `0.12.7`, and Omni `0.10.14`
-with vendor checksum verification. Omni desired state is
+`provision.sh` bootstraps exact Node `24.20.0`, uv/uvx `0.12.7`, and
+Omni `0.10.16` with vendor checksum verification. Coder tools use the aggregate
+LiteLLM MCP connection; the worker does not install the Coder CLI. Omni desired state is
 `openhands/worker/image/omni/settings.json`, copied root-owned to
 `/etc/openhands/omni/settings.json`.
 

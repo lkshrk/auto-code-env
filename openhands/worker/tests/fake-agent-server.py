@@ -11,7 +11,9 @@ LOCK = threading.Lock()
 
 def merge(destination, source):
     for key, value in source.items():
-        if isinstance(value, dict) and isinstance(destination.get(key), dict):
+        if value is None:
+            destination.pop(key, None)
+        elif isinstance(value, dict) and isinstance(destination.get(key), dict):
             merge(destination[key], value)
         else:
             destination[key] = value
@@ -25,19 +27,42 @@ def settings_response(state, expose):
 
 
 def route(state, method, path, body, expose):
+    failure = state.get("failure") or {}
+    if failure.get("method") == method and failure.get("path") == path:
+        if failure.get("skip", 0):
+            failure["skip"] -= 1
+        else:
+            return failure.get("status", 500), json.dumps({"detail": "injected failure"})
     if method == "GET" and path == "/api/settings":
         return 200, json.dumps(settings_response(state, expose))
     if method == "PATCH" and path == "/api/settings":
-        merge(state["agent_settings"], body["agent_settings_diff"])
+        diff = body["agent_settings_diff"]
+        if "agent_kind" in diff and diff["agent_kind"] != state["agent_settings"].get("agent_kind"):
+            if "kind_change_mcp_config" in state:
+                state["agent_settings"]["mcp_config"] = state["kind_change_mcp_config"]
+        merge(state["agent_settings"], diff)
         return 200, json.dumps(settings_response(state, None))
     if method == "GET" and path.startswith("/api/settings/secrets/"):
         name = path.rsplit("/", 1)[1]
         if name in state["secrets"]:
             return 200, state["secrets"][name]
         return 404, json.dumps({"detail": "Secret not found"})
+    if method == "DELETE" and path.startswith("/api/settings/secrets/"):
+        name = path.rsplit("/", 1)[1]
+        if name not in state["secrets"]:
+            return 404, json.dumps({"detail": "Secret not found"})
+        del state["secrets"][name]
+        return 204, ""
     if method == "PUT" and path == "/api/settings/secrets":
         state["secrets"][body["name"]] = body["value"]
         return 200, json.dumps({"name": body["name"]})
+    if method == "DELETE" and path.startswith("/api/settings/mcp/"):
+        name = path.rsplit("/", 1)[1]
+        servers = state["agent_settings"].setdefault("mcp_config", {})
+        if name not in servers:
+            return 404, json.dumps({"detail": "MCP server not found"})
+        del servers[name]
+        return 200, json.dumps(settings_response(state, None))
     if method == "POST" and path.startswith("/api/settings/mcp/"):
         name = path.rsplit("/", 1)[1]
         servers = state["agent_settings"].setdefault("mcp_config", {})
@@ -119,6 +144,9 @@ def handler_class(options):
 
         def do_PUT(self):
             self.dispatch("PUT")
+
+        def do_DELETE(self):
+            self.dispatch("DELETE")
 
         def do_PATCH(self):
             self.dispatch("PATCH")

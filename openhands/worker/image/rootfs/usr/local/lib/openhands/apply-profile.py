@@ -10,7 +10,7 @@ import sys
 import urllib.error
 import urllib.request
 
-SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync", "mcp_servers")
+SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync", "mcp_servers", "retired_secrets")
 MERGED_OBJECTS = ("llm", "agent", "git_sync")
 MERGED_MAPS = ("secrets", "mcp_servers")
 ACP_SERVERS = ("claude-code", "codex", "gemini-cli", "custom")
@@ -19,6 +19,7 @@ UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 SECRET_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 MCP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 LLM_API_KEY = "LLM_API_KEY"
 GIT_SYNC_TOKEN = "GIT_SYNC_TOKEN"
 STATE_DIRECTORY = "/var/lib/openhands/overlay"
@@ -42,11 +43,13 @@ def object_keys(name, value, allowed):
 def as_text(name, value):
     if not isinstance(value, str) or not value.strip():
         fail("%s must be a non-empty string" % name)
+    if "\x00" in value:
+        fail("%s must not contain NUL" % name)
     return value
 
 
 def as_item(name, value):
-    if not isinstance(value, str) or not UUID.match(value):
+    if not isinstance(value, str) or not UUID.fullmatch(value):
         fail("%s must be a lowercase vault item UUID" % name)
     return value
 
@@ -90,12 +93,13 @@ def validate_secrets(secrets):
     if not isinstance(secrets, dict):
         fail("secrets must be an object")
     for name, spec in secrets.items():
-        if not SECRET_NAME.match(name):
+        if not SECRET_NAME.fullmatch(name):
             fail("secret name %r must start with a letter and use letters, digits, underscores" % name)
         object_keys("secrets.%s" % name, spec, ("item", "prefix"))
         as_item("secrets.%s.item" % name, spec.get("item"))
-        if "prefix" in spec and not isinstance(spec["prefix"], str):
-            fail("secrets.%s.prefix must be a string" % name)
+        if "prefix" in spec:
+            if not isinstance(spec["prefix"], str) or "\x00" in spec["prefix"]:
+                fail("secrets.%s.prefix must be a string without NUL" % name)
 
 
 def validate_skills(skills):
@@ -115,42 +119,51 @@ def validate_mcp_servers(servers):
         fail("mcp_servers must be an object")
     for name in servers:
         label = "mcp_servers.%s" % name
-        if not MCP_NAME.match(name):
+        if not MCP_NAME.fullmatch(name):
             fail("mcp_servers key %r must be a server name" % name)
         server = servers[name]
-        object_keys(label, server, ("url", "headers", "command", "args"))
+        if server is None:
+            continue
+        object_keys(label, server, ("url", "headers", "command", "args", "env"))
         if "url" in server:
-            if "command" in server or "args" in server:
+            if "command" in server or "args" in server or "env" in server:
                 fail("%s must set either url or command, not both" % label)
             url = as_text("%s.url" % label, server["url"])
             if not url.startswith(("http://", "https://")):
                 fail("%s.url must be an absolute HTTP URL" % label)
             validate_mcp_headers(label, server.get("headers", {}))
         elif "command" in server:
+            if "headers" in server:
+                fail("%s must not set headers for a stdio server" % label)
             as_text("%s.command" % label, server["command"])
             args = server.get("args", [])
             if not isinstance(args, list):
                 fail("%s.args must be an array" % label)
             for part in args:
                 as_text("%s.args entry" % label, part)
+            validate_secret_map("%s.env" % label, server.get("env", {}), ENV_NAME, "an environment variable name")
         else:
             fail("%s must set url for a remote server or command for a stdio one" % label)
 
 
 def validate_mcp_headers(label, headers):
-    if not isinstance(headers, dict):
-        fail("%s.headers must be an object" % label)
-    for name in headers:
-        if not HEADER_NAME.match(name):
-            fail("%s.headers name %r is not an HTTP header name" % (label, name))
-        value = headers[name]
+    validate_secret_map("%s.headers" % label, headers, HEADER_NAME, "an HTTP header name")
+
+
+def validate_secret_map(label, values, pattern, kind):
+    if not isinstance(values, dict):
+        fail("%s must be an object" % label)
+    for name in values:
+        if not pattern.fullmatch(name):
+            fail("%s name %r is not %s" % (label, name, kind))
+        value = values[name]
         if isinstance(value, dict):
-            object_keys("%s.headers.%s" % (label, name), value, ("secret",))
+            object_keys("%s.%s" % (label, name), value, ("secret",))
             reference = value.get("secret")
-            if not isinstance(reference, str) or not SECRET_NAME.match(reference):
-                fail("%s.headers.%s.secret must be a secret name" % (label, name))
+            if not isinstance(reference, str) or not SECRET_NAME.fullmatch(reference):
+                fail("%s.%s.secret must be a secret name" % (label, name))
         else:
-            as_text("%s.headers.%s" % (label, name), value)
+            as_text("%s.%s" % (label, name), value)
 
 
 def validate_git_sync(git_sync):
@@ -189,6 +202,10 @@ def load(path):
         validate_agent(profile["agent"])
     if "secrets" in profile:
         validate_secrets(profile["secrets"])
+    if "retired_secrets" in profile:
+        names = profile["retired_secrets"]
+        if not isinstance(names, list) or any(not isinstance(name, str) or not SECRET_NAME.fullmatch(name) for name in names):
+            fail("retired_secrets must be an array of valid secret names")
     if "skills" in profile:
         validate_skills(profile["skills"])
     if "git_sync" in profile:
@@ -223,19 +240,31 @@ def merge(profiles):
 
 def load_all(paths, skip):
     profile = merge([load(path) for path in paths])
+    secrets = profile.get("secrets") or {}
+    if set(profile.get("retired_secrets") or []) & {name for name, _ in wanted_secrets(profile)}:
+        fail("retired secrets must not also be declared")
+    for name in profile.get("mcp_servers") or {}:
+        server = profile["mcp_servers"][name] or {}
+        for field in ("headers", "env"):
+            values = server.get(field) or {}
+            for key in values:
+                value = values[key]
+                if isinstance(value, dict) and value["secret"] not in secrets:
+                    fail(
+                        "mcp_servers.%s.%s.%s references undeclared secret %s"
+                        % (name, field, key, value["secret"])
+                    )
+    skip = set(skip)
+    if "mcp_servers" in skip:
+        skip.add("retired_secrets")
     dropped = sorted(section for section in skip if section in profile)
     for section in dropped:
         del profile[section]
-    secrets = profile.get("secrets") or {}
-    for name in profile.get("mcp_servers") or {}:
-        headers = (profile["mcp_servers"][name] or {}).get("headers") or {}
-        for header in headers:
-            value = headers[header]
-            if isinstance(value, dict) and value["secret"] not in secrets:
-                fail(
-                    "mcp_servers.%s.headers.%s references undeclared secret %s"
-                    % (name, header, value["secret"])
-                )
+    if "secrets" in skip:
+        for name, server in (profile.get("mcp_servers") or {}).items():
+            for field in ("headers", "env"):
+                if any(isinstance(value, dict) for value in (server or {}).get(field, {}).values()):
+                    fail("mcp_servers.%s.%s references skipped secrets" % (name, field))
     return profile, dropped
 
 
@@ -313,7 +342,10 @@ def secret_reader(directory):
             path = os.path.join(directory, name)
             try:
                 with open(path) as handle:
-                    cache[name] = handle.read().strip()
+                    value = handle.read().strip()
+                    if "\x00" in value:
+                        fail("material for secret %s must not contain NUL" % name)
+                    cache[name] = value
             except OSError:
                 fail("missing material for secret %s at %s" % (name, path))
         return cache[name]
@@ -348,6 +380,10 @@ def apply_agent_settings(api, profile, secret, settings):
         return
     api.json_call("PATCH", "/api/settings", {"agent_settings_diff": diff})
     print("settings applied: %s" % ", ".join(sorted(diff)))
+    if "agent_kind" in diff:
+        current = api.json_call("GET", "/api/settings", headers={"X-Expose-Secrets": "plaintext"})
+        settings.clear()
+        settings.update(current.get("agent_settings") or {})
 
 
 def declared_secret(profile, secret, name):
@@ -370,19 +406,31 @@ def apply_secrets(api, profile, secret):
     print("secrets applied: %s" % (", ".join(changed) if changed else "none changed"))
 
 
+def retire_secrets(api, profile):
+    for name in sorted(set(profile.get("retired_secrets") or [])):
+        status, _ = api.call("DELETE", "/api/settings/secrets/%s" % name)
+        if status != 404 and not 200 <= status < 300:
+            fail("retiring secret %s returned HTTP %d" % (name, status))
+
+
+def resolve_secret_map(values, secret, profile):
+    return dict(
+        (name, declared_secret(profile, secret, value["secret"]) if isinstance(value, dict) else value)
+        for name, value in values.items()
+    )
+
+
 def mcp_body(server, secret, profile):
     if "url" in server:
         body = {"transport": "http", "url": server["url"]}
-        headers = server.get("headers") or {}
-        if headers:
-            body["headers"] = dict(
-                (name, declared_secret(profile, secret, value["secret"]) if isinstance(value, dict) else value)
-                for name, value in headers.items()
-            )
+        if "headers" in server:
+            body["headers"] = resolve_secret_map(server["headers"], secret, profile)
         return body
     body = {"transport": "stdio", "command": server["command"]}
-    if server.get("args"):
+    if "args" in server:
         body["args"] = list(server["args"])
+    if "env" in server:
+        body["env"] = resolve_secret_map(server["env"], secret, profile)
     return body
 
 
@@ -393,13 +441,38 @@ def apply_mcp_servers(api, profile, secret, settings):
     installed = settings.get("mcp_config") or {}
     changed = []
     for name in sorted(wanted):
+        if wanted[name] is None:
+            if name in installed:
+                status, _ = api.call("DELETE", "/api/settings/mcp/%s" % name)
+                if status != 404 and not 200 <= status < 300:
+                    fail("removing MCP server %s returned HTTP %d" % (name, status))
+                changed.append(name)
+            continue
         body = mcp_body(wanted[name], secret, profile)
         current = installed.get(name)
         if not isinstance(current, dict):
             api.json_call("POST", "/api/settings/mcp/%s" % name, body)
             changed.append(name)
             continue
-        diff = dict((key, body[key]) for key in body if current.get(key) != body[key])
+        diff = {}
+        for key, value in body.items():
+            previous = current.get(key)
+            if key in ("env", "headers"):
+                previous = previous or {}
+            if previous != value:
+                diff[key] = value
+        for field in ("env", "headers"):
+            if field in diff and isinstance(current.get(field), dict):
+                diff[field] = dict(body[field])
+                diff[field].update((key, None) for key in current[field] if key not in body[field])
+        if body["transport"] == "http":
+            for key in ("command", "args", "env", "cwd"):
+                if key in current:
+                    diff[key] = None
+        else:
+            for key in ("url", "headers", "auth"):
+                if key in current:
+                    diff[key] = None
         if diff:
             api.json_call("PATCH", "/api/settings/mcp/%s" % name, diff)
             changed.append(name)
@@ -505,6 +578,7 @@ def main(argv):
     apply_mcp_servers(api, profile, secret, settings)
     apply_skills(api, profile)
     apply_git_sync(api, profile, secret, os.path.join(options.state_dir, TOKEN_STATE_FILE))
+    retire_secrets(api, profile)
 
 
 if __name__ == "__main__":

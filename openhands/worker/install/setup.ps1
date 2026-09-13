@@ -70,7 +70,8 @@ if ($MyInvocation.InvocationName -ne ".") {
         -ProfilePath $profilePath -CommonProfilePath $assets.CommonProfile -StatePath $null `
         -CopyFile { param($source, $destination, $mode) Copy-WorkerFileToDistribution -WslPath $wslPath -Distro $configuration.Distro -Path $source -Destination $destination -Mode $mode } `
         -Overlay $overlay
-    Invoke-WorkerActivation -Overlay $overlay -ProfilePaths (Get-WorkerGuestProfilePaths -CommonProfilePath $assets.CommonProfile)
+    Invoke-WorkerBootstrap -Overlay $overlay -ProfilePaths (Get-WorkerGuestProfilePaths -CommonProfilePath $assets.CommonProfile) `
+        -WaitReady { Wait-WorkerBackendReady -WslPath $wslPath -Distro $configuration.Distro }
 
     Invoke-WorkerOverlay -WslPath $wslPath -Distro $configuration.Distro -Command @("status")
     Write-Host "Worker '$($configuration.Distro)' is installed from $tag and reachable from $($configuration.RemoteAddresses -join ', ')."

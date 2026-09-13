@@ -1,11 +1,12 @@
 terraform {
   required_providers {
     coder = {
-      source = "coder/coder"
+      source  = "coder/coder"
+      version = "2.18.0"
     }
     docker = {
       source  = "kreuzwerker/docker"
-      version = "~> 4.0"
+      version = "4.6.0"
     }
   }
 }
@@ -40,7 +41,7 @@ locals {
       case $line in ''|'#'*) continue ;; esac
       export "$line"
     done < ${local.workspace_env_file}
-    ${coder_agent.main.init_script}
+    ${local.agent_init_script}
   EOT
 }
 
@@ -157,7 +158,7 @@ resource "docker_container" "dind" {
 resource "docker_container" "workspace" {
   count    = data.coder_workspace.me.start_count
   name     = local.workspace_k8s_name
-  image    = "codercom/enterprise-base:ubuntu"
+  image    = var.workspace_image
   hostname = data.coder_workspace.me.name
 
   entrypoint = ["sh", "-c", local.workspace_entrypoint]

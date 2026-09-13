@@ -1,0 +1,1 @@
+python3 -I -c "$(printf '%s' '${runtime_base64}' | base64 --decode)" '${config_base64}' || exit 1

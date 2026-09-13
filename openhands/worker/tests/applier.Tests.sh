@@ -35,6 +35,7 @@ printf 'sk-llm-FIXTUREKEY111111111111' > /tmp/secrets/LLM_API_KEY
 printf 'sk-llm-FIXTUREKEY111111111111\n' > /tmp/secrets/LITELLM_API
 printf 'sk-ant-FIXTUREANTHROPIC22222' > /tmp/secrets/ANTHROPIC_API_KEY
 printf 'ghs_FIXTUREGITSYNCTOKEN33333' > /tmp/secrets/GIT_SYNC_TOKEN
+printf 'coder-FIXTURESESSION44444' > /tmp/secrets/CODER_SESSION_TOKEN
 
 fresh_state() {
   cat > /tmp/api/state.json <<'EOF'
@@ -70,6 +71,7 @@ cat > /tmp/common.json <<'EOF'
   "llm": {"model": "common/model", "base_url": "https://common.example/v1"},
   "secrets": {
     "ANTHROPIC_API_KEY": {"item": "77777777-7777-7777-7777-777777777777"},
+    "CODER_SESSION_TOKEN": {"item": "99999999-9999-9999-9999-999999999999"},
     "LITELLM_API": {"item": "66666666-6666-6666-6666-666666666666", "prefix": "Bearer "}
   },
   "skills": [
@@ -77,6 +79,11 @@ cat > /tmp/common.json <<'EOF'
     {"source": "https://github.com/lkshrk/auto-code-env.git", "ref": "main", "repo_path": "openhands/skills/common-only"}
   ],
   "mcp_servers": {
+    "coder": {
+      "command": "coder",
+      "args": ["exp", "mcp", "server", "--allowed-tools", "coder_list_workspaces"],
+      "env": {"CODER_URL": "https://coder.example", "CODER_SESSION_TOKEN": {"secret": "CODER_SESSION_TOKEN"}}
+    },
     "litellm-tools": {
       "url": "https://api.ai.h-cloud.lan/mcp/",
       "headers": {"x-litellm-api-key": {"secret": "LITELLM_API"}}
@@ -117,6 +124,7 @@ EOF
 
 items=$("$apply" --print secret-items /tmp/common.json /tmp/host.json)
 test "$items" = 'ANTHROPIC_API_KEY 77777777-7777-7777-7777-777777777777
+CODER_SESSION_TOKEN 99999999-9999-9999-9999-999999999999
 GIT_SYNC_TOKEN 88888888-8888-8888-8888-888888888888
 LITELLM_API 66666666-6666-6666-6666-666666666666
 LLM_API_KEY 66666666-6666-6666-6666-666666666666'
@@ -124,11 +132,11 @@ LLM_API_KEY 66666666-6666-6666-6666-666666666666'
 test ! -e /tmp/log/api
 applied=$(run /tmp/common.json /tmp/host.json)
 printf '%s\n' "$applied" | grep -Fq 'settings applied: llm'
-printf '%s\n' "$applied" | grep -Fq 'secrets applied: ANTHROPIC_API_KEY, LITELLM_API'
-printf '%s\n' "$applied" | grep -Fq 'mcp_servers applied: litellm-tools, openaiDeveloperDocs'
+printf '%s\n' "$applied" | grep -Fq 'secrets applied: ANTHROPIC_API_KEY, CODER_SESSION_TOKEN, LITELLM_API'
+printf '%s\n' "$applied" | grep -Fq 'mcp_servers applied: coder, litellm-tools, openaiDeveloperDocs'
 printf '%s\n' "$applied" | grep -Fq 'skills applied: agent-sandbox-deploy, common-only'
 printf '%s\n' "$applied" | grep -Fq 'git_sync applied: branch, interval_seconds, path, repo_url, token'
-if printf '%s\n' "$applied" | grep -Eq 'sk-llm|sk-ant|ghs_'; then echo 'secret leaked to stdout'; exit 1; fi
+if printf '%s\n' "$applied" | grep -Eq 'sk-llm|sk-ant|ghs_|coder-FIXTURE'; then echo 'secret leaked to stdout'; exit 1; fi
 test "$(stat -c '%a' /tmp/state/git-sync-token.sha256)" = 600
 
 python3 - <<'PY'
@@ -139,10 +147,18 @@ assert agent['llm']['model'] == 'openai/gpt-5.6-sol', agent
 assert agent['llm']['base_url'] == 'https://api.ai.h-cloud.lan/v1', agent
 assert agent['llm']['api_key'] == 'sk-llm-FIXTUREKEY111111111111', agent
 servers = agent['mcp_config']
-assert sorted(servers) == ['litellm-tools', 'openaiDeveloperDocs'], servers
+assert sorted(servers) == ['coder', 'litellm-tools', 'openaiDeveloperDocs'], servers
 assert servers['litellm-tools']['headers'] == {'x-litellm-api-key': 'Bearer sk-llm-FIXTUREKEY111111111111'}, servers
+assert servers['coder'] == {
+    'transport': 'stdio',
+    'command': 'coder',
+    'args': ['exp', 'mcp', 'server', '--allowed-tools', 'coder_list_workspaces'],
+    'env': {'CODER_URL': 'https://coder.example', 'CODER_SESSION_TOKEN': 'coder-FIXTURESESSION44444'},
+    'enabled': True,
+}, servers
 assert state['secrets'] == {
     'ANTHROPIC_API_KEY': 'sk-ant-FIXTUREANTHROPIC22222',
+    'CODER_SESSION_TOKEN': 'coder-FIXTURESESSION44444',
     'LITELLM_API': 'Bearer sk-llm-FIXTUREKEY111111111111',
 }, state['secrets']
 assert state['git_sync_token'] == 'ghs_FIXTUREGITSYNCTOKEN33333', state
@@ -196,6 +212,21 @@ if "$apply" --print secret-items /tmp/bad-section.json >/dev/null 2>&1; then
   echo 'unknown section must be rejected'
   exit 1
 fi
+printf '{"mcp_servers": {"coder": {"command": "coder", "env": {"CODER_SESSION_TOKEN": {"secret": "CODER_SESSION_TOKEN"}}}}}' > /tmp/bad-env-secret.json
+if "$apply" --print secret-items /tmp/bad-env-secret.json >/dev/null 2>&1; then
+  echo 'an env secret must be declared'
+  exit 1
+fi
+printf '{"mcp_servers": {"coder": {"command": "coder", "env": {"coder-url": "x"}}}}' > /tmp/bad-env-name.json
+if "$apply" --print secret-items /tmp/bad-env-name.json >/dev/null 2>&1; then
+  echo 'an env name must be an environment variable name'
+  exit 1
+fi
+printf '{"mcp_servers": {"remote": {"url": "https://x.example/mcp", "env": {"A": "b"}}}}' > /tmp/bad-env-remote.json
+if "$apply" --print secret-items /tmp/bad-env-remote.json >/dev/null 2>&1; then
+  echo 'a remote server must not set env'
+  exit 1
+fi
 
 rm -rf /tmp/state
 mkdir -p /tmp/state
@@ -204,7 +235,7 @@ fresh_state
 orc=$(run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json)
 printf '%s\n' "$orc" | grep -Fq 'secrets applied: LITELLM_API'
 printf '%s\n' "$orc" | grep -Fq 'mcp_servers applied: litellm-tools, openaiDeveloperDocs'
-printf '%s\n' "$orc" | grep -Fq 'skills applied: agent-sandbox-deploy'
+printf '%s\n' "$orc" | grep -Fq 'skills applied: agent-sandbox-deploy, coder-workspaces'
 if printf '%s\n' "$orc" | grep -Fq 'git_sync'; then echo 'the orc profile must not configure git sync'; exit 1; fi
 test ! -e /tmp/state/git-sync-token.sha256
 python3 - <<'PY'
@@ -212,8 +243,213 @@ import json
 state = json.load(open('/tmp/api/state.json'))
 assert state['agent_settings']['agent_kind'] == 'openhands', state['agent_settings']
 assert state['agent_settings']['llm']['model'] == 'stale/model', state['agent_settings']
-assert list(state['secrets']) == ['LITELLM_API'], state['secrets']
+assert sorted(state['secrets']) == ['LITELLM_API'], state['secrets']
+assert 'coder' not in state['agent_settings']['mcp_config']
 PY
+
+python3 - <<'PYTEST'
+import json
+p = '/tmp/api/state.json'
+s = json.load(open(p))
+s['secrets']['CODER_SESSION_TOKEN'] = 'retired-fixture'
+s['secrets']['UNRELATED'] = 'keep-fixture'
+s['agent_settings']['mcp_config']['coder'] = {
+    'transport': 'stdio', 'command': 'coder', 'args': ['exp', 'mcp', 'server'],
+    'env': {'CODER_SESSION_TOKEN': 'retired-fixture'}, 'cwd': '/tmp', 'enabled': True
+}
+with open(p, 'w') as f:
+    json.dump(s, f)
+PYTEST
+run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json
+run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json
+python3 - <<'PYTEST'
+import json
+s = json.load(open('/tmp/api/state.json'))
+assert 'CODER_SESSION_TOKEN' not in s['secrets']
+assert s['secrets']['UNRELATED'] == 'keep-fixture'
+assert 'coder' not in s['agent_settings']['mcp_config']
+c = s['agent_settings']['mcp_config']['litellm-tools']
+assert c['url'] == 'https://api.ai.h-cloud.lan/mcp/'
+assert c['headers']['x-litellm-api-key'] == 'Bearer sk-llm-FIXTUREKEY111111111111'
+PYTEST
+
+printf '%s\n' '{"retired_secrets": ["BAD/name"]}' > /tmp/bad-retired.json
+if "$apply" --print secret-items /tmp/bad-retired.json >/dev/null 2>&1; then
+  echo 'invalid retired secret accepted'; exit 1
+fi
+printf '%s\n' '{"retired_secrets": ["LITELLM_API"]}' > /tmp/conflicting-retired.json
+if "$apply" --print secret-items /src/openhands/profiles/common.json /tmp/conflicting-retired.json >/dev/null 2>&1; then
+  echo 'declared secret can be retired'; exit 1
+fi
+
+python3 - <<'PYTEST'
+import copy
+import json
+import subprocess
+from pathlib import Path
+
+apply = '/src/openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py'
+state_path = Path('/tmp/api/state.json')
+log_path = Path('/tmp/log/api')
+body_path = Path('/tmp/log/api-bodies')
+profile_path = Path('/tmp/reconciliation.json')
+base = {
+    'agent_settings': {'agent_kind': 'openhands', 'mcp_config': {}},
+    'secrets': {'CODER_SESSION_TOKEN': 'keep-until-reconciled'},
+    'skills': [], 'git_sync': {},
+}
+
+def seed(servers=None, **extra):
+    state = copy.deepcopy(base)
+    state['agent_settings']['mcp_config'] = servers or {}
+    state.update(extra)
+    state_path.write_text(json.dumps(state))
+    log_path.write_text('')
+    body_path.write_text('')
+
+def invoke(profile, *flags, success=True):
+    profile_path.write_text(json.dumps(profile))
+    result = subprocess.run([
+        apply, '--api', 'http://127.0.0.1:8000', '--api-key-file', '/tmp/api-key',
+        '--secrets-dir', '/tmp/secrets', '--state-dir', '/tmp/state',
+        str(profile_path), *flags,
+    ], capture_output=True, text=True)
+    assert (result.returncode == 0) == success, (result.stdout, result.stderr)
+    assert 'keep-until-reconciled' not in result.stdout + result.stderr
+    return json.loads(state_path.read_text())
+
+def no_writes():
+    assert not any(line.startswith(('PATCH ', 'POST ', 'PUT ', 'DELETE '))
+                   for line in log_path.read_text().splitlines()), log_path.read_text()
+
+retirement = {'mcp_servers': {'coder': None}, 'retired_secrets': ['CODER_SESSION_TOKEN']}
+seed({'coder': {'transport': 'stdio', 'command': 'coder'}})
+state = invoke(retirement, '--skip', 'mcp_servers')
+assert 'coder' in state['agent_settings']['mcp_config']
+assert 'CODER_SESSION_TOKEN' in state['secrets']
+no_writes()
+for skip in ('secrets', 'retired_secrets'):
+    seed()
+    profile = dict(retirement, secrets={'CODER_SESSION_TOKEN': {'item': '99999999-9999-9999-9999-999999999999'}})
+    invoke(profile, '--skip', skip, success=False)
+    no_writes()
+seed()
+invoke({'llm': {'api_key_item': '11111111-1111-1111-1111-111111111111'},
+        'secrets': {'LLM_API_KEY': {'item': '22222222-2222-2222-2222-222222222222'}}},
+       '--skip', 'llm', success=False)
+no_writes()
+
+for field, server, current in (
+    ('env', {'command': 'coder'}, {'transport': 'stdio', 'command': 'coder', 'args': ['old']}),
+    ('headers', {'url': 'https://example.test/mcp'}, {'transport': 'http', 'url': 'https://example.test/mcp'}),
+):
+    current[field] = {'KEEP': 'same', 'DROP': 'old'}
+    current['enabled'] = False
+    seed({'target': current, 'unmanaged': {'transport': 'stdio', 'command': 'keep'}})
+    state = invoke({'mcp_servers': {'target': server}})
+    assert state['agent_settings']['mcp_config']['target'] == current
+    no_writes()
+    desired = dict(server, **{field: {'KEEP': 'same'}})
+    state = invoke({'mcp_servers': {'target': desired}})
+    assert state['agent_settings']['mcp_config']['target'][field] == {'KEEP': 'same'}
+    assert '"DROP": null' in body_path.read_text()
+    desired[field] = {}
+    if field == 'env':
+        desired['args'] = []
+    state = invoke({'mcp_servers': {'target': desired}})
+    target = state['agent_settings']['mcp_config']['target']
+    assert target[field] == {}, target
+    assert target['enabled'] is False
+    if field == 'env':
+        assert target['args'] == []
+    assert 'unmanaged' in state['agent_settings']['mcp_config']
+    log_path.write_text('')
+    invoke({'mcp_servers': {'target': desired}})
+    no_writes()
+    seed()
+    state = invoke({'mcp_servers': {'target': desired}})
+    assert state['agent_settings']['mcp_config']['target'][field] == {}
+    if field == 'env':
+        assert state['agent_settings']['mcp_config']['target']['args'] == []
+
+for transport in ('http', 'sse', 'streamable-http', 'stdio', None):
+    seed({'target': {'transport': transport, 'url': 'https://old.test',
+                     'headers': {'Authorization': 'old'}, 'auth': {'token': 'old'}}})
+    state = invoke({'mcp_servers': {'target': {'command': 'coder'}}})
+    target = state['agent_settings']['mcp_config']['target']
+    assert not set(target) & {'url', 'headers', 'auth'}, target
+seed({'target': {'transport': 'stdio', 'command': 'old', 'args': ['old'],
+                 'env': {'OLD': 'old'}, 'cwd': '/old'}})
+state = invoke({'mcp_servers': {'target': {'url': 'https://new.test'}}})
+assert not set(state['agent_settings']['mcp_config']['target']) & {'command', 'args', 'env', 'cwd'}
+
+seed()
+invoke({'mcp_servers': {'target': {'command': 'coder', 'env': {'TOKEN': {'secret': 'MISSING'}}}}},
+       '--skip', 'mcp_servers', success=False)
+no_writes()
+
+invalid = [
+    {'mcp_servers': {'bad\n': {'command': 'coder'}}},
+    {'mcp_servers': {'target': {'command': 'coder', 'env': {'BAD\n': 'x'}}}},
+    {'mcp_servers': {'target': {'url': 'https://x.test', 'headers': {'Bad\n': 'x'}}}},
+    {'mcp_servers': {'target': {'command': 'coder', 'headers': {}}}},
+]
+for server in ({'command': 'co\x00der'}, {'command': 'coder', 'args': ['x\x00']},
+               {'command': 'coder', 'env': {'TOKEN': 'x\x00'}},
+               {'url': 'https://x.test/\x00'}, {'url': 'https://x.test', 'headers': {'Token': 'x\x00'}}):
+    invalid.append({'mcp_servers': {'target': server}})
+for profile in invalid:
+    seed()
+    invoke(profile, success=False)
+    assert not log_path.read_text()
+
+for material, prefix in (('x\x00y', ''), ('safe', 'x\x00')):
+    seed()
+    secret_path = Path('/tmp/secrets/TEST_TOKEN')
+    secret_path.write_text(material)
+    profile = {'agent': {'kind': 'acp'},
+               'secrets': {'TEST_TOKEN': {'item': '11111111-1111-1111-1111-111111111111', 'prefix': prefix}},
+               'mcp_servers': {'target': {'command': 'coder', 'env': {'TOKEN': {'secret': 'TEST_TOKEN'}}}}}
+    result = invoke(profile, success=False)
+    assert not log_path.read_text()
+    secret_path.unlink()
+
+for servers in ({}, {'target': {'transport': 'stdio', 'command': 'replacement'}}):
+    seed({'target': {'transport': 'stdio', 'command': 'coder'}}, kind_change_mcp_config=servers)
+    state = invoke({'agent': {'kind': 'acp'}, 'mcp_servers': {'target': {'command': 'coder'}}})
+    assert state['agent_settings']['mcp_config']['target']['command'] == 'coder'
+    lines = log_path.read_text().splitlines()
+    assert lines.index('PATCH /api/settings') < len(lines) - 1
+    assert lines[lines.index('PATCH /api/settings') + 1] == 'GET /api/settings'
+
+for failure in ({'method': 'PATCH', 'path': '/api/settings'},
+                {'method': 'GET', 'path': '/api/settings', 'skip': 1}):
+    seed({'coder': {'transport': 'stdio', 'command': 'coder'}},
+         kind_change_mcp_config={}, failure=failure)
+    state = invoke(dict(retirement, agent={'kind': 'acp'}), success=False)
+    assert 'CODER_SESSION_TOKEN' in state['secrets']
+    assert not any('/api/settings/mcp/' in line or '/api/settings/secrets' in line
+                   for line in log_path.read_text().splitlines())
+
+for method, path in (('DELETE', '/api/settings/mcp/coder'), ('PATCH', '/api/settings/mcp/target'),
+                     ('POST', '/api/settings/mcp/target')):
+    servers = {'coder': {'transport': 'stdio', 'command': 'coder'}}
+    if method == 'PATCH':
+        servers['target'] = {'transport': 'stdio', 'command': 'old'}
+    seed(servers, failure={'method': method, 'path': path})
+    profile = copy.deepcopy(retirement)
+    profile['mcp_servers']['target'] = {'command': 'coder'}
+    state = invoke(profile, success=False)
+    assert 'CODER_SESSION_TOKEN' in state['secrets']
+    assert 'DELETE /api/settings/secrets/' not in log_path.read_text()
+seed({'coder': {'transport': 'stdio', 'command': 'coder'}})
+state = invoke(retirement)
+assert 'coder' not in state['agent_settings']['mcp_config']
+assert 'CODER_SESSION_TOKEN' not in state['secrets']
+assert log_path.read_text().index('DELETE /api/settings/mcp/coder') < log_path.read_text().index('DELETE /api/settings/secrets/CODER_SESSION_TOKEN')
+
+
+PYTEST
 
 echo 'applier tests passed'
 INNER

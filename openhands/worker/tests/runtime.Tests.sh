@@ -151,7 +151,8 @@ PY
 python3 - "$repo_root/openhands/profiles/common.json" <<'PY'
 import json, re, sys
 profile = json.load(open(sys.argv[1]))
-assert set(profile) == {"secrets", "skills", "mcp_servers"}, sorted(profile)
+assert set(profile) == {"secrets", "skills", "mcp_servers", "retired_secrets"}, sorted(profile)
+assert profile["retired_secrets"] == ["CODER_SESSION_TOKEN"], profile["retired_secrets"]
 assert re.fullmatch(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
     profile["secrets"]["LITELLM_API"]["item"],
@@ -162,10 +163,14 @@ assert litellm["url"] == "https://api.ai.h-cloud.lan/mcp/", litellm
 assert litellm["headers"]["x-litellm-api-key"] == {"secret": "LITELLM_API"}, litellm
 assert profile["mcp_servers"]["openaiDeveloperDocs"]["url"] == "https://developers.openai.com/mcp", profile["mcp_servers"]
 PY
-python3 - "$repo_root/openhands/profiles/orc.json" <<'PY'
+python3 - "$repo_root/openhands/profiles/orc.json" "$repo_root/openhands/profiles/common.json" <<'PY'
 import json, sys
 profile = json.load(open(sys.argv[1]))
-assert profile == {"agent": {"kind": "openhands"}}, profile
+common = json.load(open(sys.argv[2]))
+assert set(profile) == {"agent"}, sorted(profile)
+assert profile["agent"] == {"kind": "openhands"}, profile["agent"]
+assert common["mcp_servers"]["coder"] is None
+assert common["mcp_servers"]["litellm-tools"]["url"] == "https://api.ai.h-cloud.lan/mcp/"
 PY
 grep -Fx 'ARG OPENHANDS_WORKER_VERSION=dev' "$containerfile"
 grep -F 'printf "openhands-worker %s\n" "$OPENHANDS_WORKER_VERSION" > /etc/openhands/release' "$containerfile"
@@ -173,7 +178,7 @@ grep -F 'RELEASE_MARKER=/etc/openhands/release' "$overlay"
 grep -F 'VERSION="$version" docker buildx bake' "$repo_root/openhands/worker/image/build-wsl.sh"
 test "$(grep -c 'OPENHANDS_WORKER_VERSION = "${VERSION}"' "$repo_root/openhands/worker/image/docker-bake.hcl")" = 3
 grep -F '/etc/systemd/system/agent-canvas.service.d/10-overlay.conf' "$overlay"
-if grep -rn '= \[Runtime.InteropServices.RuntimeInformation\]' "$repo_root/worker/windows"; then
+if grep -rn '= \[Runtime.InteropServices.RuntimeInformation\]' "$repo_root/shared/windows"; then
   echo 'RuntimeInformation must not be a parameter default'
   exit 1
 fi

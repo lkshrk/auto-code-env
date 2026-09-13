@@ -5,11 +5,17 @@
       "prefix": "Bearer "
     }
   },
+  "retired_secrets": ["CODER_SESSION_TOKEN"],
   "skills": [
     {
       "source": "https://github.com/lkshrk/auto-code-env.git",
       "ref": "main",
       "repo_path": "openhands/skills/agent-sandbox-deploy"
+    },
+    {
+      "source": "https://github.com/lkshrk/auto-code-env.git",
+      "ref": "main",
+      "repo_path": "openhands/skills/coder-workspaces"
     },
     {
       "source": "https://github.com/OpenHands/extensions.git",
@@ -18,6 +24,7 @@
     }
   ],
   "mcp_servers": {
+    "coder": null,
     "litellm-tools": {
       "url": "https://api.ai.h-cloud.lan/mcp/",
       "headers": {
