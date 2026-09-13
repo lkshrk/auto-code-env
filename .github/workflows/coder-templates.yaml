@@ -105,7 +105,7 @@ jobs:
 
       - name: Test exact dotfiles revision pair
         env:
-          DOTFILES_REVISION: ${{ inputs.dotfiles_revision || (github.event_name == 'pull_request' && '60f23d117e0ca336080ab1781fef810a14ed28fa' || '') }}
+          DOTFILES_REVISION: ${{ inputs.dotfiles_revision || (github.event_name == 'pull_request' && '27bde3887dde14191bbdbc399d1354ab30f1ce32' || '') }}
           PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish }}
         run: |
           set -euo pipefail
