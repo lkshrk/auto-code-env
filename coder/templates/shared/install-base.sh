@@ -14,12 +14,6 @@ coder_install_base() {
   command -v apt-get >/dev/null 2>&1 || return 0
   local -a packages missing
   packages=(ca-certificates curl git jq openssh-client python3)
-  if [[ "${CODER_ENVIRONMENT_MODE:-legacy}" == legacy ]]; then
-    packages+=(build-essential node-gyp nodejs npm stow tmux unzip)
-    case ",${CODER_OMNI_STACKS:-}," in
-      *,go,*) packages+=(golang-go) ;;
-    esac
-  fi
   mapfile -t missing < <(coder_missing_packages "${packages[@]}")
   if (( ${#missing[@]} )); then
     sudo apt-get update -qq
