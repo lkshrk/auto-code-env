@@ -599,8 +599,8 @@ deployment-specific; image does not claim to configure them.
 
 ## Tool convergence and updates
 
-`provision.sh` bootstraps exact Node `24.20.0`, uv/uvx `0.12.7`, and Omni
-`0.10.14` with vendor checksum verification. Coder tools use the aggregate
+`provision.sh` bootstraps exact Node `24.20.0`, uv/uvx `0.12.7`, and
+Omni `0.10.14` with vendor checksum verification. Coder tools use the aggregate
 LiteLLM MCP connection; the worker does not install the Coder CLI. Omni desired state is
 `openhands/worker/image/omni/settings.json`, copied root-owned to
 `/etc/openhands/omni/settings.json`.
