@@ -17,6 +17,24 @@ CA_SCRIPT = ROOT / "shared/workspace-ca.sh"
 
 
 class BootstrapIntegrationTests(unittest.TestCase):
+    def test_base_installer_execution_modes(self):
+        script = ROOT / "shared/install-base.sh"
+        bash = shutil.which("bash")
+        with tempfile.TemporaryDirectory() as directory:
+            env = {"PATH": directory, "HOME": directory, "CODER_ENVIRONMENT_MODE": "composable"}
+            commands = {
+                "inline": [bash, "-x", "-c", script.read_text()],
+                "file": [bash, "-x", str(script)],
+                "stdin": [bash, "-x", "-s"],
+                "sourced": [bash, "-x", "-c", 'source "$1"', "bash", str(script)],
+            }
+            for mode, command in commands.items():
+                with self.subTest(mode=mode):
+                    result = subprocess.run(command, input=script.read_text() if mode == "stdin" else None,
+                                            env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual("+ coder_install_base" in result.stderr, mode != "sourced")
+
     @unittest.skipUnless(shutil.which("tofu"), "OpenTofu unavailable")
     def test_single_repository_path_with_runtime_enabled_and_disabled(self):
         source = (ROOT / "common.tf").read_text()
