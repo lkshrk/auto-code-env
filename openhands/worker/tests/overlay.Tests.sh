@@ -348,7 +348,14 @@ grep -Fxq 'POST /api/settings/mcp/openaiDeveloperDocs' /tmp/log/api
 grep -Fxq 'POST /api/settings/mcp/local-notes' /tmp/log/api
 grep -Fxq 'POST /api/skills/install' /tmp/log/api
 grep -Fxq 'PUT /api/automation/v1/git-sync/config' /tmp/log/api
-test "$(grep -c '^GET /api/settings$' /tmp/log/api)" = 1
+python3 - <<'REFRESH'
+from pathlib import Path
+calls = Path('/tmp/log/api').read_text().splitlines()
+reads = [i for i, call in enumerate(calls) if call == 'GET /api/settings']
+assert len(reads) == 2, calls
+assert reads[0] < calls.index('PATCH /api/settings') < reads[1], calls
+assert reads[1] < calls.index('POST /api/settings/mcp/litellm-tools'), calls
+REFRESH
 test "$(stat -c '%U:%G %a' /var/lib/openhands/overlay/git-sync-token.sha256)" = 'root:root 600'
 if grep -q '^omni ' /tmp/log/omni; then echo 'omni must not run during settings'; exit 1; fi
 test ! -e /home/agent/.config/omni/apm.yml
