@@ -1,6 +1,6 @@
 {
   "name": "pr-review",
-  "model": "frontier-auto",
+  "model": "standard-auto",
   "timeout": 900,
   "keep_alive": false,
   "enabled": true,
