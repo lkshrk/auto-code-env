@@ -1,6 +1,6 @@
 ---
 name: coder-workspaces
-description: Use a Coder workspace instead of installing toolchains in the sandbox. Use when a task needs a language toolchain, Docker, a browser, cluster tooling, or a repository checkout that the current environment does not have.
+description: This skill should be used for development on existing Git projects, including implementing features, fixing bugs, editing repositories, running tests, and reviewing code with execution. Select and reuse prepared Coder workspaces through native MCP, even when local toolchains are available.
 triggers:
 - coder
 - workspace
@@ -10,50 +10,79 @@ triggers:
 - install python
 - docker
 - playwright
+- implement
+- fix bug
+- run tests
+- repository
+- refactor
 ---
 
 # Working in Coder workspaces
 
-The `coder` MCP server exposes workspaces on `https://coder.h-cloud.io`. Every
-template already carries the toolchains, credentials, dotfiles, and repository
-checkouts a project needs. Do not `apt-get`, `pip install`, `npm install -g`,
-or download toolchains into this sandbox to get a project building; create or
-reuse a workspace and run the work there.
+## Scope and transport
 
-## Choose a workspace
+Use Coder for development on an existing Git project, including when the local host already has the required tools. Keep discussion, research and planning outside Coder unless repository execution is needed. Allow small standalone scripts locally. Ask whether to use Coder for a new substantial project without an existing repository.
 
-1. `coder_list_workspaces` and reuse a running workspace whose template and
-   repositories match. Start a stopped one with `coder_create_workspace_build`
-   and `transition: start`.
-2. Otherwise `coder_list_templates`, then `coder_get_template` for the
-   parameters and presets. Project templates (`go`, `python`, `ts`, `lua`,
-   `sveltekit`, `monorepo`, `civora`, `routivo`, `hermes`, `gitops`) carry
-   their repositories as presets. `dev` is the general-purpose template: pick
-   a preset, or set `stacks` (JSON list such as `["go","python"]`), `repos`
-   (comma-separated git URLs), `enable_dind`, and `enable_playwright` in
-   `rich_parameters`.
-3. `coder_create_workspace` with `template_id`, `template_version_preset_id`
-   when a preset fits, and a name of the form `<project>-<purpose>`. Never
-   create on `dev-kubernetes` or any other Kubernetes-backed template unless
-   the task asks for it.
-4. Poll `coder_get_workspace` until the build is `running` and the agent is
-   `connected`; `coder_get_workspace_build_logs` and
-   `coder_get_workspace_agent_logs` explain a stall.
+Use the native Coder MCP tools exposed through the existing aggregate LiteLLM /mcp/ connection. Discover their actual names and schemas; gateway prefixes can vary. Names below identify native operations, not a second server registration. Keep authorization in LiteLLM. Do not add per-project MCP connections, tool allowlists, credential issuers or a replacement Coder provider.
 
-## Work inside it
+Preserve live OpenHands settings. Apply repository profiles only during explicitly authorized bootstrap or recovery. Do not copy secrets into notes, bindings, repositories or delegation prompts. Treat templates as prepared environments, not proof that a repository or credential is present.
 
-- `coder_workspace_bash` runs a command as the workspace user. Repositories
-  are cloned to `/home/coder/<repo-name>`; `cd` there first. Raise
-  `timeout_ms` for builds and test suites, or set `background: true` and poll
-  a log file. Use `coder_workspace_ls`, `coder_workspace_read_file`,
-  `coder_workspace_write_file`, and `coder_workspace_edit_file` for files.
-- The workspace has the project's git credentials. Commit and push from the
-  workspace, on a branch, and report the branch and commit.
-- Long builds and test suites belong in the workspace; keep this sandbox for
-  planning, review, and reporting.
+These instructions guide agent behavior; they do not technically enforce execution location.
 
-## Leave it tidy
+## Recover or select a workspace
 
-Stop a workspace you created when the task is done
-(`coder_create_workspace_build` with `transition: stop`) unless the task asks
-to keep it running. Never delete workspaces.
+1. Recover the prior conversation binding first, if present. Verify workspace identity, repository, directory/worktree, branch and current capabilities. Do not silently replace a missing or unsuitable binding.
+2. Identify the required repository, stacks, features and backend. Prefer Docker/towerr unless another target is requested. Never silently substitute Kubernetes or local development.
+3. Call coder_list_workspaces, then inspect plausible candidates with coder_get_workspace. Inventory may omit build state or effective parameters. Do not infer suitability from template names or active-version defaults alone; existing workspaces can use different versions and selections.
+4. Prefer suitable running workspaces. Require the needed capabilities as a subset: a Python + Go workspace can serve Go work. Verify effective features such as Docker engine access and browser dependencies separately from language stacks. Sharing is allowed, subject to worktree and service isolation.
+5. Reuse a single suitable running candidate with a brief notice, not another approval prompt. Ask for selection when multiple candidates qualify at this tier. Consider stopped candidates only when no running candidate qualifies.
+6. **Before starting a stopped candidate, check the target provisioner'''s current resource state.** Use native MCP to query:
+   - coder_list_workspaces to get all workspaces; for each running workspace, inspect its build parameters (cpu, memory) and agent health metadata via coder_get_workspace
+   - Inside a running workspace on the same provisioner, run coder stat cpu, coder stat memory, coder stat disk --path /home/coder for actual usage
+   - Sum per-workspace cpu and memory allocations against known host capacity (towerr: 32 GB RAM, N cores). If total committed allocations approach or exceed host capacity, or disk usage on /home/coder exceeds 85%, do not automatically start another workspace there. Report the constraint and ask for direction. Unknown capacity, previous successful starts, low load and an available provisioner do not establish capacity. Ask when capacity is unknown or insufficient, or multiple stopped candidates qualify. Do not use workspace execution tools as probes on stopped candidates: they may implicitly start them.
+7. If none qualify, list available templates and inspect the recommendation with coder_get_template. Explain the proposed template, stacks and features and obtain approval before creation. Prefer a matching preset; account for preset precedence over individual parameters. Use template_id for the active version, or an explicitly approved template_version_id for a candidate. Never silently promote a version.
+
+For composable dev, inspect current schemas for stacks, repos, enable_dind, enable_playwright and enable_openhands. A list parameter may require a JSON-encoded string such as ["go","python"]. Use the supplied schema rather than assumed parameter types. Enabling OpenHands is not necessary merely to operate the workspace through Coder MCP.
+
+If Coder is unavailable, required metadata cannot be established, or an environment cannot satisfy the task, report the concrete gap and ask. Do not silently hand-build a replacement environment on the OpenHands host.
+
+## Workspace disk hygiene
+
+During long-running work, periodically check workspace disk usage. If /home/coder exceeds 80% utilization or Docker image/containers/cache exceed reasonable bounds:
+- Run docker system prune -f to remove stopped containers, unused images and build cache
+- Clean workspace .cache, .local/share/nvim (lazy.nvim clones), and similar ephemeral directories
+- Use bounded calls and report reclaimed space
+
+Do not clean project repositories, checked-out code, or configured toolchains. Report before removing anything. Do not clean on a workspace that is currently executing a delegated task or background job.
+
+## Wait for actual readiness
+
+Watch build logs until provisioning succeeds, then verify agent connection and startup completion. A running container and connected agent alone are not ready. Obtain the persisted agent ID from workspace resources, not Terraform plan output.
+
+Use coder_get_workspace_build_logs and coder_get_workspace_agent_logs for failures. For composable templates, inspect /home/openhands/.local/state/coder-environment/readiness.json; require ready: true, successful required checks and evidence that the report belongs to the current startup. Do not accept an old marker after a failed restart. Verify capabilities not covered by that report separately. Do not require this custom report for unrelated templates; use their documented readiness contract.
+
+Bound polling and requests. MCP gateway timeouts do not prove a remote command failed or stopped. Check process/job state and persisted results before retrying a mutating command. Never repeatedly recreate workspaces to hide a startup failure.
+
+## Bind the task and execute
+
+Record a non-secret binding in conversation/task handoff notes: repository identity, workspace UUID and owner/name, agent, absolute checkout/worktree path, branch, verified capabilities and active preview/job/delegate needs. Update it when identity changes. This is a handoff convention, not an automatically enforced registry or lease.
+
+Discover actual paths with coder_workspace_ls; do not assume /home/coder/<repo-name> exists. Inspect Git status before editing. Preserve unfamiliar changes and use a separate worktree for independent work. Verify repository identity before fetching or changing remotes. Sharing a workspace does not make its ports, services, databases or Docker resources isolated; ask if safe co-use cannot be established.
+
+Use coder_workspace_bash for project commands and native coder_workspace_ls, coder_workspace_read_file, coder_workspace_write_file and coder_workspace_edit_file for project files. Follow each schema encoding requirements. Keep commits, tests and authorized pushes inside the bound workspace. Do not treat workspace selection as permission to push, merge or deploy. Install project dependencies using the repository lockfiles/package manager; do not confuse ordinary project dependency installation with rebuilding a missing workspace toolchain.
+
+Use bounded calls for short commands. For long work, start once with durable output and exit-status reporting, then poll. Preserve running jobs across gateway timeouts and avoid printing credentials from logs or environment dumps.
+
+## Delegate and recover
+
+Pass the non-secret binding explicitly to delegates, with separate worktree paths where needed and instructions to use the same Coder workspace. Do not assume a child conversation inherits execution location. Track unfinished delegates and their services in the parent handoff. Keep the workspace running while any delegate needs it.
+
+After interruption, verify the old workspace and worktree before resuming. Reconcile surviving jobs and previews; do not interpret a lost conversation or expired heartbeat as idleness. Ask before abandoning an inaccessible binding or changing infrastructure.
+
+## Leave shared work safe
+
+Give brief notices on selection, start and stop. Avoid repeated approval requests for already authorized steps.
+
+Stop automatically only when fresh evidence establishes that no human, agent, delegate, preview or background job needs the workspace and coordination prevents a new participant joining during the stop decision. Creator identity, zero visible sessions, timestamps or an empty agent-owned list alone are insufficient. The available native tools do not establish such coordination by themselves; leave running when that guarantee is unavailable. A finished coding task does not release a preview handed to the user; wait for explicit release. Honor explicit stop requests after identifying the target and reporting any known active needs. Never delete a workspace without explicit authorization.
+
+**Stop-time resource reporting**: When stopping a workspace, report the final coder stat cpu, coder stat memory, coder stat disk --path /home/coder and docker system df values. This provides a baseline for future capacity planning and verifies no unexpected resource retention.
