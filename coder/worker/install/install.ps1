@@ -26,7 +26,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$DefaultRelease = "coder-worker-v1.0.3"
+$DefaultRelease = "coder-worker-v1.0.4"
 $ReleaseSigningKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvgv5RXXPQPWPwPvvfFEkfpdSkQJQKXm2SYDazPi+gOlnsOgf1xBPke9HhBP3fT17rBq479ctngvC3N++//cB+w=="
 $ReleaseBaseUri = "https://github.com/lkshrk/auto-code-env/releases/download"
 $StageRoot = "/root/coder-worker"
