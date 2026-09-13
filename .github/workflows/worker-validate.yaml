@@ -32,6 +32,7 @@ jobs:
           bash openhands/worker/tests/image.Tests.sh
           bash openhands/worker/tests/overlay.Tests.sh
           bash openhands/worker/tests/applier.Tests.sh
+          python3 -m unittest discover -s openhands/worker/tests -p test_settings_triggers.py -v
           docker run --rm --platform linux/amd64 \
             --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
             mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
@@ -59,6 +60,37 @@ jobs:
           bash tools/check-root-calculation.sh
           find openhands/worker shared -type f -name '*.sh' -print0 | xargs -0 shellcheck
           shellcheck openhands/worker/image/rootfs/usr/local/sbin/openhands-overlay openhands/worker/image/rootfs-oci/usr/local/sbin/container-entrypoint
+
+  settings-contracts:
+    name: settings contracts ${{ matrix.openhands }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        openhands: ["1.44.0", "1.46.0"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Create isolated supported-version environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3.12 -m venv "$RUNNER_TEMP/settings-contracts"
+          "$RUNNER_TEMP/settings-contracts/bin/python" -m pip install \
+            "openhands-agent-server==${{ matrix.openhands }}" \
+            "openhands-sdk==${{ matrix.openhands }}" \
+            "agent-client-protocol==0.10.1" "posthog>=6,<7"
+          "$RUNNER_TEMP/settings-contracts/bin/python" -m pip check
+
+      - name: Require installed model and snapshot contracts
+        shell: bash
+        env:
+          OPENHANDS_SUPPRESS_BANNER: "1"
+          EXPECTED_OPENHANDS_VERSION: ${{ matrix.openhands }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/settings-contracts/bin/python" openhands/worker/tests/settings-contracts.py
 
   validate:
     name: ${{ matrix.arch }}

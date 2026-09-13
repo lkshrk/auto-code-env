@@ -83,7 +83,7 @@ $WorkerDistroPattern = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 
 foreach ($name in "Get-WorkerInstalledVersion", "Compare-WorkerVersion", "Get-WorkerPasswordBytes",
     "Get-WorkerOverlayArguments", "Get-WslDistributionRegistryKey", "Rename-WslDistribution",
-    "Wait-WorkerSystemReady") {
+    "Wait-WorkerSystemReady", "Invoke-WorkerActivation") {
     Invoke-Expression (Import-ScriptFunction -Path $commonPath -Name $name)
 }
 foreach ($name in "Get-WorkerStagingDistroName", "Get-WorkerUpdateTaskArguments", "Register-WorkerUpdateTask",
@@ -95,7 +95,7 @@ $updateSource = Get-Content -Raw $updatePath
 foreach ($required in 'Assert-WorkerElevated', 'Update-WorkerDistribution', 'Compare-WorkerVersion', '--terminate',
     '--unregister', 'DistributionName', 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss|\$WorkerLxssKey',
     '\$Force', '\$Schedule', '-Weekly', '-Hidden', 'state", "export', 'Invoke-WorkerProvision', 'Invoke-WorkerActivation',
-    'Wait-WorkerSystemReady', 'CommonProfilePath', 'Get-WorkerGuestProfilePaths') {
+    'Wait-WorkerSystemReady', 'CommonProfilePath') {
     if ($updateSource -notmatch $required) {
         throw "update.ps1 must use $required."
     }
@@ -293,3 +293,32 @@ finally {
 }
 
 Write-Host "PASS: update.ps1"
+
+$activationCalls = New-Object 'System.Collections.Generic.List[string]'
+$steps.ActivateStaging = {
+    param($name)
+    Invoke-WorkerActivation -Overlay {
+        param($command, $usePassword, $inputPath)
+        $activationCalls.Add($command -join " ")
+        if ($command[0] -notin @("enable", "verify") -or $usePassword -or $inputPath) {
+            throw "ordinary activation attempted settings or secret mutation"
+        }
+    }
+}
+$calls.Clear()
+Update-WorkerDistribution -Distro "openhands-worker" -Staging "openhands-worker-next" @steps
+Assert-Equal "enable | verify" ($activationCalls -join " | ") "update uses non-mutating activation"
+Assert-True ($updateSource -notmatch 'Invoke-WorkerBootstrap|Get-WorkerSettingsCommand|Get-WorkerGuestProfilePaths') "update cannot implicitly bootstrap profiles"
+Write-Host "PASS: UI-owned update activation"
+
+$steps.ActivateStaging = {
+    param($name)
+    Invoke-WorkerActivation -Overlay { param($command, $usePassword, $inputPath) }
+    throw "Backend readiness failed"
+}
+$calls.Clear()
+Assert-Throws { Update-WorkerDistribution -Distro "openhands-worker" -Staging "openhands-worker-next" @steps } "Backend readiness failed" "backend readiness failure aborts activation"
+Assert-NotCalled -Calls $calls.ToArray() -Call "unregister openhands-worker" -Message "backend failure preserves the old distribution"
+Assert-True ($calls -contains "restore openhands-worker") "backend failure restarts the old distribution"
+Assert-True ($updateSource -match 'Wait-WorkerBackendReady -WslPath \$wslPath -Distro \$name') "staging activation checks authenticated backend readiness"
+Write-Host "PASS: backend readiness failure preserves rollback"

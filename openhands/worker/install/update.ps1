@@ -259,13 +259,14 @@ if ($MyInvocation.InvocationName -ne ".") {
         } `
         -ActivateStaging {
             param($name)
-            Invoke-WorkerActivation -ProfilePaths (Get-WorkerGuestProfilePaths -CommonProfilePath $assets.CommonProfile) -Overlay {
+            Invoke-WorkerActivation -Overlay {
                 param($command, $usePassword, $inputPath)
                 $parameters = @{ WslPath = $wslPath; Distro = $name; Command = $command }
                 if ($usePassword) { $parameters["Credential"] = $credential }
                 if ($inputPath) { $parameters["InputPath"] = $inputPath }
                 Invoke-WorkerOverlay @parameters
             }
+            Wait-WorkerBackendReady -WslPath $wslPath -Distro $name
         } `
         -ResolveDistribution {
             param($name)

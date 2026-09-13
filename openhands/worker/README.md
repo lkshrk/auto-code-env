@@ -102,9 +102,10 @@ verified like every other asset.
 `profile-common.json`. It is applied only when `checksums.txt` of the resolved
 release lists it, so a host pinned to an older release that predates the shared
 profile keeps working with its host profile alone. When it is present, both
-setup and update stage it at `/etc/openhands/profile-common.json` and pass it to
-`openhands-overlay settings` before the host profile, so the host profile wins on
-every key it sets.
+setup and update stage it at `/etc/openhands/profile-common.json`. Only new setup
+applies it through `openhands-overlay settings` before the host profile, so the
+host profile wins on every key it sets. Update stages the files for explicit
+recovery but does not apply them.
 
 This is the towerr configuration:
 
@@ -136,9 +137,33 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 -Release la
 existing distribution unless `-Replace` is passed, runs `install.ps1`,
 `firewall.ps1`, and `keepalive.ps1`, then pushes the release `openhands-overlay`
 and the settings profile into the distribution and runs `ca`, `secrets`,
-`github`, `origin`, `enable`, `settings`, `verify`, and `status` in that order.
+`github`, `origin`, `enable`, `verify`, `settings`, `verify`, and `status` in that order.
 `enable` precedes `settings` because the profile is applied through the running
-backend at `http://127.0.0.1:8000`. `-Replace` delegates to `update.ps1 -Force`.
+backend at `http://127.0.0.1:8000`. Bootstrap waits up to 120 seconds for an
+authenticated settings GET before applying the profile; failure leaves settings
+unmodified by the bootstrap applier. `-Replace` delegates to `update.ps1 -Force`.
+
+Ordinary updates, forced updates, `setup.ps1 -Replace`, scheduled updates, and
+service/container restarts do not apply settings profiles. Imported UI settings,
+MCP entries and custom secrets remain owned by the UI. Infrastructure provisioning
+still refreshes CA trust, TLS/session credentials, GitHub access and origins; it
+is not a profile or custom-secret restore. Full-state import and rollback are
+unchanged.
+
+To intentionally reapply the staged baseline after an update or recover a failed
+bootstrap, run this explicitly after the backend is responding:
+
+```sh
+openhands-overlay settings --file /etc/openhands/profile-common.json --file /etc/openhands/profile.json
+```
+
+Run as root inside the worker. Omit the common file for older releases without it;
+use the documented `--password-stdin` form for noninteractive Vaultwarden access.
+This can overwrite profile-declared UI fields and retire explicitly named secrets;
+it is not part of starting or updating the worker. Take a private manual
+[settings snapshot](../profiles/README.md#private-backup--restore-of-active-settings) first
+when needed. Snapshot restore remains a separate explicit operation, not an update
+hook or a replacement for the full-state archive.
 
 `update.ps1` compares `/etc/openhands/release` with the target version and stops
 at "already at" unless `-Force` is passed; a missing marker counts as older than
@@ -149,10 +174,9 @@ and provisions that staging distribution. The wait polls
 `systemctl is-system-running` in the staging distribution every two seconds for
 up to 120 seconds and continues on `running` or `degraded`, because a freshly
 imported distribution answers the first overlay call before systemd has finished
-starting nginx and the backend.
-completely. The old distribution is terminated only when the staging one is
+starting nginx and the backend completely. The old distribution is terminated only when the staging one is
 ready to bind TCP/443, and it is unregistered only after the staging
-distribution has passed `enable`, `settings`, and `verify`. The swap then
+distribution has passed `enable` and `verify`. The swap then
 renames the staging distribution by writing the `DistributionName` value under
 `HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss\{guid}`, which avoids
 a multi-gigabyte export and re-import. Any failure before the unregister removes

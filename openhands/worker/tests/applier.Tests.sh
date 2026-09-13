@@ -448,53 +448,7 @@ assert 'coder' not in state['agent_settings']['mcp_config']
 assert 'CODER_SESSION_TOKEN' not in state['secrets']
 assert log_path.read_text().index('DELETE /api/settings/mcp/coder') < log_path.read_text().index('DELETE /api/settings/secrets/CODER_SESSION_TOKEN')
 
-try:
-    from openhands.sdk.mcp.config import MCPServer
-    from openhands.sdk.settings.api_models import MCPServerPatch
-    from openhands.sdk.settings.model import apply_agent_settings_diff
-except ImportError as error:
-    print('installed OpenHands model tests skipped: %s' % error)
-else:
-    cases = [
-        ({'transport': 'stdio', 'command': 'coder', 'args': ['old'], 'env': {'KEEP': 'x', 'DROP': 'y'}},
-         {'command': 'coder', 'args': [], 'env': {'KEEP': 'x'}}),
-        ({'transport': 'http', 'url': 'https://x.test', 'headers': {'KEEP': 'x', 'DROP': 'y'}},
-         {'url': 'https://x.test', 'headers': {}}),
-        ({'transport': 'streamable-http', 'url': 'https://x.test', 'headers': {'TOKEN': 'y'}},
-         {'command': 'coder', 'args': [], 'env': {}}),
-        ({'transport': 'stdio', 'command': 'coder', 'args': ['old'], 'env': {'TOKEN': 'y'}, 'cwd': '/old'},
-         {'url': 'https://x.test', 'headers': {}}),
-    ]
-    for current, desired in cases:
-        seed({'target': current})
-        before = json.loads(state_path.read_text())['agent_settings']
-        invoke({'mcp_servers': {'target': desired}})
-        for line in body_path.read_text().splitlines():
-            method, path, raw = line.split(' ', 2)
-            assert method == 'PATCH' and path == '/api/settings/mcp/target'
-            patch = MCPServerPatch.model_validate(json.loads(raw)).model_dump(
-                mode='python', exclude_unset=True, context={'expose_secrets': 'plaintext'})
-            after = apply_agent_settings_diff(before, {'mcp_config': {'target': patch}})
-            target = after.mcp_config['target']
-            MCPServer.model_validate(target)
-            if 'env' in desired:
-                assert set(target.env or {}) == set(desired['env'])
-            if 'headers' in desired:
-                assert set(target.headers or {}) == set(desired['headers'])
-            if 'args' in desired:
-                assert target.args == desired['args']
-            if 'command' in desired:
-                assert target.url is None and target.headers is None and target.auth is None
-            else:
-                assert target.command is None and target.args is None and target.env is None and target.cwd is None
-        serialized = json.loads(after.model_dump_json(context={'expose_secrets': 'plaintext'}))
-        seed(serialized['mcp_config'])
-        invoke({'mcp_servers': {'target': desired}})
-        assert not body_path.read_text().strip(), body_path.read_text()
-    before = {'agent_kind': 'openhands', 'mcp_config': {'target': {'transport': 'stdio', 'command': 'coder'}}}
-    after = apply_agent_settings_diff(before, {'agent_kind': 'acp'})
-    assert not after.mcp_config
-    print('installed OpenHands model tests passed (4 MCP patches and agent-kind reset)')
+
 PYTEST
 
 echo 'applier tests passed'

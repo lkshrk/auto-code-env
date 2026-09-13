@@ -26,6 +26,11 @@ on:
         required: false
         default: false
         type: boolean
+      dotfiles_revision:
+        description: Full tested dotfiles commit SHA (required for publication)
+        required: false
+        default: ""
+        type: string
       legacy_templates:
         description: Additional legacy template names, comma-separated (no backend overrides)
         required: false
@@ -116,18 +121,31 @@ jobs:
           done < "$RUNNER_TEMP/coder-template-targets"
           bash coder/scripts/validate-templates.sh "${packages[@]}"
 
-      - name: Verify published dotfiles prerequisites
-        if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish && steps.selected.outputs.has_templates == 'true'
+      - name: Test exact dotfiles revision pair
+        env:
+          DOTFILES_REVISION: ${{ inputs.dotfiles_revision }}
+          PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish }}
         run: |
           set -euo pipefail
+          if [[ "$PUBLISH" == true && ! "$DOTFILES_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Publication requires the full tested dotfiles commit SHA' >&2
+            exit 1
+          fi
           dotfiles=$(mktemp -d "$RUNNER_TEMP/coder-dotfiles.XXXXXX")
           trap 'rm -rf "$dotfiles"' EXIT
-          git clone --depth=1 https://github.com/lkshrk/dotfiles.git "$dotfiles"
-          for script in setup-coder-components.sh setup-hermes.sh setup-coder.sh; do
-            test -f "$dotfiles/$script"
-            bash -n "$dotfiles/$script"
-          done
-          git -C "$dotfiles" rev-parse HEAD
+          git clone https://github.com/lkshrk/dotfiles.git "$dotfiles"
+          if [[ -n "$DOTFILES_REVISION" ]]; then
+            [[ "$DOTFILES_REVISION" =~ ^[0-9a-f]{40}$ ]]
+            git -C "$dotfiles" checkout --detach "$DOTFILES_REVISION"
+          fi
+          echo "auto-code-env=$(git rev-parse HEAD) dotfiles=$(git -C "$dotfiles" rev-parse HEAD)"
+          python3 coder/templates/shared/dotfiles-contract.py "$dotfiles"
+          CODER_TEST_DOTFILES="$dotfiles" PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests -p test_dotfiles_contract.py
+          PYTHONDONTWRITEBYTECODE=1 python3 "$dotfiles/tests/coder-components.py"
+          if [[ "$PUBLISH" == true && "$(git -C "$dotfiles" rev-parse origin/HEAD)" != "$DOTFILES_REVISION" ]]; then
+            echo 'The tested revision must be the default branch cloned by new workspaces' >&2
+            exit 1
+          fi
 
       - name: Install Coder CLI
         if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish && steps.selected.outputs.has_templates == 'true'

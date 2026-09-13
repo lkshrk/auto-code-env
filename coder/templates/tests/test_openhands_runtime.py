@@ -115,7 +115,7 @@ class OpenHandsRuntimeTests(unittest.TestCase):
             bound.bind(("127.0.0.1", 0))
             port = bound.getsockname()[1]
         payload = base64.b64encode(json.dumps({**RAW, "port": port}).encode()).decode()
-        env = runtime.clean_environment(self.home)
+        env = runtime.clean_environment(self.home, {})
         env["PATH"] = ""
         previous = None
         for _ in range(2):
@@ -136,7 +136,7 @@ class OpenHandsRuntimeTests(unittest.TestCase):
         runtime.load_keys(self.root)
         runtime.write_private(self.root / "configured.json", "{}")
         payload = base64.b64encode(json.dumps(RAW).encode()).decode()
-        env = runtime.clean_environment(self.home)
+        env = runtime.clean_environment(self.home, {})
         env["PATH"] = ""
         result = subprocess.run([sys.executable, "-I", str(RUNTIME), payload], env=env, capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
@@ -176,6 +176,116 @@ class OpenHandsRuntimeTests(unittest.TestCase):
             outputs.append(stdout)
         self.assertEqual(len(set(outputs)), 1)
         self.assertEqual(len(outputs[0].strip()), 64)
+
+    def test_clean_environment_forwards_only_explicit_ca_source_to_child(self):
+        source = {name: f"/test/{name}" for name in (
+            "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+        )}
+        source.update({"PATH": "/usr/bin:/bin", "GITHUB_TOKEN": "excluded", "PYTHONPATH": "excluded"})
+        env = runtime.clean_environment(self.home, source)
+        expected = {name: value for name, value in source.items() if value != "excluded"}
+        expected.update(HOME=str(self.home), LANG="C.UTF-8", PYTHONUNBUFFERED="1")
+        self.assertEqual(env, expected)
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", "import json,os;print(json.dumps(dict(os.environ)))"],
+            env=env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), expected)
+
+    def test_incomplete_environment_repair_requires_stopped_server_and_uv(self):
+        config = runtime.configuration(RAW, self.home)
+        venv = self.root / "venv-1.44.0-py3.12"
+        venv.mkdir()
+        sentinel = venv / "preserve"
+        sentinel.write_text("untouched")
+        env = runtime.clean_environment(self.home, {"PATH": ""})
+        with self.assertRaisesRegex(RuntimeError, "incomplete"):
+            runtime.environment(self.root, config, env, active=True)
+        self.assertEqual(list(venv.iterdir()), [sentinel])
+        with self.assertRaisesRegex(RuntimeError, "requires uv"):
+            runtime.environment(self.root, config, env, active=False)
+        self.assertEqual(sentinel.read_text(), "untouched")
+
+    @unittest.skipUnless(shutil.which("uv"), "uv unavailable")
+    def test_interrupted_install_retries_real_uv_offline_without_changing_keys(self):
+        config = {**RAW, "python_version": f"{sys.version_info.major}.{sys.version_info.minor}"}
+        venv = self.root / f"venv-{config['version']}-py{config['python_version']}"
+        venv.mkdir()
+        keys = runtime.load_keys(self.root)
+        env = runtime.clean_environment(self.home, {"PATH": os.environ["PATH"]})
+        env.update(UV_OFFLINE="true", UV_NO_CACHE="true", UV_PYTHON_DOWNLOADS="never")
+        for _ in range(2):
+            with runtime.startup_lock(self.root / "startup.lock"):
+                with self.assertRaises(subprocess.CalledProcessError) as raised:
+                    runtime.environment(self.root, config, env, active=False)
+            self.assertIn("install", raised.exception.cmd)
+            self.assertTrue((venv / "bin" / "python").exists())
+            self.assertEqual(runtime.load_keys(self.root), keys)
+        before = (venv / "pyvenv.cfg").read_bytes()
+        with self.assertRaisesRegex(RuntimeError, "incomplete"):
+            runtime.environment(self.root, config, env, active=True)
+        self.assertEqual((venv / "pyvenv.cfg").read_bytes(), before)
+        self.assertFalse((self.root / "configured.json").exists())
+        self.assertFalse((self.root / "server.json").exists())
+
+    def test_dead_record_with_unowned_port_refuses_before_environment_repair(self):
+        keys = runtime.load_keys(self.root)
+        venv = self.root / "venv-1.44.0-py3.12"
+        venv.mkdir()
+        sentinel = venv / "untouched"
+        sentinel.write_text("preserved")
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            config = {**RAW, "port": listener.getsockname()[1]}
+            runtime.write_private(self.root / "server.json", json.dumps({
+                "identity": {"pid": 2**30}, "config": config,
+            }))
+            payload = base64.b64encode(json.dumps(config).encode()).decode()
+            result = subprocess.run(
+                [sys.executable, "-I", str(RUNTIME), payload],
+                env=runtime.clean_environment(self.home, {"PATH": ""}),
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("already in use", result.stderr)
+            self.assertGreaterEqual(listener.fileno(), 0)
+        self.assertEqual(list(venv.iterdir()), [sentinel])
+        self.assertEqual(runtime.load_keys(self.root), keys)
+
+    def test_environment_symlink_is_never_repaired(self):
+        target = self.home / "unmanaged-venv"
+        target.mkdir()
+        (self.root / "venv-1.44.0-py3.12").symlink_to(target, target_is_directory=True)
+        for active in (False, True):
+            with self.subTest(active=active), self.assertRaisesRegex(RuntimeError, "symlink"):
+                runtime.environment(self.root, RAW, runtime.clean_environment(self.home, {}), active)
+        self.assertEqual(list(target.iterdir()), [])
+
+    def test_key_binding_marker_accepts_legacy_and_versioned_state(self):
+        keys = runtime.load_keys(self.root)
+        config = {**RAW, "key_fingerprints": [runtime.hashlib.sha256(k.encode()).hexdigest() for k in keys]}
+        path = self.root / "configured.json"
+        for previous in (None, config, {"schema_version": 1, "key_fingerprints": config["key_fingerprints"]}):
+            if previous is not None:
+                runtime.write_private(path, json.dumps(previous))
+            runtime.bind_keys(path, config["key_fingerprints"])
+            self.assertEqual(json.loads(runtime.read_private(path)), {
+                "schema_version": 1, "key_fingerprints": config["key_fingerprints"],
+            })
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(runtime.load_keys(self.root), keys)
+        for previous in (
+            {"schema_version": 2, "key_fingerprints": config["key_fingerprints"]},
+            {"schema_version": 1, "key_fingerprints": ["other", "keys"]},
+            {},
+        ):
+            contents = json.dumps(previous)
+            runtime.write_private(path, contents)
+            with self.assertRaises(RuntimeError):
+                runtime.bind_keys(path, config["key_fingerprints"])
+            self.assertEqual(runtime.read_private(path), contents)
 
     def test_configuration_defaults_and_arbitrary_literal_path(self):
         config = runtime.configuration(RAW, self.home)
@@ -218,6 +328,18 @@ class OpenHandsRuntimeTests(unittest.TestCase):
         dead = {"identity": {"pid": 2**30}, "config": RAW}
         self.assertFalse(runtime.validate_record(dead, RAW, []))
 
+    def test_closed_listener_time_wait_allows_restart(self):
+        with socket.socket() as server:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind(("127.0.0.1", 0))
+            port = server.getsockname()[1]
+            server.listen()
+            with socket.create_connection(("127.0.0.1", port)) as client:
+                connection, _ = server.accept()
+                connection.close()
+                self.assertEqual(client.recv(1), b"")
+        runtime.require_free_port(port)
+
     def test_port_conflict_without_starting_a_server(self):
         with socket.socket() as bound:
             bound.bind(("127.0.0.1", 0))
@@ -253,7 +375,7 @@ class OpenHandsRuntimeTests(unittest.TestCase):
             runtime.NoRedirect().redirect_request(None, None, 302, None, None, "https://example.org")
 
     def test_environment_uses_only_managed_keys_and_disables_auxiliary_servers(self):
-        env = runtime.clean_environment(self.home)
+        env = runtime.clean_environment(self.home, {})
         self.assertEqual(set(env), {"HOME", "PATH", "LANG", "PYTHONUNBUFFERED"})
         config = runtime.configuration(RAW, self.home)
         keys = runtime.load_keys(self.root)
@@ -271,6 +393,7 @@ class OpenHandsRuntimeTests(unittest.TestCase):
             "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "DOCKER_HOST", "DOCKER_TLS_VERIFY",
             "DOCKER_CERT_PATH", "KUBECONFIG", "XDG_CACHE_HOME", "TMPDIR", "NODE_EXTRA_CA_CERTS",
             "SSL_CERT_FILE", "CODER_URL", "NVM_DIR", "PNPM_HOME", "CARGO_HOME", "GOPATH",
+            "DEPLOYMENT_URL", "PLAYWRIGHT_LIVE_BASE_URL",
         }
         self.assertTrue(expected_names <= set(DEFAULT_ENVIRONMENT_NAMES))
         source = {name: f"test-only-{name}" for name in DEFAULT_ENVIRONMENT_NAMES}
@@ -284,7 +407,7 @@ class OpenHandsRuntimeTests(unittest.TestCase):
         config = runtime.configuration(RAW, self.home)
         inherited = runtime.inherited_environment(config, source)
         self.assertEqual(inherited, {name: source[name] for name in DEFAULT_ENVIRONMENT_NAMES})
-        base = runtime.clean_environment(self.home)
+        base = runtime.clean_environment(self.home, {})
         self.assertFalse(set(base) & set(source))
         keys = runtime.load_keys(self.root)
         env = runtime.server_environment(base, self.root, self.home / ".coder-openhands-data", config, keys, inherited)
@@ -325,7 +448,7 @@ class OpenHandsRuntimeTests(unittest.TestCase):
             self.skipTest("OpenHands packages are not installed; no dependencies installed by tests")
         if versions != ["1.44.0"] * 3:
             self.skipTest("Installed OpenHands packages are not all 1.44.0")
-        env = runtime.clean_environment(self.home)
+        env = runtime.clean_environment(self.home, {})
         config = runtime.configuration({**RAW, "python_version": f"{sys.version_info.major}.{sys.version_info.minor}"}, self.home)
         runtime.check_environment(sys.executable, config, env)
         with self.assertRaisesRegex(RuntimeError, "version mismatch"):
@@ -342,7 +465,7 @@ class OpenHandsRuntimeTests(unittest.TestCase):
             self.skipTest("Installed Agent Server is not 1.44.0")
         config = runtime.configuration(RAW, self.home)
         keys = runtime.load_keys(self.root)
-        env = runtime.server_environment(runtime.clean_environment(self.home), self.root, self.home / ".coder-openhands-data", config, keys)
+        env = runtime.server_environment(runtime.clean_environment(self.home, {}), self.root, self.home / ".coder-openhands-data", config, keys)
         code = (
             "import os;from openhands.agent_server.config import load_config;"
             "c=load_config();"
@@ -367,7 +490,7 @@ class OpenHandsRuntimeTests(unittest.TestCase):
         script = rendered_script(config)
         result = subprocess.run(["bash", "--noprofile", "--norc", "-n"], input=script, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        result = subprocess.run(["bash", "--noprofile", "--norc"], input=script + f"touch '{sentinel}'\n", env=runtime.clean_environment(self.home), text=True, capture_output=True, timeout=10)
+        result = subprocess.run(["bash", "--noprofile", "--norc"], input=script + f"touch '{sentinel}'\n", env=runtime.clean_environment(self.home, {}), text=True, capture_output=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Invalid OpenHands version", result.stderr)
         self.assertFalse(sentinel.exists())

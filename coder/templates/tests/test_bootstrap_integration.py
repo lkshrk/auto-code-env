@@ -123,6 +123,24 @@ class BootstrapIntegrationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(list((root / ".local/state/coder-environment").glob(".ca-bundle.*")), [])
 
+    def test_ca_export_preserves_caller_variables_and_arguments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "lan.pem"
+            source.write_text("local CA fixture\n")
+            env = {"HOME": directory, "PATH": os.environ["PATH"], "CODER_WORKSPACE_CA_PATH": str(source)}
+            command = (
+                'source=source; bundle=bundle; temporary=temporary; certificate=certificate; target=target; '
+                '. "$1"; shift; '
+                'test "$*" = "original arguments" && '
+                'test "$source/$bundle/$temporary/$certificate/$target" = '
+                '"source/bundle/temporary/certificate/target" && test -r "$SSL_CERT_FILE"'
+            )
+            for shell in ("sh", "bash"):
+                with self.subTest(shell=shell):
+                    subprocess.run([shell, "-c", command, shell, str(CA_SCRIPT), "original", "arguments"],
+                                   env=env, check=True, capture_output=True)
+
     def test_absent_ca_does_not_override_existing_trust_configuration(self):
         self.assertTrue(CA_SCRIPT.is_file())
         with tempfile.TemporaryDirectory() as directory:

@@ -8,10 +8,18 @@ every credential is named by its Vaultwarden item UUID and fetched at apply time
 Each file in this directory is published as a release asset named
 `profile-<name>.json`, so `common.json` ships as `profile-common.json`.
 
-The merging, validation, and backend calls live in `../scripts/apply-profile.py`,
+The merging, validation, and backend calls live in `../worker/image/rootfs/usr/local/lib/openhands/apply-profile.py`,
 a python3 standard library script that the overlay runs and that any other
 backend can run directly. See [Backends without a
 worker](#backends-without-a-worker).
+
+Profiles are explicit bootstrap/recovery inputs, not the live settings owner.
+New worker setup applies the baseline once. Ordinary updates (including forced,
+scheduled and replacement updates) and service/container starts never reapply it.
+Update still stages release profiles for a later manual recovery command. Review
+the declared changes and take a private snapshot before intentionally applying a
+baseline over UI-edited settings. Sparse profile application and full captured
+settings replacement remain different operations.
 
 ## Layering
 
@@ -263,7 +271,8 @@ fields, basic credential/map shapes, secret names/types, duplicate keys and
 non-finite JSON values are checked before mutation. The stdlib CLI deliberately
 does not reimplement every SDK model validator: the server validates the settings
 PATCH. Supported contracts are agent schema 5 (`openhands`/`acp`) and conversation
-schema 1, tested against SDK 1.46.0. Other versions/agent field sets fail closed.
+schema 1. CI requires paired server/SDK 1.44.0 (the worker image pin) and
+1.46.0 contract tests. These are not interchangeable with an arbitrary newer server. Other versions/agent field sets fail closed.
 Do not hand-edit snapshots or restore across untested server versions.
 
 Restore without `--apply` and `preview` are **offline**, validate the snapshot and
@@ -280,6 +289,24 @@ secrets also spans several reads and requires a quiet source for consistency.
 ```sh
 OPENHANDS_SUPPRESS_BANNER=1 python -m unittest discover \
   -s openhands/worker/tests -p test_backup_profile.py -v
+```
+
+The dedicated `settings-contracts` CI matrix installs exact server/SDK pairs
+1.44.0 and 1.46.0 in separate Python 3.12 environments on Ubuntu 24.04, with
+`agent-client-protocol==0.10.1` (inside both published SDK requirements) and the
+worker's `posthog>=6,<7` compatibility constraint. Dependency setup and `pip check`
+fail the job on incompatibility. It runs `settings-contracts.py`, which checks the
+installed versions and fails for missing imports, empty discovery or skipped tests.
+Both the snapshot suite and `test_applier_contract.py` are mandatory; the Docker
+transport/failure-injection suite remains separate. The applier contract fixture
+uses real `MCPServerPatch` and `PersistedSettings.update` for generated patches and
+agent-kind reconstruction, with loopback HTTP only and synthetic credentials.
+
+To run that same gate in an already provisioned compatible environment:
+
+```sh
+EXPECTED_OPENHANDS_VERSION=1.44.0 OPENHANDS_SUPPRESS_BANNER=1 \
+  python openhands/worker/tests/settings-contracts.py
 ```
 
 Tests need an already-installed OpenHands agent-server/SDK; the CLI itself needs

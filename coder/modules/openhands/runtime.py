@@ -89,6 +89,16 @@ def load_keys(root):
     return keys
 
 
+def bind_keys(path, fingerprints):
+    if path.exists():
+        previous = json.loads(read_private(path))
+        if not isinstance(previous, dict) or previous.get("schema_version", 1) != 1:
+            raise RuntimeError("Unsupported OpenHands key binding schema")
+        if previous.get("key_fingerprints") != fingerprints:
+            raise RuntimeError("OpenHands persisted encryption/auth keys changed; restore original keys")
+    write_private(path, json.dumps({"schema_version": 1, "key_fingerprints": fingerprints}))
+
+
 def configuration(raw, home):
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", raw["version"]):
         raise ValueError("Invalid OpenHands version")
@@ -151,6 +161,7 @@ def validate_record(record, config, command):
 
 def require_free_port(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind(("127.0.0.1", port))
         except OSError:
@@ -174,11 +185,12 @@ def owns_listener(pid, port):
     return False
 
 
-def clean_environment(home):
+def clean_environment(home, source=None):
+    source = os.environ if source is None else source
     return {
-        **{name: os.environ[name] for name in ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE") if name in os.environ},
+        **{name: source[name] for name in ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE") if name in source},
         "HOME": str(home),
-        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "PATH": source.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "LANG": "C.UTF-8",
         "PYTHONUNBUFFERED": "1",
     }
@@ -189,6 +201,8 @@ def check_environment(python, config, env):
         "import importlib.metadata as m,json,sys;"
         f"print(json.dumps([[m.version(p) for p in {PACKAGES!r}],list(sys.version_info[:3])]))"
     )
+    if not Path(python).exists():
+        raise RuntimeError("OpenHands environment is incomplete; repair it while the server is stopped")
     result = subprocess.run([str(python), "-I", "-c", code], env=env, capture_output=True, text=True, timeout=30)
     if result.returncode:
         raise RuntimeError("OpenHands environment is incomplete; repair it while the server is stopped")
@@ -203,18 +217,29 @@ def environment(root, config, env, active):
     python = venv / "bin" / "python"
     if venv.is_symlink():
         raise RuntimeError("OpenHands environment must not be a symlink")
-    if not venv.exists():
-        if active:
+    if active:
+        if not venv.exists():
             raise RuntimeError("Running OpenHands environment is missing")
-        uv = shutil.which("uv", path=env["PATH"])
-        if not uv:
-            raise RuntimeError("OpenHands requires uv from the validated Python component")
-        subprocess.run([uv, "--no-config", "venv", "--python", config["python_version"], str(venv)], env=env, check=True, timeout=600)
-        subprocess.run([
-            uv, "--no-config", "pip", "install", "--python", str(python),
-            "--index-url", "https://pypi.org/simple",
-            *[f"{package}=={config['version']}" for package in PACKAGES],
-        ], env=env, check=True, timeout=600)
+        check_environment(python, config, env)
+        return python
+    if venv.exists():
+        private_directory(venv)
+        try:
+            check_environment(python, config, env)
+            return python
+        except RuntimeError:
+            pass
+    uv = shutil.which("uv", path=env["PATH"])
+    if not uv:
+        raise RuntimeError("OpenHands requires uv from the validated Python component")
+    subprocess.run([
+        uv, "--no-config", "venv", "--allow-existing", "--python", config["python_version"], str(venv),
+    ], env=env, check=True, timeout=600)
+    subprocess.run([
+        uv, "--no-config", "pip", "install", "--python", str(python),
+        "--index-url", "https://pypi.org/simple",
+        *[f"{package}=={config['version']}" for package in PACKAGES],
+    ], env=env, check=True, timeout=600)
     check_environment(python, config, env)
     return python
 
@@ -321,12 +346,7 @@ def start(raw):
             for name in ("conversations", "worktrees", "bash-events"):
                 private_directory(data / name)
             Path(config["working_directory"]).mkdir(parents=True, exist_ok=True)
-            configured_path = root / "configured.json"
-            if configured_path.exists():
-                previous = json.loads(read_private(configured_path))
-                if previous["key_fingerprints"] != config["key_fingerprints"]:
-                    raise RuntimeError("OpenHands persisted encryption/auth keys changed; restore original keys")
-            write_private(configured_path, json.dumps(config))
+            bind_keys(root / "configured.json", config["key_fingerprints"])
             write_private(root / "agent-server.json", "{}\n")
             with os.fdopen(private_open(root / "server.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND), "a") as log:
                 child = subprocess.Popen(

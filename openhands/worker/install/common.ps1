@@ -859,12 +859,57 @@ function Get-WorkerGuestProfilePaths {
 }
 
 function Invoke-WorkerActivation {
+    param([Parameter(Mandatory)][scriptblock]$Overlay)
+
+    & $Overlay @("enable") $false $null
+    & $Overlay @("verify") $false $null
+}
+
+function Wait-WorkerBackendReady {
+    param(
+        [Parameter(Mandatory)][string]$WslPath,
+        [Parameter(Mandatory)][string]$Distro
+    )
+
+    if ($Distro -notmatch $WorkerDistroPattern) {
+        throw "Distribution name '$Distro' is not valid."
+    }
+    $probe = @'
+import pathlib
+import time
+import urllib.error
+import urllib.request
+
+key = pathlib.Path("/etc/credstore/local_backend_api_key").read_text().strip()
+request = urllib.request.Request("http://127.0.0.1:8000/api/settings",
+                                 headers={"X-Session-API-Key": key})
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+deadline = time.monotonic() + 120
+while time.monotonic() < deadline:
+    try:
+        with opener.open(request, timeout=2) as response:
+            if response.status == 200:
+                raise SystemExit(0)
+    except (OSError, urllib.error.URLError):
+        pass
+    time.sleep(2)
+raise SystemExit("Backend did not become ready within 120 seconds")
+'@
+    $exit = Invoke-WorkerProcess -FilePath $WslPath -Arguments @("--distribution", $Distro, "--user", "root", "--exec", "python3", "-c", $probe)
+    if ($exit -ne 0) {
+        throw "Worker backend readiness failed with exit code $exit."
+    }
+}
+
+function Invoke-WorkerBootstrap {
     param(
         [Parameter(Mandatory)][scriptblock]$Overlay,
+        [Parameter(Mandatory)][scriptblock]$WaitReady,
         [string[]]$ProfilePaths = @("/etc/openhands/profile.json")
     )
 
-    & $Overlay @("enable") $false $null
+    Invoke-WorkerActivation -Overlay $Overlay
+    & $WaitReady
     & $Overlay (Get-WorkerSettingsCommand -ProfilePaths $ProfilePaths) $true $null
     & $Overlay @("verify") $false $null
 }

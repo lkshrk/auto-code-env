@@ -96,9 +96,14 @@ templates and nothing keeps the two preset lists in sync.
 - Packages are built once and validated with pinned OpenTofu before publication.
 - Pushes to `main` validate only. Publication requires `workflow_dispatch` on
   `main` with `publish: true`.
-- Before publication, CI checks that the default dotfiles branch contains valid
-  `setup-coder-components.sh`, `setup-hermes.sh`, and `setup-coder.sh` scripts.
-  It records the checked commit without executing those scripts.
+- CI exercises the version-1 dotfiles resolver/core-layout contract and companion
+  component tests without installing tools or syncing the runner's dotfiles. Manual
+  publication requires `dotfiles_revision` to be a full tested commit SHA matching
+  the companion default branch; logs identify both repository revisions.
+- Composable startup negotiates the same contract against the preserved checkout,
+  including custom dotfiles URLs, before component installation. A contract failure
+  requires an explicit operator update, never a reset or automatic branch switch.
+  Contract compatibility is not disposable installation acceptance.
 - Operators must verify fresh bootstrap and explicitly update preserved dotfiles
   checkouts before opting into publication. CI cannot verify existing workspace
   volumes, and does not reset user checkouts.
@@ -113,27 +118,36 @@ in Coder as a separate operator step.
 Reproduce what CI does:
 
 ```bash
+bash coder/templates/tests/packaging.sh
+bash coder/templates/tests/selection.sh
 bash coder/templates/tests/prepare-dotfiles.sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests -p 'test_*.py'
 
-for dir in coder/templates/*/; do
-  name=$(basename "$dir")
-  case "$name" in backends|shared|tests) continue ;; esac
-  tmpdir=$(mktemp -d)
-  cp coder/templates/common.tf "$tmpdir/common.tf"
-  cp -R coder/templates/shared "$tmpdir/shared"
-  backend=kubernetes
-  if [ -f "$dir/backend" ]; then
-    cp "$dir/backend" "$tmpdir/backend"
-    backend=$(tr -d '[:space:]' < "$dir/backend")
-  fi
-  cp "coder/templates/backends/$backend.tf" "$tmpdir/"
-  cp "$dir"/*.tf "$tmpdir/"
-  terraform -chdir="$tmpdir" fmt -check -diff
-  terraform -chdir="$tmpdir" init -backend=false -input=false
-  terraform -chdir="$tmpdir" validate
-  rm -rf "$tmpdir"
-done
+packages=$(mktemp -d)
+bash coder/scripts/select-templates.sh "$PWD" targets > "$packages/targets"
+# Append explicitly requested legacy packages, if needed:
+# bash coder/scripts/select-templates.sh "$PWD" legacy civora,hermes >> "$packages/targets"
+while IFS=$'\t' read -r name dir backend; do
+  options=()
+  if [[ "$backend" != - ]]; then options=(--backend "$backend"); fi
+  bash coder/scripts/package-template.sh "$dir" "$packages/$name" "${options[@]}"
+  bash coder/scripts/validate-templates.sh "$packages/$name"
+done < "$packages/targets"
+rm -rf "$packages"
 ```
+
+Use OpenTofu for validation. The canonical packager includes local modules and
+composable defaults; do not assemble packages with a separate copy recipe.
+Set `CODER_TEST_DOTFILES` to the exact companion checkout for pair tests. Record
+both SHAs and any uncommitted patches; a SHA alone does not identify a dirty tree.
+`prepare-dotfiles.sh` preserves existing checkout contents while fetching and
+updating origin: changing the URL does not switch the existing branch/revision.
+
+Managed executable links created by the component bootstrap carry per-link
+receipts. Upgrades (including dangling old targets) only replace links matching
+those receipts. Pre-receipt or user-modified links require explicit operator
+resolution; a path under `.nvm` alone is not proof of bootstrap ownership.
+
 
 ## Cluster contract
 

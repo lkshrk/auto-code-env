@@ -266,6 +266,8 @@ locals {
         exit 1
       fi
       mkdir -p "$HOME/.local/state/coder-environment"
+      printf '%s' '${base64encode(file("${path.module}/shared/dotfiles-contract.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/dotfiles-contract.py"
+      python3 "$HOME/.local/state/coder-environment/dotfiles-contract.py" "$CODER_DOTFILES_SOURCE_DIR"
       printf '%s' '${base64encode(file("${path.module}/shared/components.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/components.py"
       python3 "$HOME/.local/state/coder-environment/components.py" validate --report "$HOME/.local/state/coder-environment/readiness.json"
       python3 "$HOME/.local/state/coder-environment/components.py" wait-repositories

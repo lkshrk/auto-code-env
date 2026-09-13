@@ -61,11 +61,7 @@ data "coder_workspace_preset" "infrastructure" {
 }
 
 locals {
-  stacks = distinct(concat(
-    jsondecode(data.coder_parameter.stacks.value),
-    tobool(data.coder_parameter.enable_dind.value) ? ["containers"] : [],
-    tobool(data.coder_parameter.enable_playwright.value) ? ["ts"] : [],
-  ))
+  stacks            = jsondecode(data.coder_parameter.stacks.value)
   enable_dind       = tobool(data.coder_parameter.enable_dind.value)
   enable_playwright = tobool(data.coder_parameter.enable_playwright.value)
   repos             = split(",", data.coder_parameter.repos.value)
