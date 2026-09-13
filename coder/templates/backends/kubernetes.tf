@@ -99,10 +99,6 @@ resource "kubernetes_pod_v1" "workspace" {
         "app.kubernetes.io/instance"   = local.workspace_k8s_name
         "app.kubernetes.io/managed-by" = "coder"
       },
-      data.coder_workspace.me.template_name == "hermes" ? {
-        "h-cloud.io/coder-connect-protected" = "true"
-        "h-cloud.io/signal-client"           = "hermes"
-      } : {},
       local.enable_dind ? { "coder.h-cloud.io/docker-dind" = "true" } : {},
     )
   }

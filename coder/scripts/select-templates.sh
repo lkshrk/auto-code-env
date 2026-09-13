@@ -45,7 +45,7 @@ def unique_object(pairs):
     return result
 
 
-def target_catalog(root, candidates):
+def target_catalog(root):
     path = root / "coder/targets.json"
     if path.is_symlink():
         fail("Target catalog must not be a symlink")
@@ -65,57 +65,21 @@ def target_catalog(root, candidates):
             fail(f"Invalid target entry: {name}")
         if target["source"] != "dev" or target["backend"] not in ("docker", "kubernetes"):
             fail("Targets must use dev with an explicit Docker or Kubernetes backend")
-        if name in candidates and name != "dev":
-            fail(f"Target collides with existing legacy template: {name}")
-        if target["source"] not in candidates:
+        if not (root / "coder/templates/dev/main.tf").is_file():
             fail(f"Missing target source: {target['source']}")
     return targets
 
 
 if len(sys.argv) < 3:
-    fail("Usage: select-templates.sh REPO_ROOT all|changed BASE HEAD|targets|targets-changed BASE HEAD|legacy NAME[,NAME...]")
+    fail("Usage: select-templates.sh REPO_ROOT targets|targets-changed BASE HEAD")
 root = Path(sys.argv[1]).resolve()
 mode = sys.argv[2]
-counts = {"all": 3, "changed": 5, "targets": 3, "targets-changed": 5, "legacy": 4}
+counts = {"targets": 3, "targets-changed": 5}
 if mode not in counts or len(sys.argv) != counts[mode]:
     fail("Invalid selection mode or arguments")
-templates = root / "coder/templates"
-if not templates.is_dir():
-    fail("Missing coder/templates directory")
-
-candidates = set()
-for main in templates.glob("*/main.tf"):
-    name = main.parent.name
-    if name in {"backends", "shared", "tests"}:
-        continue
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
-        fail(f"Invalid template name: {name!r}")
-    if main.is_file():
-        candidates.add(name)
-
-changed = changed_paths(root, sys.argv[3:5]) if mode in {"changed", "targets-changed"} else []
-if mode in {"targets", "targets-changed", "legacy"}:
-    targets = target_catalog(root, candidates)
-    if mode == "legacy":
-        names = {part.strip() for part in sys.argv[3].split(",")}
-        if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name) or name not in candidates or name == "dev" or name in targets for name in names):
-            fail("Legacy selection requires explicit existing non-target template names")
-        for name in sorted(names):
-            print(f"{name}\tcoder/templates/{name}\t-")
-    else:
-        for name, target in sorted(targets.items()):
-            if mode == "targets" or any(shared_change(path) or path.startswith(f"coder/templates/{target['source']}/") for path in changed):
-                print(f"{name}\tcoder/templates/{target['source']}\t{target['backend']}")
-else:
-    selected = candidates.copy() if mode == "all" else set()
-    for path in changed:
-        if shared_change(path):
-            selected = candidates.copy()
-            break
-        if path.startswith("coder/templates/"):
-            parts = path.split("/")
-            if parts[2] in candidates:
-                selected.add(parts[2])
-    for name in sorted(selected):
-        print(f"coder/templates/{name}")
+targets = target_catalog(root)
+changed = changed_paths(root, sys.argv[3:5]) if mode == "targets-changed" else []
+for name, target in sorted(targets.items()):
+    if mode == "targets" or any(shared_change(path) or path.startswith(f"coder/templates/{target['source']}/") for path in changed):
+        print(f"{name}\tcoder/templates/{target['source']}\t{target['backend']}")
 PYTHON

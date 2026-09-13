@@ -88,7 +88,7 @@ variable "mcp_url" {
 
 variable "omni_version" {
   type    = string
-  default = "0.10.15"
+  default = "0.10.16"
 
   validation {
     condition     = can(regex("^v?[0-9]+\\.[0-9]+\\.[0-9]+$", var.omni_version))
@@ -98,11 +98,11 @@ variable "omni_version" {
 
 variable "environment_mode_default" {
   type    = string
-  default = "legacy"
+  default = "composable"
 
   validation {
-    condition     = contains(["legacy", "composable"], var.environment_mode_default)
-    error_message = "environment_mode_default must be legacy or composable."
+    condition     = var.environment_mode_default == "composable"
+    error_message = "environment_mode_default must be composable."
   }
 }
 
@@ -111,17 +111,9 @@ data "coder_parameter" "environment_mode" {
   display_name = "Environment setup"
   default      = var.environment_mode_default
   mutable      = true
-  dynamic "option" {
-    for_each = var.environment_mode_default == "composable" ? {
-      composable = "Personal core and selected components"
-      } : {
-      composable = "Personal core and selected components"
-      legacy     = "Existing personal profile"
-    }
-    content {
-      name  = option.value
-      value = option.key
-    }
+  option {
+    name  = "Personal core and selected components"
+    value = "composable"
   }
 }
 
@@ -188,7 +180,7 @@ locals {
   workspace_k8s_name        = "coder-${local.workspace_owner_label}-${local.workspace_name_label}-${local.workspace_hash}"
   workspace_home_pvc_name   = "${local.workspace_k8s_name}-home"
   workspace_env_secret_name = "${data.coder_workspace.me.template_name}-workspace-env"
-  omni_host                 = data.coder_workspace.me.template_name == "hermes" ? "hermes" : "coder"
+  omni_host                 = "coder"
   deployment_url            = trimspace(data.coder_parameter.deployment_url.value)
   deployment_env = local.deployment_url != "" ? {
     DEPLOYMENT_URL           = local.deployment_url
@@ -200,17 +192,9 @@ locals {
     for r in local.repos : trimspace(r) if trimspace(r) != ""
   ]) : toset([])
 
-  workspace_access_profile = (
-    data.coder_workspace.me.template_name == "civora" ? "civora" :
-    data.coder_workspace.me.template_name == "routivo" ? "routivo" :
-    data.coder_workspace.me.template_name == "sveltekit" ? "pub" :
-    "base"
-  )
-  workspace_service_account_name = local.workspace_access_profile == "base" ? "coder-workspace" : "coder-workspace-${local.workspace_access_profile}"
-  workspace_kube_namespace       = local.workspace_access_profile == "base" ? "coder" : local.workspace_access_profile
+  workspace_service_account_name = "coder-workspace"
+  workspace_kube_namespace       = "coder"
 
-  # Folder names the git-clone module produces under $HOME (basename minus
-  # .git); setup-coder.sh activates each repo's lefthook hooks from this list.
   repo_clone_dirs = join(",", [
     for r in local.repos_set : trimsuffix(basename(r), ".git")
   ])
@@ -260,24 +244,17 @@ locals {
     ${file("${path.module}/shared/prepare-dotfiles.sh")}
 
     export CODER_DOTFILES_REVISION=$(git -C "$CODER_DOTFILES_SOURCE_DIR" rev-parse HEAD)
-    if [ "$CODER_ENVIRONMENT_MODE" = "composable" ]; then
-      if [ ! -f "$CODER_DOTFILES_SOURCE_DIR/setup-coder-components.sh" ]; then
-        printf '%s\n' "Composable setup requires updated dotfiles. Update the preserved checkout at $CODER_DOTFILES_SOURCE_DIR explicitly." >&2
-        exit 1
-      fi
-      mkdir -p "$HOME/.local/state/coder-environment"
-      printf '%s' '${base64encode(file("${path.module}/shared/dotfiles-contract.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/dotfiles-contract.py"
-      python3 "$HOME/.local/state/coder-environment/dotfiles-contract.py" "$CODER_DOTFILES_SOURCE_DIR"
-      printf '%s' '${base64encode(file("${path.module}/shared/components.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/components.py"
-      python3 "$HOME/.local/state/coder-environment/components.py" validate --report "$HOME/.local/state/coder-environment/readiness.json"
-      python3 "$HOME/.local/state/coder-environment/components.py" wait-repositories
-      bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder-components.sh"
-    elif [ "$CODER_OMNI_HOST" = "hermes" ]; then
-      bash "$CODER_DOTFILES_SOURCE_DIR/setup-hermes.sh"
-    else
-      [ -L "$HOME/.local/bin/codex" ] || rm -f "$HOME/.local/bin/codex"
-      bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder.sh"
+    if [ ! -f "$CODER_DOTFILES_SOURCE_DIR/setup-coder-components.sh" ]; then
+      printf '%s\n' "Composable setup requires updated dotfiles. Update the preserved checkout at $CODER_DOTFILES_SOURCE_DIR explicitly." >&2
+      exit 1
     fi
+    mkdir -p "$HOME/.local/state/coder-environment"
+    printf '%s' '${base64encode(file("${path.module}/shared/dotfiles-contract.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/dotfiles-contract.py"
+    python3 "$HOME/.local/state/coder-environment/dotfiles-contract.py" "$CODER_DOTFILES_SOURCE_DIR"
+    printf '%s' '${base64encode(file("${path.module}/shared/components.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/components.py"
+    python3 "$HOME/.local/state/coder-environment/components.py" validate --report "$HOME/.local/state/coder-environment/readiness.json"
+    python3 "$HOME/.local/state/coder-environment/components.py" wait-repositories
+    bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder-components.sh"
 
     # No browser preinstall: shiplight and each project's @playwright/test
     # fetch their own pinned revision on demand into ~/.cache/ms-playwright on
@@ -293,15 +270,10 @@ locals {
       fi
     fi
 
-    if [ "$CODER_ENVIRONMENT_MODE" = "composable" ]; then
-      export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.krew/bin:$HOME/.local/share/pnpm:$HOME/.local/share/pnpm/bin:$PATH"
-      python3 "$HOME/.local/state/coder-environment/components.py" check
-      ${module.openhands.startup_script}
-      python3 "$HOME/.local/state/coder-environment/components.py" check --report "$HOME/.local/state/coder-environment/readiness.json"
-    elif [ "$CODER_ENABLE_OPENHANDS" = "1" ]; then
-      printf '%s\n' 'OpenHands requires composable environment setup' >&2
-      exit 1
-    fi
+    export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.krew/bin:$HOME/.local/share/pnpm:$HOME/.local/share/pnpm/bin:$PATH"
+    python3 "$HOME/.local/state/coder-environment/components.py" check
+    ${module.openhands.startup_script}
+    python3 "$HOME/.local/state/coder-environment/components.py" check --report "$HOME/.local/state/coder-environment/readiness.json"
   SCRIPT
 }
 
@@ -323,8 +295,8 @@ resource "coder_agent" "main" {
 
   lifecycle {
     precondition {
-      condition     = !tobool(data.coder_parameter.enable_openhands.value) || local.composable
-      error_message = "OpenHands requires composable environment setup."
+      condition     = local.composable
+      error_message = "Dev requires composable environment setup."
     }
     precondition {
       condition     = length(distinct([for repo in local.repos_set : trimsuffix(basename(repo), ".git")])) == length(local.repos_set)
@@ -339,7 +311,7 @@ resource "coder_agent" "main" {
     GIT_COMMITTER_EMAIL           = data.coder_workspace_owner.me.email
     CODER_OMNI_HOST               = local.omni_host
     OMNI_HOSTNAME                 = local.omni_host
-    CODER_OMNI_STACKS             = join(",", local.composable ? local.selected_stacks : local.stacks)
+    CODER_OMNI_STACKS             = join(",", local.selected_stacks)
     CODER_ENVIRONMENT_MODE        = data.coder_parameter.environment_mode.value
     CODER_BACKEND                 = local.backend
     CODER_CONFIGURED_DOTFILES_URL = data.coder_parameter.dotfiles_url.value
@@ -366,12 +338,12 @@ resource "coder_agent" "main" {
     # appends its own store version suffix, so this resolves to .../store/v11.
     npm_config_store_dir  = "/home/coder/.local/share/pnpm/store"
     pnpm_config_store_dir = "/home/coder/.local/share/pnpm/store"
-    }, local.deployment_env, local.composable ? {
+    }, local.deployment_env, {
     OMNI_VERSION = var.omni_version
     SHELL        = "/usr/bin/zsh"
     EDITOR       = "nvim"
     VISUAL       = "nvim"
-  } : {})
+  })
 
   metadata {
     display_name = "CPU Usage"

@@ -21,6 +21,18 @@ class DotfilesContractTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
 
     @unittest.skipUnless(DOTFILES.is_dir(), "set CODER_TEST_DOTFILES to exact companion checkout")
+    def test_missing_bootstrap_helper_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copy2(DOTFILES / "setup-coder-components.sh", root)
+            shutil.copytree(DOTFILES / "scripts", root / "scripts")
+            (root / "scripts/coder-bootstrap.sh").unlink(missing_ok=True)
+            result = subprocess.run(["python3", str(CHECK), str(root)],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("setup-coder-components.sh", result.stderr)
+
+    @unittest.skipUnless(DOTFILES.is_dir(), "set CODER_TEST_DOTFILES to exact companion checkout")
     def test_pair_and_negative_selection(self):
         resolver = subprocess.run(["python3", str(DOTFILES / "scripts/coder-components.py"), "--contract"],
                                   capture_output=True, text=True)
@@ -36,7 +48,7 @@ class DotfilesContractTests(unittest.TestCase):
 
 class PrerequisiteTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("tofu"), "OpenTofu unavailable")
-    def test_evaluated_closure_matches_previous_dev_and_legacy(self):
+    def test_evaluated_dev_prerequisite_closure(self):
         common = (ROOT / "coder/templates/common.tf").read_text()
         expression = re.search(r"selected_stacks = (distinct\(concat\(.*?\n  \)\))", common, re.S).group(1)
         expression = expression.replace("tobool(data.coder_parameter.enable_openhands.value)", "var.openhands")

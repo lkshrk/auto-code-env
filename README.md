@@ -6,8 +6,9 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
 
 - [`coder/`](coder/) holds everything that targets Coder:
   - `templates/` holds the Terraform sources for the workspace templates.
-    `.github/workflows/coder-templates.yaml` validates them and pushes changed
-    templates to `https://coder.h-cloud.io` on `main`. See
+    `targets.json` packages the composable dev family for Docker and Kubernetes.
+    `.github/workflows/coder-templates.yaml` validates packages; publication to
+    `https://coder.h-cloud.io` requires an explicit manual run on `main`. See
     [`coder/README.md`](coder/README.md) for the CI flow, local validation, and
     the cluster contract the templates depend on.
   - `worker/` turns a stock Ubuntu WSL2 distribution on the Windows desktop into

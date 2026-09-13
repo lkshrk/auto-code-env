@@ -52,13 +52,13 @@ class PackagingTests(unittest.TestCase):
         self.package()
         self.assertEqual(
             {str(path.relative_to(self.output)) for path in self.output.rglob("*") if path.is_file()},
-            {"main.tf", "variables.tf", "common.tf", "kubernetes.tf", "backend", "environment.auto.tfvars.json", "shared/nested/bootstrap.sh",
+            {"main.tf", "variables.tf", "common.tf", "docker.tf", "backend", "environment.auto.tfvars.json", "shared/nested/bootstrap.sh",
              "modules/openhands/main.tf", "modules/openhands/nested/config.json"},
         )
         for name in ("main.tf", "variables.tf"):
             self.assertEqual((self.output / name).read_bytes(), (self.source / name).read_bytes())
         self.assertEqual((self.output / "common.tf").read_bytes(), (self.templates / "common.tf").read_bytes())
-        self.assertEqual((self.output / "backend").read_text(), "kubernetes\n")
+        self.assertEqual((self.output / "backend").read_text(), "docker\n")
         self.assertEqual((self.output / "modules/openhands/nested/config.json").read_bytes(), (self.modules / "openhands/nested/config.json").read_bytes())
         self.assertEqual((self.output / "shared/nested/bootstrap.sh").stat().st_mode & 0o777, 0o755)
         (self.source / "main.tf").write_text("changed after packaging\n")
@@ -95,7 +95,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertFalse(self.output.exists())
 
     def test_reserved_file_collisions(self):
-        for name in ("common.tf", "kubernetes.tf"):
+        for name in ("common.tf", "docker.tf"):
             with self.subTest(name=name):
                 collision = self.write(f"dev/{name}", "collision\n")
                 self.package(success=False)
@@ -103,7 +103,7 @@ class PackagingTests(unittest.TestCase):
                 collision.unlink()
 
     def test_missing_sources(self):
-        for path in (self.source / "main.tf", self.templates / "common.tf", self.templates / "backends/kubernetes.tf", self.templates / "shared"):
+        for path in (self.source / "main.tf", self.templates / "common.tf", self.templates / "backends/docker.tf", self.templates / "shared"):
             with self.subTest(path=path):
                 moved = path.with_name(path.name + ".hidden")
                 path.rename(moved)
@@ -154,21 +154,31 @@ class PackagingTests(unittest.TestCase):
                 self.assertFalse((self.output / "secrets.auto.tfvars.json").exists())
         self.assertEqual(marker.read_text(), "docker\n")
 
-    def test_legacy_is_unchanged_and_cannot_override_backend(self):
+    def test_obsolete_sources_cannot_be_packaged(self):
         self.source.rename(self.templates / "legacy")
         self.source = self.templates / "legacy"
-        self.package()
-        self.assertEqual((self.output / "backend").read_text(), "kubernetes\n")
-        self.assertFalse((self.output / "environment.auto.tfvars.json").exists())
-        shutil.rmtree(self.output)
-        self.write("legacy/backend", "docker\n")
-        self.package()
-        self.assertEqual((self.output / "backend").read_text(), "docker\n")
-        self.assertFalse((self.output / "environment.auto.tfvars.json").exists())
-        shutil.rmtree(self.output)
-        for backend in ("docker", "kubernetes"):
-            self.package("--backend", backend, success=False)
-            self.assertFalse(self.output.exists())
+        for options in ((), ("--backend", "docker"), ("--backend", "kubernetes")):
+            with self.subTest(options=options):
+                self.package(*options, success=False)
+                self.assertFalse(self.output.exists())
+
+    def test_repository_targets_package_dev_with_original_backend_resources(self):
+        repo = SCRIPT.parents[2]
+        catalog = json.loads((repo / "coder/targets.json").read_text())
+        self.assertEqual(set(catalog["targets"]), {"dev", "dev-kubernetes"})
+        self.assertEqual({p.parent.name for p in (repo / "coder/templates").glob("*/main.tf")}, {"dev"})
+        self.source = repo / "coder/templates/dev"
+        for name, target in catalog["targets"].items():
+            with self.subTest(name=name):
+                self.output = self.root / name
+                self.package("--backend", target["backend"])
+                backend = target["backend"] + ".tf"
+                self.assertEqual((self.output / backend).read_bytes(), (repo / "coder/templates/backends" / backend).read_bytes())
+                common = (self.output / "common.tf").read_text()
+                self.assertNotIn("setup-coder.sh", common)
+                self.assertNotIn("setup-hermes.sh", common)
+                self.assertNotIn('"legacy"', common)
+                self.assertIn("setup-coder-components.sh", common)
 
     def test_generated_configuration_collision_fails(self):
         path = self.write("dev/environment.auto.tfvars.json", "{}")

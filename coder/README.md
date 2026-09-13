@@ -11,13 +11,16 @@ coder/templates/
   backends/<name>.tf     providers, storage, and workspace resources
   shared/                scripts copied next to every template
   tests/                 static tests for shared/
-  <template>/main.tf     per-template parameters and presets
-  <template>/backend     backend marker, absent means kubernetes
+  dev/main.tf            composable parameters and presets
+  dev/backend            default Docker backend marker
 ```
 
-Templates: `civora`, `desktop`, `gitops`, `go`, `hermes`, `lua`, `monorepo`,
-`python`, `routivo`, `sveltekit`, `ts`. The directory name is the Coder
-template name.
+The dev family is defined once in `templates/dev` and packaged using
+`targets.json`: `dev` uses Docker on towerr, and `dev-kubernetes` uses Kubernetes.
+Tool stacks, repositories, agent clients, and presets are composable selections,
+not separate language or project templates. Obsolete template sources are no
+longer selectable or publishable from this repository. Existing published
+legacy templates and their workspaces are unchanged by this source cleanup.
 
 ## Backends
 
@@ -29,10 +32,10 @@ docker-in-docker sidecar. Terraform accepts only one `required_providers`
 block per module, so that block lives in each backend file and declares `coder`
 alongside the backend's own provider.
 
-A template picks its backend with a one-line `backend` file next to its
-`main.tf`. No marker means `kubernetes`. CI copies exactly one backend file
-into the build directory, so a template never sees the other backend's
-providers.
+The target catalog explicitly selects the backend. The packager accepts only the
+`dev` definition; without an override it uses `dev/backend` (Docker also when
+no marker is present). CI copies exactly one backend file into each package,
+so each target sees only its own backend provider. Both targets share presets.
 
 The seam between the two halves is `local.backend_bootstrap`: every backend
 file defines it and `common.tf` interpolates it into the agent startup script
@@ -40,9 +43,9 @@ at a fixed position. The Kubernetes backend writes the in-cluster kubeconfig
 there; the Docker backend defines it empty. Backend files may read the shared
 locals from `common.tf`; `common.tf` must never reference a backend resource.
 
-## Desktop backend
+## Docker backend (towerr)
 
-The `desktop` template runs workspaces as Docker containers in a WSL2
+The `dev` target runs workspaces as Docker containers in a WSL2
 distribution on the Windows desktop instead of as pods in the cluster. The
 provisioner reaches that host's Docker API over mutual TLS.
 
@@ -64,7 +67,7 @@ provisioner reaches that host's Docker API over mutual TLS.
 - `/etc/ssl/lan/lan-ca.pem` is bind-mounted read-only from the distro for
   `OMNI_OTEL_CA_PATH`, and the workspace images must already be pulled there.
 - With docker-in-docker enabled the workspace joins a private network with a
-  `docker:27-dind` sibling reachable as `docker`, TLS on
+  `docker:29-dind` sibling reachable as `docker`, TLS on
   (`DOCKER_TLS_CERTDIR=/certs`); the workspace reads the generated client
   certificate from the shared `/certs` volume.
 
@@ -81,18 +84,13 @@ desktop, two places on purpose. Desktop workspaces still get no
 service-account token or kubeconfig. Per-user Claude and Codex credentials
 are Coder user secrets and work unchanged.
 
-A project that should be startable on both backends needs a preset on its
-Kubernetes stack template and a second one on `desktop`. They are separate
-templates and nothing keeps the two preset lists in sync.
-
 ## CI
 
 `coder-templates.yaml` runs on pull requests, on pushes to `main`, and on
 `workflow_dispatch`.
 
-- Pull requests package affected catalog targets and changed legacy templates.
-  Main pushes and manual runs validate catalog targets; manual runs may also
-  select additional legacy templates.
+- Pull requests package affected catalog targets. Main pushes and manual runs
+  validate both catalog targets. No legacy selection or publication option exists.
 - Packages are built once and validated with pinned OpenTofu before publication.
 - Pushes to `main` validate only. Publication requires `workflow_dispatch` on
   `main` with `publish: true`.
@@ -110,8 +108,9 @@ templates and nothing keeps the two preset lists in sync.
 - Publication installs the Coder CLI matching `/api/v2/buildinfo` and pushes
   validated packages using the `CODER_SESSION_TOKEN` repository secret.
 
-Deleting a template directory does not delete the template in Coder. Remove it
-in Coder as a separate operator step.
+Deleting a template source directory does not delete the published template or
+change any workspace in Coder. Any lifecycle action requires separate operator
+authorization; source cleanup must not affect workspaces using older packages.
 
 ## Local validation
 
@@ -125,12 +124,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests 
 
 packages=$(mktemp -d)
 bash coder/scripts/select-templates.sh "$PWD" targets > "$packages/targets"
-# Append explicitly requested legacy packages, if needed:
-# bash coder/scripts/select-templates.sh "$PWD" legacy civora,hermes >> "$packages/targets"
 while IFS=$'\t' read -r name dir backend; do
-  options=()
-  if [[ "$backend" != - ]]; then options=(--backend "$backend"); fi
-  bash coder/scripts/package-template.sh "$dir" "$packages/$name" "${options[@]}"
+  bash coder/scripts/package-template.sh "$dir" "$packages/$name" --backend "$backend"
   bash coder/scripts/validate-templates.sh "$packages/$name"
 done < "$packages/targets"
 rm -rf "$packages"
@@ -156,18 +151,14 @@ providing:
 
 - Namespace `coder`. Every workspace pod and home PVC is created there,
   whatever the template.
-- Service accounts `coder-workspace` (base profile),
-  `coder-workspace-civora`, `coder-workspace-routivo`, and
-  `coder-workspace-pub`, with their RBAC and the workspace NetworkPolicy.
-  `common.tf` derives the name from `local.workspace_access_profile`:
-  `civora` → `civora`, `routivo` → `routivo`, `sveltekit` → `pub`, everything
-  else → `base`. The generated kubeconfig targets the namespace of the same
-  name (`coder` for the base profile).
+- Service account `coder-workspace` with base-profile RBAC and the workspace
+  NetworkPolicy. The generated kubeconfig targets namespace `coder`. Repository
+  and tool-stack selections do not grant project-scoped Kubernetes access.
 - Secret `coder-workspace-secrets` in namespace `coder`, keys `LITELLM_API`
   and `GH_TOKEN`. Both are read `optional = true`, so a missing key degrades
   rather than blocks a workspace start.
-- Secret `<template>-workspace-env` in namespace `coder`, consumed as an
-  optional `env_from` source. Only some templates have one.
+- Secret `dev-kubernetes-workspace-env` in namespace `coder`, consumed as an
+  optional `env_from` source.
 - ConfigMap `lan-root-ca` (trust-manager Bundle target) with key `lan-root-ca.crt`, mounted at
   `/etc/ssl/lan/lan-ca.pem` for `OMNI_OTEL_CA_PATH`.
 - StorageClass `ceph-block` for the per-workspace home PVC.

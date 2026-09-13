@@ -31,11 +31,6 @@ on:
         required: false
         default: ""
         type: string
-      legacy_templates:
-        description: Additional legacy template names, comma-separated (no backend overrides)
-        required: false
-        default: ""
-        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.ref == 'refs/heads/main' && 'publication-main' || format('validation-{0}', github.ref)) }}
@@ -74,21 +69,12 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
-          LEGACY_TEMPLATES: ${{ inputs.legacy_templates }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" targets-changed "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/coder-template-targets"
-            changed=$(bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" changed "$BASE_SHA" "$HEAD_SHA")
-            while IFS= read -r dir; do
-              [[ -z "$dir" || "$dir" == coder/templates/dev ]] && continue
-              bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" legacy "${dir##*/}" >> "$RUNNER_TEMP/coder-template-targets"
-            done <<< "$changed"
           else
             bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" targets > "$RUNNER_TEMP/coder-template-targets"
-          fi
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -n "$LEGACY_TEMPLATES" ]]; then
-            bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" legacy "$LEGACY_TEMPLATES" >> "$RUNNER_TEMP/coder-template-targets"
           fi
           if [[ -s "$RUNNER_TEMP/coder-template-targets" ]]; then
             echo 'has_templates=true' >> "$GITHUB_OUTPUT"
@@ -102,11 +88,7 @@ jobs:
           packages=$(mktemp -d "$RUNNER_TEMP/coder-packages.XXXXXX")
           echo "root=$packages" >> "$GITHUB_OUTPUT"
           while IFS=$'\t' read -r name dir backend; do
-            options=()
-            if [[ "$backend" != - ]]; then
-              options=(--backend "$backend")
-            fi
-            bash coder/scripts/package-template.sh "$dir" "$packages/$name" "${options[@]}"
+            bash coder/scripts/package-template.sh "$dir" "$packages/$name" --backend "$backend"
           done < "$RUNNER_TEMP/coder-template-targets"
 
       - name: Validate packaged templates
@@ -123,7 +105,7 @@ jobs:
 
       - name: Test exact dotfiles revision pair
         env:
-          DOTFILES_REVISION: ${{ inputs.dotfiles_revision || (github.event_name == 'pull_request' && 'd7b4333abf4c9193e93c85baa91ceab3b12feaf4' || '') }}
+          DOTFILES_REVISION: ${{ inputs.dotfiles_revision || (github.event_name == 'pull_request' && '60f23d117e0ca336080ab1781fef810a14ed28fa' || '') }}
           PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish }}
         run: |
           set -euo pipefail
