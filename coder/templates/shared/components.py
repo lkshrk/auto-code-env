@@ -10,44 +10,16 @@ import tempfile
 import time
 
 
-CORE_COMMANDS = {
-    "git": ["git", "--version"],
-    "zsh": ["zsh", "--version"],
-    "nvim": ["nvim", "--version"],
-    "tmux": ["tmux", "-V"],
-    "lazygit": ["lazygit", "--version"],
-    "delta": ["delta", "--version"],
-    "lefthook": ["lefthook", "version"],
-    "tree-sitter": ["tree-sitter", "--version"],
-    "make": ["make", "--version"],
-    "cc": ["cc", "--version"],
-}
-STACK_COMMANDS = {
-    "go": {"go": ["go", "version"], "gopls": ["gopls", "version"]},
-    "python": {"python": ["uv", "python", "find"], "uv": ["uv", "--version"]},
-    "ts": {"node": ["node", "--version"], "pnpm": ["pnpm", "--version"]},
-    "lua": {"lua": ["lua", "-v"], "luarocks": ["luarocks", "--version"]},
-    "rust": {"rustc": ["rustc", "--version"], "cargo": ["cargo", "--version"]},
-    "k8s": {"kubectl": ["kubectl", "version", "--client"], "helm": ["helm", "version", "--short"], "kustomize": ["kustomize", "version"]},
-    "gitops": {"flux": ["flux", "--version"], "helmfile": ["helmfile", "--version"]},
-    "argo": {"argo": ["argo", "version", "--client"]},
-    "talos": {"talosctl": ["talosctl", "version", "--client"]},
-    "cilium": {"cilium": ["cilium", "version", "--client"]},
-    "cnpg": {"kubectl-cnpg": ["kubectl-cnpg", "version"]},
-    "iac": {"tofu": ["tofu", "version"]},
-    "containers": {"docker-client": ["docker", "--version"], "skopeo": ["skopeo", "--version"]},
-    "quality": {"actionlint": ["actionlint", "--version"], "gitleaks": ["gitleaks", "version"], "bats": ["bats", "--version"]},
-    "terminal-recording": {"vhs": ["vhs", "--version"], "ffmpeg": ["ffmpeg", "-version"]},
-    "media": {"ffmpeg": ["ffmpeg", "-version"]},
-}
-ALIASES = {
-    "infra": ["k8s", "gitops", "argo", "talos", "cilium", "cnpg", "iac"],
-    "omni": ["terminal-recording"],
-}
-AGENT_COMMANDS = {
-    "claude": ["claude", "--version"],
-    "codex": ["codex", "--version"],
-}
+# Stack/tool composition and per-tool install-state verification are
+# delegated to dotfiles' own coder-components.py resolver plus native
+# `omni tools list` (see resolved_omni_config/omni_required_tools/
+# check_omni_tools below); no separate stack/tool/version catalog is
+# maintained in this repository.
+# docker-engine is a daemon-reachability check, not a package-install state;
+# omni has no concept of "is the daemon actually up", so it stays a genuine
+# live subprocess check rather than something delegated to omni tools list.
+DOCKER_ENGINE_COMMAND = ["docker", "info"]
+OMNI_HOSTNAME = "coder-components"
 
 
 def selection(value):
@@ -62,15 +34,15 @@ def boolean(env, name):
 
 
 def configuration(env):
+    # Stack and agent-client names are intentionally NOT validated or
+    # alias-expanded here. dotfiles' coder-components.py --contract already
+    # validates and resolves the real selection before this module ever
+    # runs (see dotfiles-contract.py in the startup sequence); duplicating
+    # that catalog here previously caused the same stack/tool list to drift
+    # between the two repositories. Raw, unexpanded selection is reported
+    # for visibility only.
     stacks = selection(env.get("CODER_OMNI_STACKS", ""))
     agents = selection(env.get("CODER_AGENT_CLIENTS", ""))
-    unknown = set(stacks) - (STACK_COMMANDS.keys() | ALIASES.keys())
-    if unknown:
-        raise ValueError("Unknown stacks: " + ", ".join(sorted(unknown)))
-    stacks = list(dict.fromkeys(stack for item in stacks for stack in ALIASES.get(item, [item])))
-    unknown = set(agents) - AGENT_COMMANDS.keys()
-    if unknown:
-        raise ValueError("Unknown agent clients: " + ", ".join(sorted(unknown)))
     backend = env.get("CODER_BACKEND", "kubernetes")
     if backend not in {"kubernetes", "docker"}:
         raise ValueError("Backend must be kubernetes or docker")
@@ -86,15 +58,48 @@ def configuration(env):
     }
 
 
-def required_commands(config):
-    commands = dict(CORE_COMMANDS)
-    for stack in config["stacks"]:
-        commands.update(STACK_COMMANDS[stack])
-    for agent in config["agents"]:
-        commands[agent] = AGENT_COMMANDS[agent]
-    if config["docker"]:
-        commands["docker-engine"] = ["docker", "info"]
-    return commands
+def resolved_omni_config(dotfiles_dir, env, timeout=60):
+    # The exact same resolver dotfiles' own setup-coder-components.sh calls
+    # to build its Omni config for this workspace's real CODER_* selection.
+    # Reusing it here (rather than re-deriving stack -> tool composition)
+    # is the single source of truth for "what tools does this selection
+    # require", eliminating the separate STACK_COMMANDS catalog that
+    # previously had to be hand-kept in sync with dotfiles and already
+    # caused real drift (e.g. omni_version defaults) between the two.
+    result = subprocess.run(
+        ["python3", str(Path(dotfiles_dir) / "scripts/coder-components.py")],
+        env=env, capture_output=True, text=True, timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise ValueError("dotfiles component resolution failed: " + result.stderr.strip())
+    return json.loads(result.stdout)
+
+
+def omni_required_tools(omni_config):
+    return list(dict.fromkeys(
+        tool for group in omni_config["groups"] for tool in group.get("tools", [])
+    ))
+
+
+def check_omni_tools(omni_config, tool_names, omni_binary="omni", timeout=60):
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        json.dump(omni_config, handle)
+        config_path = handle.name
+    try:
+        result = subprocess.run(
+            [omni_binary, "--config", config_path, "tools", "list", "--format", "json"],
+            env={**os.environ, "OMNI_HOSTNAME": OMNI_HOSTNAME},
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if result.returncode != 0:
+            raise ValueError("omni tools list failed: " + result.stderr.strip())
+        reported = {entry["name"]: entry for entry in json.loads(result.stdout)}
+    finally:
+        os.unlink(config_path)
+    # A tool absent from omni's own report (e.g. a transient omni bug, or a
+    # tool name that exists in the config but omni silently skipped) counts
+    # as not installed rather than silently passing.
+    return {name: bool(reported.get(name, {}).get("installed", False)) for name in tool_names}
 
 
 def check_commands(commands, timeout=30):
@@ -170,8 +175,17 @@ def main():
         if args.report:
             write_report(args.report, report)
         return 0
-    commands = required_commands(config)
-    report["checks"] = check_commands(commands)
+    dotfiles_dir = os.environ.get("CODER_DOTFILES_SOURCE_DIR", "")
+    if not dotfiles_dir:
+        parser.error("CODER_DOTFILES_SOURCE_DIR is required for the check action")
+    try:
+        omni_config = resolved_omni_config(dotfiles_dir, os.environ)
+        tool_names = omni_required_tools(omni_config)
+        report["checks"] = check_omni_tools(omni_config, tool_names)
+    except ValueError as error:
+        parser.error(str(error))
+    if config["docker"]:
+        report["checks"].update(check_commands({"docker-engine": DOCKER_ENGINE_COMMAND}))
     report["ready"] = all(report["checks"].values())
     if args.report:
         write_report(args.report, report)
