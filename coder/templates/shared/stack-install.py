@@ -153,6 +153,27 @@ def ai_plugins_group(dotfiles_dir, clients):
     return {"name": "ai-plugins", "tools": tools}
 
 
+def staged_tools_path(shared_dir):
+    # `omni tools sync` writes resolved provider state back into the
+    # *first* file that defines a synced tool's provider block -- not
+    # just reads it. $include-ing dotfiles' tracked settings.d/tools.json
+    # by its live path once made that the user's own git checkout,
+    # which a real sync silently truncated to `{}` the moment it had to
+    # install (not just check) something, violating dots_repo's "never
+    # merge, reset, clean, or otherwise alter their working tree"
+    # guarantee (see prepare-dotfiles.sh). $include this disposable copy
+    # instead; the suffix matches the live path on purpose so it stays
+    # recognizable in `--print-config` output and error messages.
+    return Path(shared_dir) / "settings.d/tools.json"
+
+
+def stage_tool_providers(dotfiles_dir, shared_dir):
+    root = Path(dotfiles_dir) / DOTS_ROOT
+    staged = staged_tools_path(shared_dir)
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_text((root / "settings.d/tools.json").read_text())
+
+
 def render_config(dotfiles_dir, env, catalog, shared_dir):
     dotfiles_dir = Path(dotfiles_dir)
     selection = contract(env, catalog)
@@ -168,7 +189,7 @@ def render_config(dotfiles_dir, env, catalog, shared_dir):
         "$schema": settings["$schema"],
         "version": settings["version"],
         "$include": [
-            str((root / "settings.d/tools.json").resolve()),
+            str(staged_tools_path(shared_dir).resolve()),
             str((Path(shared_dir) / "linux-tools.json").resolve()),
         ],
         "host_settings": {HOST: host_settings},
@@ -183,7 +204,11 @@ def load_tool_providers(dotfiles_dir, shared_dir):
     # Narrow, read-only introspection for the shell orchestration's own
     # bookkeeping (does this tool need npm/apt-specific post-install
     # steps) -- NOT part of the install path above, which lets Omni's
-    # own $include + host provider-priority resolve this instead.
+    # own $include + host provider-priority resolve this instead. Reads
+    # dotfiles' live tracked file directly (not the staged copy): this
+    # is read-only, so it's safe, and it must see real content even
+    # before stage_tool_providers() has run for this invocation (e.g.
+    # `--print-config`, or the equivalence tests, never call it).
     root = Path(dotfiles_dir) / DOTS_ROOT
     tools = json.loads((root / "settings.d/tools.json").read_text())["tools"]
     tools.update(json.loads((Path(shared_dir) / "linux-tools.json").read_text())["tools"])

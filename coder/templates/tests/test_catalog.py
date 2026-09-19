@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -63,6 +64,38 @@ class StackInstallStructureTests(unittest.TestCase):
         includes = config["$include"]
         self.assertTrue(includes[-1].endswith("linux-tools.json"), includes)
         self.assertTrue(includes[0].endswith("settings.d/tools.json"), includes)
+
+    def test_include_never_points_at_dotfiles_tracked_tools_json(self):
+        # Regression test: `omni tools sync` writes resolved provider
+        # state back into the *first* file that $include's a synced
+        # tool's provider block, not just reads it. Verified live
+        # against a real Coder workspace: pointing $include at
+        # dotfiles' tracked settings.d/tools.json (its live path inside
+        # the preserved git checkout) got that file silently truncated
+        # to `{}` -- destroying the user's checkout, which prepare-
+        # dotfiles.sh explicitly promises never to alter. The rendered
+        # config must always $include a disposable copy under
+        # shared_dir instead (stage_tool_providers()), never the path
+        # inside dotfiles_dir itself.
+        stack_install = load(SHARED / "stack-install.py", "stack_install")
+        catalog = stack_install.load_catalog(CATALOG)
+        with tempfile.TemporaryDirectory() as shared_dir:
+            config, _ = stack_install.render_config(DOTFILES, {"CODER_OMNI_STACKS": ""}, catalog, shared_dir)
+            tools_include = config["$include"][0]
+            self.assertFalse(tools_include.startswith(str(Path(DOTFILES).resolve())), tools_include)
+            self.assertTrue(tools_include.startswith(str(Path(shared_dir).resolve())), tools_include)
+
+    def test_stage_tool_providers_copies_without_touching_dotfiles_checkout(self):
+        stack_install = load(SHARED / "stack-install.py", "stack_install")
+        with tempfile.TemporaryDirectory() as shared_dir:
+            source = DOTFILES / stack_install.DOTS_ROOT / "settings.d/tools.json"
+            before = source.read_text()
+            before_mtime = source.stat().st_mtime_ns
+            stack_install.stage_tool_providers(DOTFILES, shared_dir)
+            staged = stack_install.staged_tools_path(shared_dir)
+            self.assertEqual(staged.read_text(), before)
+            self.assertEqual(source.read_text(), before)
+            self.assertEqual(source.stat().st_mtime_ns, before_mtime)
 
 
 if __name__ == "__main__":

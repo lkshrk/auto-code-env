@@ -219,6 +219,7 @@ def final_check(catalog, names, dotfiles_dir, shared_dir):
 
 def run(dotfiles_dir):
     catalog = stack_install.load_catalog()
+    stack_install.stage_tool_providers(dotfiles_dir, SHARED_DIR)
     config, names = stack_install.render_config(dotfiles_dir, os.environ, catalog, SHARED_DIR)
 
     if os.uname().sysname != "Linux":
