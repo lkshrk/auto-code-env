@@ -55,6 +55,21 @@ node is NotReady, the pod is evicted, and `coder start` waits; nothing needs
 `--orphan`. Cluster Secrets, the service-account token and the kubeconfig are
 identical to any other workspace.
 
+## WoW addon workspaces
+
+The `wow` preset selects the `lua` tool group and leaves the workspace location
+independent. Set `wow_smb_share` to the SMB path containing the game's
+`Interface/AddOns` directory, for example `//towerr/Games/Interface/AddOns`.
+The Kubernetes SMB CSI driver mounts the share at `/mnt/wow/addons`; the
+credential Secret is selected by `wow_smb_secret` and must contain `username`
+and `password` keys in the `coder` namespace. The cluster must provide the
+`csi-driver-smb` addon. The workspace installs `rsync`, `inotify-tools`, and
+`~/.local/bin/wow-sync` when the mount is enabled.
+
+Development remains on the home PVC. `wow-sync` copies each addon checkout to
+the SMB mount, and `wow-sync --watch` resyncs on change. WoW reads addon files
+only at load, so reload in game after syncing.
+
 ## CI
 
 `coder-templates.yaml` runs on pull requests, on pushes to `main`, and on
@@ -91,6 +106,7 @@ Reproduce what CI does:
 bash coder/templates/tests/packaging.sh
 bash coder/templates/tests/selection.sh
 bash coder/templates/tests/prepare-dotfiles.sh
+bash coder/templates/tests/wow-sync.sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests -p 'test_*.py'
 
 packages=$(mktemp -d)
@@ -134,6 +150,8 @@ providing:
   `/etc/ssl/lan/lan-ca.pem` for `OMNI_OTEL_CA_PATH`.
 - StorageClass `ceph-block` for the per-workspace home PVC, and
   `openebs-hostpath` for `location=desktop`.
+- CSI driver `smb.csi.k8s.io` installed cluster-wide, plus the Secret named by
+  `wow_smb_secret` with `username` and `password` keys in namespace `coder`.
 - Node `k8s-12` labelled `dedicated=desktop` and tainted
   `dedicated=desktop:NoSchedule`; nothing else tolerates that taint.
 
