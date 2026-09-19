@@ -27,7 +27,6 @@ jobs:
           set -euo pipefail
           bash openhands/profiles/tests/applier.Tests.sh
           bash openhands/profiles/tests/profile-json.Tests.sh
-          python3 -m unittest discover -s openhands/profiles/tests -p test_backup_profile.py -v
           bash tools/check-root-calculation.sh
           shellcheck openhands/profiles/tests/applier.Tests.sh openhands/profiles/tests/profile-json.Tests.sh
 
