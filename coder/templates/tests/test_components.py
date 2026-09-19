@@ -109,7 +109,14 @@ class ComponentsTests(unittest.TestCase):
     def test_check_action_reports_docker_engine_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "ready.json"
-            env = {"PATH": os.environ["PATH"], "CODER_ENABLE_DIND": "1"}
+            # DOCKER_HOST points `docker info` at a socket that can never
+            # exist, forcing a deterministic failure regardless of whether
+            # a real daemon happens to be reachable at the default socket
+            # in this test environment (it is on GitHub-hosted runners,
+            # which made this test pass locally but flip green-by-accident
+            # in CI without it).
+            env = {"PATH": os.environ["PATH"], "CODER_ENABLE_DIND": "1",
+                   "DOCKER_HOST": f"unix://{directory}/no-such-docker.sock"}
             result = subprocess.run([sys.executable, str(SCRIPT), "check", "--report", str(path)], env=env, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             report = json.loads(path.read_text())
