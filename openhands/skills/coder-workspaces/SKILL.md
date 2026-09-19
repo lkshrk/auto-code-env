@@ -87,6 +87,8 @@ In addition, persist the same non-secret facts inside the workspace at `~/.local
 
 Upsert your own entry by `conversation_id` using `coder_workspace_read_file` then `coder_workspace_write_file` (create the file and parent directory if absent; never overwrite other conversations' entries). Never write secrets, tokens or full task descriptions into this file. Treat an entry whose `updated_at` is older than 7 days as stale: report it, do not silently delete it, and ask before removing another conversation's stale entry.
 
+`conversation_id` already doubles as the LiteLLM session id on every completion call, so this file is also enough to attribute LiteLLM usage/cost to a workspace or task without any additional plumbing; see `docs/research/coder-workspace-litellm-attribution.md` for how to do that join.
+
 Discover actual paths with coder_workspace_ls; do not assume /home/coder/<repo-name> exists. Inspect Git status before editing. Preserve unfamiliar changes and use a separate worktree for independent work. Verify repository identity before fetching or changing remotes. Sharing a workspace does not make its ports, services, databases or Docker resources isolated; ask if safe co-use cannot be established.
 
 Use coder_workspace_bash for project commands and native coder_workspace_ls, coder_workspace_read_file, coder_workspace_write_file and coder_workspace_edit_file for project files. Follow each schema encoding requirements. Keep commits, tests and authorized pushes inside the bound workspace. Do not treat workspace selection as permission to push, merge or deploy. Install project dependencies using the repository lockfiles/package manager; do not confuse ordinary project dependency installation with rebuilding a missing workspace toolchain.
