@@ -174,6 +174,34 @@ def link_npm_commands(catalog, names, dotfiles_dir, shared_dir):
             raise SystemExit(f"required npm executable failed on stable PATH: {binary}")
 
 
+def link_bun_commands(catalog, names, dotfiles_dir, shared_dir):
+    # bun's global install bin dir is *not* ~/.bun/bin (that's only
+    # where the bun/bunx binaries themselves land from the installer
+    # script) -- once XDG_CACHE_HOME is set (it always is in this
+    # workspace image), bun resolves its own package-manager global
+    # root under it instead, e.g. ~/.cache/.bun/bin. Verified live:
+    # ~/.bun/bin never contained a bun-provider tool's binary, causing
+    # final_check() to correctly, but fatally, report it missing.
+    # Mirrors link_npm_commands below; ask bun itself rather than
+    # hardcoding its XDG-dependent path.
+    required = stack_install.required_commands(names, catalog, dotfiles_dir, shared_dir, provider="bun")
+    if not required:
+        return
+    prefix = subprocess.run(["bun", "pm", "bin", "-g"], capture_output=True, text=True, check=True).stdout.strip()
+    if not prefix.startswith("/"):
+        raise SystemExit(f"bun global bin directory must be absolute: {prefix}")
+    stable_path = f"{Path.home()}/.local/bin:{Path.home()}/.bun/bin:{Path.home()}/.cargo/bin:{Path.home()}/.krew/bin:{Path.home()}/.local/share/pnpm:/bin"
+    for binary in required:
+        candidate = Path(prefix) / binary
+        if not os.access(candidate, os.X_OK):
+            raise SystemExit(f"required bun executable missing: {candidate}")
+        link_local_bin(candidate, binary)
+        env = {k: v for k, v in os.environ.items() if k != "NVM_BIN"}
+        env["PATH"] = stable_path
+        if subprocess.run([binary, "--version"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            raise SystemExit(f"required bun executable failed on stable PATH: {binary}")
+
+
 def link_lsp_commands(catalog, names):
     if not active_has_tool(catalog, names, "pyright"):
         return
@@ -258,6 +286,7 @@ def run(dotfiles_dir):
         if fdfind:
             link_local_bin(fdfind, "fd")
         link_npm_commands(catalog, names, dotfiles_dir, SHARED_DIR)
+        link_bun_commands(catalog, names, dotfiles_dir, SHARED_DIR)
         link_lsp_commands(catalog, names)
         final_check(catalog, names, dotfiles_dir, SHARED_DIR)
         backend = os.environ.get("CODER_BACKEND", "kubernetes")
