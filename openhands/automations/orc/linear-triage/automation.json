@@ -1,0 +1,15 @@
+{
+  "name": "linear-triage",
+  "agent_profile": "triage",
+  "timeout": 900,
+  "keep_alive": false,
+  "enabled": true,
+  "trigger": {
+    "type": "event",
+    "source": "linear",
+    "on": [
+      "Issue"
+    ],
+    "filter": "action == 'create' && (data.team.id == 'b6a02ec0-3a75-44a7-a36e-01e5231d10f5' || data.team.id == '84914fef-1dcb-4d85-888c-2c127a8a5124')"
+  }
+}

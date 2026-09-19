@@ -13,7 +13,7 @@ import bootstrap
 
 
 DEFAULT_URL = "http://openhands.ai.svc.cluster.local:8000"
-PATCHABLE = ("name", "model", "prompt", "trigger", "timeout", "keep_alive", "enabled")
+PATCHABLE = ("name", "model", "prompt", "trigger", "timeout", "keep_alive", "enabled", "agent_profile_id")
 
 
 def request(method, url, key, body=None):
@@ -62,7 +62,17 @@ def render(spec_file, prompt_file, overrides=None):
     return body
 
 
+def resolve_profile(base, key, body):
+    # The backend refuses a model next to a profile (422) and clears a stored one when
+    # agent_profile_id is set, so a spec with agent_profile carries no model of its own.
+    profile = body.pop("agent_profile", None)
+    if profile:
+        body["agent_profile_id"] = request("GET", f"{base}/api/agent-profiles/{profile}", key)["profile"]["id"]
+    return profile
+
+
 def deploy(base, key, body, spec_dir):
+    resolve_profile(base, key, body)
     existing = find_automation(base, key, body["name"])
     action = "updated" if existing else "created"
     with_bootstrap = body.get("setup_script_path") == bootstrap.SETUP
@@ -92,6 +102,9 @@ def main():
     body = render(args.spec_dir / args.file, args.spec_dir / args.prompt)
 
     if args.dry_run:
+        profile = body.pop("agent_profile", None)
+        if profile:
+            body["agent_profile_id"] = f"<id of agent profile {profile!r}, read from the API at deploy>"
         print(json.dumps(body, indent=2))
         return
 

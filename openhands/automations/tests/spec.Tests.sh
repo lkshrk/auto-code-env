@@ -39,14 +39,16 @@ def expect(cond, msg):
     if not cond:
         errors.append(msg)
 
-for key in ("name", "model", "timeout", "keep_alive", "enabled", "trigger"):
+for key in ("name", "timeout", "keep_alive", "enabled", "trigger"):
     expect(key in spec, f"missing {key}")
+expect(("model" in spec) != ("agent_profile" in spec), "exactly one of model or agent_profile (the profile carries the model)")
 expect(re.fullmatch(r"[a-z0-9-]+", str(spec.get("name", ""))), "name must be kebab-case")
-expect(isinstance(spec.get("model"), str) and spec["model"], "model must be a non-empty string")
+expect("model" not in spec or (isinstance(spec["model"], str) and spec["model"]), "model must be a non-empty string")
 expect(isinstance(spec.get("timeout"), int) and 0 < spec["timeout"] <= max_timeout, f"timeout must be in 1..{max_timeout}")
 expect(isinstance(spec.get("keep_alive"), bool), "keep_alive must be bool")
 expect(isinstance(spec.get("enabled"), bool), "enabled must be bool")
 expect("prompt" not in spec, "prompt belongs in prompt.md")
+expect("agent_profile" not in spec or (isinstance(spec["agent_profile"], str) and spec["agent_profile"]), "agent_profile must be a non-empty string")
 
 trigger = spec.get("trigger") or {}
 if trigger.get("type") == "cron":
