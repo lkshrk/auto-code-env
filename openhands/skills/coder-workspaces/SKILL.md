@@ -31,7 +31,7 @@ These instructions guide agent behavior; they do not technically enforce executi
 
 ## Recover or select a workspace
 
-1. Recover the prior conversation binding first, if present. Verify workspace identity, repository, directory/worktree, branch and current capabilities. Do not silently replace a missing or unsuitable binding.
+1. Recover the prior conversation binding first, if present. Check both the conversation/task handoff notes and, once a candidate workspace is reachable, `~/.local/state/coder-environment/binding.json` inside it (read with `coder_workspace_read_file`; treat a missing file or unreadable JSON as "no persisted binding" and fall back to notes alone). Cross-check the two; if they disagree, trust the more recent `updated_at` but verify workspace identity, repository, directory/worktree, branch and current capabilities regardless of source. Do not silently replace a missing or unsuitable binding.
 2. Identify the required repository, stacks, features and backend. Prefer Docker/towerr unless another target is requested. Never silently substitute Kubernetes or local development.
 3. Call coder_list_workspaces, then inspect plausible candidates with coder_get_workspace. Inventory may omit build state or effective parameters. Do not infer suitability from template names or active-version defaults alone; existing workspaces can use different versions and selections.
 4. Prefer suitable running workspaces. Require the needed capabilities as a subset: a Python + Go workspace can serve Go work. Verify effective features such as Docker engine access and browser dependencies separately from language stacks. Sharing is allowed, subject to worktree and service isolation.
@@ -66,6 +66,26 @@ Bound polling and requests. MCP gateway timeouts do not prove a remote command f
 ## Bind the task and execute
 
 Record a non-secret binding in conversation/task handoff notes: repository identity, workspace UUID and owner/name, agent, absolute checkout/worktree path, branch, verified capabilities and active preview/job/delegate needs. Update it when identity changes. This is a handoff convention, not an automatically enforced registry or lease.
+
+In addition, persist the same non-secret facts inside the workspace at `~/.local/state/coder-environment/binding.json` so a *different* conversation, or the same conversation after a restart, can recover them without relying solely on external notes:
+
+```json
+{
+  "bindings": [
+    {
+      "conversation_id": "...",
+      "task_title": "short human-readable summary",
+      "repo": "owner/name",
+      "checkout_path": "/home/coder/...",
+      "branch": "...",
+      "bound_at": "2026-09-19T12:00:00Z",
+      "updated_at": "2026-09-19T12:40:00Z"
+    }
+  ]
+}
+```
+
+Upsert your own entry by `conversation_id` using `coder_workspace_read_file` then `coder_workspace_write_file` (create the file and parent directory if absent; never overwrite other conversations' entries). Never write secrets, tokens or full task descriptions into this file. Treat an entry whose `updated_at` is older than 7 days as stale: report it, do not silently delete it, and ask before removing another conversation's stale entry.
 
 Discover actual paths with coder_workspace_ls; do not assume /home/coder/<repo-name> exists. Inspect Git status before editing. Preserve unfamiliar changes and use a separate worktree for independent work. Verify repository identity before fetching or changing remotes. Sharing a workspace does not make its ports, services, databases or Docker resources isolated; ask if safe co-use cannot be established.
 
