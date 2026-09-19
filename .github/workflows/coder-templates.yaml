@@ -59,9 +59,13 @@ jobs:
       - name: Test packaging and selection
         run: |
           set -euo pipefail
+          sudo apt-get install -y --no-install-recommends rclone >/dev/null
           bash coder/templates/tests/packaging.sh
           bash coder/templates/tests/selection.sh
           bash coder/templates/tests/prepare-dotfiles.sh
+          bash coder/templates/tests/wow-sync.sh
+          bash coder/templates/tests/wow-setup.sh
+          bash coder/templates/tests/claude-lsp.sh
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests -p 'test_*.py'
 
       - name: Select templates

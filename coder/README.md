@@ -55,6 +55,75 @@ node is NotReady, the pod is evicted, and `coder start` waits; nothing needs
 `--orphan`. Cluster Secrets, the service-account token and the kubeconfig are
 identical to any other workspace.
 
+## Claude Code language servers
+
+When `claude` is among the agent clients, startup writes
+`~/.claude/skills/coder-lsp/.claude-plugin/plugin.json`, a skills-directory
+plugin Claude Code loads at user scope. Its `lspServers` list whichever of
+`gopls`, `pyright-langserver`, `typescript-language-server` and
+`lua-language-server` the selected stacks put on `PATH`, so Claude gets
+diagnostics after every edit and go-to-definition, references and hover
+through its `LSP` tool without a marketplace plugin. Servers that are not
+installed are left out, and the plugin disappears when none is. The same
+list lives in dotfiles `apm/ai-plugins/apm.yml` for hosts that run apm.
+
+## WoW addon workspaces
+
+The `wow` preset selects the `lua` tool group and turns on `wow_dev`, which
+adds what the generic Lua tools lack, knowledge of the game:
+
+- `~/.local/share/wow/wow-api/Annotations`: Ketho's lua-language-server
+  annotations of the WoW API and FrameXML (the same files the VS Code
+  extension ships). `wow-luarc [dir]` writes a `.luarc.json` into an addon
+  checkout that loads them, sets Lua 5.1 and disables the standard libraries
+  the game does not have. It keeps an existing file unless `--force`.
+- `~/.config/luacheck/.luacheckrc`: generated from those annotations, every
+  API name as a read-only global with `std = "none"`. luacheck uses it only
+  when the repo has no `.luacheckrc` of its own.
+- `~/.local/share/wow/wow-ui-source`: Gethe's mirror of Blizzard's UI code,
+  branch `live`, for grepping how the real FrameXML does something. Both
+  checkouts are shallow and fast-forwarded by `wow-setup` on every start.
+- `~/.local/bin/wow-sync` with a pinned `rclone` and `inotify-tools`. There is
+  no mount: the game directory is an rclone remote named `wow:` that the
+  workspace pushes to. A kernel CIFS mount on a desktop that reboots leaves a
+  pod stuck in `Terminating`; a failed push just prints an error.
+
+Development stays on the home volume. `wow-sync` finds every addon in the
+cloned repositories by its `.toc`, stages a copy locally, rewrites it into the
+dev variant, and runs `rclone sync` into `<wow_addons_path>/<Name>-<suffix>`.
+rclone writes each file once, retries, and verifies size and modification time,
+so the stage-then-verify dance a hand-written copy needs is built in.
+`wow-sync --watch` repeats that on every change; `--dry-run` shows the plan.
+WoW reads addon files only at load, so `/reload` in game after a sync.
+
+`wow_dev_suffix` (default `Dev`) is what makes this safe to run beside the
+released addon: `Alpha` is installed as `Alpha-Dev` with `Alpha-Dev.toc`, its
+Title marked `[DEV]`, and every `SavedVariables` name suffixed in the `.toc` and
+in the Lua sources (`AlphaDB` becomes `AlphaDBDev`; `Libs/` is left alone). The
+two copies toggle independently in the addon list and never share settings,
+which live under `WTF/`, not `Interface/AddOns`. An empty suffix syncs under the
+real name and overwrites the release.
+
+The transport is SFTP to a small `rclone serve sftp` on the desktop, set up
+from h-cloud with `just talos wow-sync-server -AuthorizedKey '"<pubkey>"'`
+(`talos/hyperv/Enable-WowSync.ps1`). It runs as a scheduled task under SYSTEM,
+serves only `Interface/AddOns`, and authenticates against its own
+`authorized_keys`, so no Windows account exists for it and `..` cannot leave
+the directory. The template sets the non-secret remote config
+(`RCLONE_CONFIG_WOW_TYPE=sftp`, host, port 2022, `shell_type=none`, the pinned
+host key from `wow_host_key`). The only secret is the private key, which a Coder
+user secret writes into the workspace:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C wow-sync -f ~/.ssh/wow-sync
+coder secret create wow-sync-key --file ~/.ssh/wow-sync < ~/.ssh/wow-sync
+```
+
+`wow_host_key` pins the server's host key (`host_keys` in rclone terms); the
+server script prints it. Emptying it turns validation off. rclone has no
+hashes over SFTP, so `--checksum` must not be added. Sync with the game closed
+or `/reload` afterwards; the client holds files open while loading.
+
 ## CI
 
 `coder-templates.yaml` runs on pull requests, on pushes to `main`, and on
@@ -91,6 +160,7 @@ Reproduce what CI does:
 bash coder/templates/tests/packaging.sh
 bash coder/templates/tests/selection.sh
 bash coder/templates/tests/prepare-dotfiles.sh
+bash coder/templates/tests/wow-sync.sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests -p 'test_*.py'
 
 packages=$(mktemp -d)

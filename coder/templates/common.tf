@@ -152,6 +152,11 @@ data "coder_parameter" "enable_openhands" {
 #   local.stacks             list(string)  extra omni groups to hard-sync (may be empty)
 #   local.enable_dind        bool          run the docker-in-docker sidecar
 #   local.enable_playwright  bool          install playwright chromium + OS deps
+#   local.wow_dev            bool          WoW addon tooling: API annotations, FrameXML, wow-sync
+#   local.wow_host           string        desktop running rclone serve sftp on :2022
+#   local.wow_host_key       string        pinned host key, "" to skip validation
+#   local.wow_addons_path    string        Interface/AddOns path on the sync server
+#   local.wow_dev_suffix     string        "Dev" installs <Name>-Dev beside the release
 # ---------------------------------------------------------------------------
 
 locals {
@@ -266,6 +271,33 @@ locals {
     printf '%s' '${base64encode(file("${path.module}/shared/install-stacks.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/install-stacks.py"
     python3 "$HOME/.local/state/coder-environment/install-stacks.py"
 
+    if [ "$WOW_DEV" = 1 ]; then
+      sudo apt-get update -qq
+      sudo apt-get install -y --no-install-recommends inotify-tools unzip >/dev/null
+      mkdir -p "$HOME/.local/bin"
+      if [ "$("$HOME/.local/bin/rclone" version 2>/dev/null | head -1)" != "rclone v$RCLONE_VERSION" ]; then
+        rclone_tmp=$(mktemp -d)
+        curl -fsSL "https://downloads.rclone.org/v$RCLONE_VERSION/rclone-v$RCLONE_VERSION-linux-amd64.zip" -o "$rclone_tmp/rclone.zip"
+        unzip -qo "$rclone_tmp/rclone.zip" -d "$rclone_tmp"
+        install -m 0755 "$rclone_tmp"/rclone-*/rclone "$HOME/.local/bin/rclone"
+        rm -rf "$rclone_tmp"
+      fi
+      printf '%s' '${base64encode(file("${path.module}/shared/wow-sync.sh"))}' | base64 --decode > "$HOME/.local/bin/wow-sync"
+      printf '%s' '${base64encode(file("${path.module}/shared/wow-setup.sh"))}' | base64 --decode > "$HOME/.local/bin/wow-setup"
+      printf '%s' '${base64encode(file("${path.module}/shared/wow-luarc.sh"))}' | base64 --decode > "$HOME/.local/bin/wow-luarc"
+      chmod 0755 "$HOME/.local/bin/wow-sync" "$HOME/.local/bin/wow-setup" "$HOME/.local/bin/wow-luarc"
+      "$HOME/.local/bin/wow-setup" || echo "wow-setup failed; rerun it once the network is back" >&2
+    fi
+
+    case ",$CODER_AGENT_CLIENTS," in
+      *,claude,*)
+        mkdir -p "$HOME/.local/bin"
+        printf '%s' '${base64encode(file("${path.module}/shared/claude-lsp.sh"))}' | base64 --decode > "$HOME/.local/bin/claude-lsp"
+        chmod 0755 "$HOME/.local/bin/claude-lsp"
+        "$HOME/.local/bin/claude-lsp" || true
+        ;;
+    esac
+
     # Personal dots only from here: language stacks/tool packages are already
     # installed above.
     bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder-dots.sh"
@@ -317,28 +349,40 @@ resource "coder_agent" "main" {
   }
 
   env = merge({
-    GIT_AUTHOR_NAME               = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_AUTHOR_EMAIL              = data.coder_workspace_owner.me.email
-    GIT_COMMITTER_NAME            = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_COMMITTER_EMAIL           = data.coder_workspace_owner.me.email
-    CODER_OMNI_HOST               = local.omni_host
-    OMNI_HOSTNAME                 = local.omni_host
-    CODER_OMNI_STACKS             = join(",", local.selected_stacks)
-    CODER_ENVIRONMENT_MODE        = data.coder_parameter.environment_mode.value
-    CODER_BACKEND                 = local.backend
-    CODER_CONFIGURED_DOTFILES_URL = data.coder_parameter.dotfiles_url.value
-    CODER_AGENT_CLIENTS           = join(",", jsondecode(data.coder_parameter.agent_clients.value))
-    CODER_AGENT_PLUGINS           = tobool(data.coder_parameter.agent_plugins.value) ? "1" : "0"
-    CODER_ENABLE_OPENHANDS        = tobool(data.coder_parameter.enable_openhands.value) ? "1" : "0"
-    CODER_ENABLE_DIND             = local.enable_dind ? "1" : "0"
-    CODER_MCP_URL                 = var.mcp_url
-    CODER_REPO_KEYS               = join(",", [for repo in local.repos_set : sha256(repo)])
-    CODER_REPO_DIRS               = local.repo_clone_dirs
-    CODER_ENABLE_PLAYWRIGHT       = local.enable_playwright ? "1" : "0"
-    ECC_GATEGUARD                 = "off"
-    GOCACHE                       = "/tmp/go-build"
-    GOLANGCI_LINT_CACHE           = "/tmp/golangci-lint"
-    OMNI_OTEL_CA_PATH             = "/etc/ssl/lan/lan-ca.pem"
+    GIT_AUTHOR_NAME                    = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
+    GIT_AUTHOR_EMAIL                   = data.coder_workspace_owner.me.email
+    GIT_COMMITTER_NAME                 = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
+    GIT_COMMITTER_EMAIL                = data.coder_workspace_owner.me.email
+    CODER_OMNI_HOST                    = local.omni_host
+    OMNI_HOSTNAME                      = local.omni_host
+    CODER_OMNI_STACKS                  = join(",", local.selected_stacks)
+    CODER_ENVIRONMENT_MODE             = data.coder_parameter.environment_mode.value
+    CODER_BACKEND                      = local.backend
+    CODER_CONFIGURED_DOTFILES_URL      = data.coder_parameter.dotfiles_url.value
+    CODER_AGENT_CLIENTS                = join(",", jsondecode(data.coder_parameter.agent_clients.value))
+    CODER_AGENT_PLUGINS                = tobool(data.coder_parameter.agent_plugins.value) ? "1" : "0"
+    CODER_ENABLE_OPENHANDS             = tobool(data.coder_parameter.enable_openhands.value) ? "1" : "0"
+    CODER_ENABLE_DIND                  = local.enable_dind ? "1" : "0"
+    CODER_MCP_URL                      = var.mcp_url
+    CODER_REPO_KEYS                    = join(",", [for repo in local.repos_set : sha256(repo)])
+    CODER_REPO_DIRS                    = local.repo_clone_dirs
+    CODER_ENABLE_PLAYWRIGHT            = local.enable_playwright ? "1" : "0"
+    WOW_DEV                            = local.wow_dev ? "1" : "0"
+    WOW_ADDONS_PATH                    = local.wow_addons_path
+    WOW_DEV_SUFFIX                     = local.wow_dev_suffix
+    RCLONE_VERSION                     = "1.75.1"
+    RCLONE_CONFIG_WOW_TYPE             = local.wow_dev ? "sftp" : ""
+    RCLONE_CONFIG_WOW_HOST             = local.wow_dev ? local.wow_host : ""
+    RCLONE_CONFIG_WOW_PORT             = local.wow_dev ? "2022" : ""
+    RCLONE_CONFIG_WOW_USER             = local.wow_dev ? "wowsync" : ""
+    RCLONE_CONFIG_WOW_KEY_FILE         = local.wow_dev ? "~/.ssh/wow-sync" : ""
+    RCLONE_CONFIG_WOW_SHELL_TYPE       = local.wow_dev ? "none" : ""
+    RCLONE_CONFIG_WOW_HOST_KEYS        = local.wow_dev ? local.wow_host_key : ""
+    RCLONE_CONFIG_WOW_KNOWN_HOSTS_FILE = local.wow_dev && local.wow_host_key == "" ? "none" : ""
+    ECC_GATEGUARD                      = "off"
+    GOCACHE                            = "/tmp/go-build"
+    GOLANGCI_LINT_CACHE                = "/tmp/golangci-lint"
+    OMNI_OTEL_CA_PATH                  = "/etc/ssl/lan/lan-ca.pem"
 
     TMPDIR = local.tmpdir
     # Pinned to their current defaults so a future upstream default cannot move
