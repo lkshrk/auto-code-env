@@ -27,7 +27,7 @@
   "litellm_extra_body": {},
   "log_completions": false,
   "log_completions_folder": "logs/completions",
-  "max_input_tokens": null,
+  "max_input_tokens": 200000,
   "max_message_chars": 30000,
   "max_output_tokens": 32768,
   "model": "openai/gpt-5.6-sol",
