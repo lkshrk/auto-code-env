@@ -21,12 +21,16 @@ def load(path, name):
 
 
 class CatalogOwnershipTests(unittest.TestCase):
-    """auto-code-env owns the "which tools does each stack need" catalog;
-    dotfiles only executes installs against a catalog it's handed. These
-    tests guard the transition: until dotfiles' own embedded catalog is
-    deleted (a follow-up, once this is verified live), both copies must
-    stay identical, and wiring CODER_CATALOG_PATH must be a true no-op on
-    the resolved configuration.
+    """auto-code-env owns the "which tools does each stack need" catalog.
+    stack-install.py/install-stacks.py never call dotfiles' own
+    coder-components.py at all (see StackInstallEquivalenceTests below),
+    so there's no CODER_CATALOG_PATH wiring into it to guard here -- that
+    approach was tried and superseded, see auto-code-env's memory notes.
+    What still needs guarding until dotfiles' embedded catalog constants
+    are deleted (a follow-up, once this is verified live): the two
+    copies must stay identical, so a stack added here doesn't silently
+    diverge from what dotfiles' own script would still install if ever
+    invoked directly (e.g. from a non-Coder machine).
     """
 
     def test_catalog_is_valid_json_with_expected_keys(self):
@@ -40,8 +44,7 @@ class CatalogOwnershipTests(unittest.TestCase):
         # Drift guard for the transition period: once dotfiles' embedded
         # catalog is removed in a follow-up, this test (and the embedded
         # fallback it's checking against) goes away with it.
-        result = subprocess.run(["python3", str(DOTFILES / RESOLVER), "--contract"],
-                                capture_output=True, text=True, env=dict(os.environ, CODER_CATALOG_PATH=""))
+        result = subprocess.run(["python3", str(DOTFILES / RESOLVER), "--contract"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         catalog = json.loads(CATALOG.read_text())
         # coder-components.py doesn't expose its embedded constants over
@@ -55,18 +58,6 @@ class CatalogOwnershipTests(unittest.TestCase):
         self.assertEqual(catalog["BASE"], module.BASE)
         self.assertEqual(catalog["CORE_DOTS"], module.CORE_DOTS)
         self.assertEqual(catalog["RUNTIMES"], module.RUNTIMES)
-
-    @unittest.skipUnless(DOTFILES.is_dir(), "set CODER_TEST_DOTFILES to exact companion checkout")
-    def test_wiring_catalog_path_is_a_no_op_on_resolved_config(self):
-        # Proves the exact env var common.tf now exports doesn't change
-        # what gets installed, since catalog.json == the embedded defaults.
-        baseline = subprocess.run(["python3", str(DOTFILES / RESOLVER)],
-                                  capture_output=True, text=True, check=True,
-                                  env=dict(os.environ, CODER_OMNI_STACKS="go,python", CODER_CATALOG_PATH=""))
-        wired = subprocess.run(["python3", str(DOTFILES / RESOLVER)],
-                               capture_output=True, text=True, check=True,
-                               env=dict(os.environ, CODER_OMNI_STACKS="go,python", CODER_CATALOG_PATH=str(CATALOG)))
-        self.assertEqual(json.loads(baseline.stdout), json.loads(wired.stdout))
 
 
 @unittest.skipUnless(DOTFILES.is_dir(), "set CODER_TEST_DOTFILES to exact companion checkout")
