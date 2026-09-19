@@ -86,6 +86,23 @@ printf 'dry\n' > "$REPO_A/Modules/init.lua"
 bash "$SYNC_SCRIPT" --dry-run
 [[ "$(<"$ADDONS/Alpha-Dev/Modules/init.lua")" == "AlphaDBDev = 2" ]]
 
+# A failed transfer is reported, not announced as synced, and fails the run.
+mkdir -p "$ADDONS/Beta-Dev"
+chmod 0555 "$ADDONS/Beta-Dev"
+printf 'changed\n' > "$REPO_B/Beta/new.lua"
+if CODER_REPO_DIRS="bundle" bash "$SYNC_SCRIPT" > "$TEST_ROOT/fail.log" 2>&1; then
+  chmod 0755 "$ADDONS/Beta-Dev"
+  printf 'FAIL: sync into a read-only addon directory exited 0\n' >&2
+  exit 1
+fi
+chmod 0755 "$ADDONS/Beta-Dev"
+if grep -q 'synced Beta' "$TEST_ROOT/fail.log"; then
+  printf 'FAIL: failed sync was reported as synced\n' >&2
+  exit 1
+fi
+grep -q 'sync of Beta .* failed' "$TEST_ROOT/fail.log"
+rm "$REPO_B/Beta/new.lua"
+
 # Guard rails.
 if CODER_REPO_DIRS="my-addon-repo" WOW_ADDONS_PATH='' bash "$SYNC_SCRIPT" > /dev/null 2>&1; then
   printf 'FAIL: empty WOW_ADDONS_PATH was accepted\n' >&2
@@ -99,6 +116,16 @@ fi
 
 if RCLONE_CONFIG_WOW_TYPE="" bash "$SYNC_SCRIPT" > /dev/null 2>&1; then
   printf 'FAIL: a missing wow: remote was accepted\n' >&2
+  exit 1
+fi
+
+if WOW_ADDONS_PATH="$TEST_ROOT/no-such-dir/AddOns" bash "$SYNC_SCRIPT" > /dev/null 2>&1; then
+  printf 'FAIL: an unreachable AddOns path was accepted\n' >&2
+  exit 1
+fi
+
+if RCLONE_CONFIG_WOW_KEY_FILE="$TEST_ROOT/no-key" bash "$SYNC_SCRIPT" > /dev/null 2>&1; then
+  printf 'FAIL: a missing key file was accepted\n' >&2
   exit 1
 fi
 

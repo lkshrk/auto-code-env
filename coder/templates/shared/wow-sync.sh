@@ -127,15 +127,15 @@ sync_addon() {
   # shellcheck disable=SC2064
   trap "rm -rf '$stage'" RETURN
 
-  rclone copy "$src" "$stage" "${STAGE_EXCLUDES[@]}"
+  rclone copy "$src" "$stage" "${STAGE_EXCLUDES[@]}" || { log "staging $name failed"; return 1; }
   if [ -n "$WOW_DEV_SUFFIX" ]; then
-    apply_dev_suffix "$stage" "$name" "$WOW_DEV_SUFFIX"
+    apply_dev_suffix "$stage" "$name" "$WOW_DEV_SUFFIX" || { log "dev rewrite of $name failed"; return 1; }
   fi
 
   # rclone sync only ever deletes inside $dest, which is one addon directory,
   # and it verifies size and modtime of everything it writes.
   # shellcheck disable=SC2086
-  rclone sync "$stage" "$dest" "${SYNC_FLAGS[@]}" $dry
+  rclone sync "$stage" "$dest" "${SYNC_FLAGS[@]}" $dry || { log "sync of $name -> $dest failed"; return 1; }
   log "synced $name -> $dest"
 }
 
@@ -217,19 +217,19 @@ main() {
     esac
   done
 
-  if ! rclone listremotes | grep -qx "$WOW_REMOTE:"; then
-    log "rclone remote '$WOW_REMOTE:' is not configured; set the RCLONE_CONFIG_${WOW_REMOTE^^}_* secrets"
+  local key_file=${RCLONE_CONFIG_WOW_KEY_FILE:-}
+  if [ -n "$key_file" ] && [ ! -f "${key_file/#\~/$HOME}" ]; then
+    log "$key_file is missing; create it with: coder secret create wow-sync-key --file ~/.ssh/wow-sync < ~/.ssh/wow-sync"
+    return 1
+  fi
+
+  if ! rclone lsd "$WOW_REMOTE:$WOW_ADDONS_PATH" --contimeout 15s --timeout 60s >/dev/null 2>&1; then
+    log "cannot list $WOW_REMOTE:$WOW_ADDONS_PATH; check the RCLONE_CONFIG_${WOW_REMOTE^^}_* settings and that the sync server is up"
     return 1
   fi
 
   if [ "$WOW_ADDONS_PATH" != "/" ] && [ "${WOW_ADDONS_PATH##*/}" != "AddOns" ]; then
     log "warning: $WOW_ADDONS_PATH is not named AddOns; check the remote path"
-  fi
-
-  local key_file=${RCLONE_CONFIG_WOW_KEY_FILE:-}
-  if [ -n "$key_file" ] && [ ! -f "${key_file/#\~/$HOME}" ]; then
-    log "$key_file is missing; create it with: coder secret create wow-sync-key --file ~/.ssh/wow-sync < ~/.ssh/wow-sync"
-    return 1
   fi
 
   local repos=() entry
