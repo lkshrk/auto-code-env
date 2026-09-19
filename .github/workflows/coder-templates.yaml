@@ -62,6 +62,7 @@ jobs:
           bash coder/templates/tests/packaging.sh
           bash coder/templates/tests/selection.sh
           bash coder/templates/tests/prepare-dotfiles.sh
+          bash coder/templates/tests/wow-sync.sh
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests -p 'test_*.py'
 
       - name: Select templates

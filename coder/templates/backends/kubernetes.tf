@@ -66,6 +66,11 @@ locals {
   desktop            = data.coder_parameter.location.value == "desktop"
   home_storage_class = local.desktop ? "openebs-hostpath" : "ceph-block"
   node_selector      = local.desktop ? { dedicated = "desktop" } : {}
+
+  wow_smb_parts  = split("/", trim(local.wow_smb_share, "/"))
+  wow_smb_source = length(local.wow_smb_parts) >= 2 ? "//${local.wow_smb_parts[0]}/${local.wow_smb_parts[1]}" : ""
+  wow_smb_subdir = length(local.wow_smb_parts) > 2 ? join("/", slice(local.wow_smb_parts, 2, length(local.wow_smb_parts))) : ""
+
   backend_bootstrap  = <<-SCRIPT
     umask 077
     mkdir -p "$HOME/.kube"
@@ -240,6 +245,13 @@ resource "kubernetes_pod_v1" "workspace" {
         name       = "kube-api-access"
         read_only  = true
       }
+      dynamic "volume_mount" {
+        for_each = local.wow_smb_source != "" ? [1] : []
+        content {
+          mount_path = "/mnt/wow/addons"
+          name       = "wow-addons"
+        }
+      }
     }
 
     dynamic "container" {
@@ -324,6 +336,68 @@ resource "kubernetes_pod_v1" "workspace" {
         empty_dir {
           size_limit = "50Gi"
         }
+      }
+    }
+
+    dynamic "volume" {
+      for_each = local.wow_smb_source != "" ? [1] : []
+      content {
+        name = "wow-addons"
+        persistent_volume_claim {
+          claim_name = kubernetes_persistent_volume_claim_v1.wow_addons[0].metadata[0].name
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_persistent_volume_v1" "wow_addons" {
+  count = local.wow_smb_source != "" ? 1 : 0
+
+  metadata {
+    name = "${local.workspace_k8s_name}-wow-addons"
+  }
+
+  spec {
+    capacity = {
+      storage = "10Gi"
+    }
+    access_modes                     = ["ReadWriteMany"]
+    persistent_volume_reclaim_policy = "Delete"
+    storage_class_name               = ""
+
+    persistent_volume_source {
+      csi {
+        driver        = "smb.csi.k8s.io"
+        volume_handle = "${local.workspace_k8s_name}-wow-addons"
+        volume_attributes = {
+          source = local.wow_smb_source
+          subDir = local.wow_smb_subdir
+        }
+        node_stage_secret_ref {
+          name      = local.wow_smb_secret
+          namespace = "coder"
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_persistent_volume_claim_v1" "wow_addons" {
+  count = local.wow_smb_source != "" ? 1 : 0
+
+  metadata {
+    name      = "${local.workspace_k8s_name}-wow-addons"
+    namespace = "coder"
+  }
+
+  spec {
+    access_modes       = ["ReadWriteMany"]
+    storage_class_name = ""
+    volume_name        = kubernetes_persistent_volume_v1.wow_addons[0].metadata[0].name
+    resources {
+      requests = {
+        storage = "10Gi"
       }
     }
   }

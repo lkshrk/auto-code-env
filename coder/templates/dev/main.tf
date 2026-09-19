@@ -33,6 +33,30 @@ data "coder_parameter" "enable_playwright" {
   mutable      = true
 }
 
+data "coder_parameter" "wow_smb_share" {
+  name         = "wow_smb_share"
+  display_name = "WoW AddOns SMB share"
+  description  = "Optional //server/share/path to the game's Interface/AddOns directory. The cluster SMB CSI driver mounts it at /mnt/wow/addons."
+  default      = ""
+  mutable      = false
+}
+
+data "coder_parameter" "wow_smb_secret" {
+  name         = "wow_smb_secret"
+  display_name = "WoW SMB credential secret"
+  description  = "Kubernetes Secret in namespace coder containing username and password keys for the SMB CSI mount."
+  default      = "coder-wow-smb"
+  mutable      = false
+}
+
+data "coder_workspace_preset" "wow" {
+  name = "wow"
+  parameters = {
+    stacks        = jsonencode(["lua"])
+    wow_smb_share = ""
+  }
+}
+
 data "coder_workspace_preset" "go_python_k8s" {
   name = "go-python-k8s"
   parameters = {
@@ -65,4 +89,6 @@ locals {
   enable_dind       = tobool(data.coder_parameter.enable_dind.value)
   enable_playwright = tobool(data.coder_parameter.enable_playwright.value)
   repos             = split(",", data.coder_parameter.repos.value)
+  wow_smb_share     = trimspace(data.coder_parameter.wow_smb_share.value)
+  wow_smb_secret    = trimspace(data.coder_parameter.wow_smb_secret.value)
 }

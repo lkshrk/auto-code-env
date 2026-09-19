@@ -152,6 +152,7 @@ data "coder_parameter" "enable_openhands" {
 #   local.stacks             list(string)  extra omni groups to hard-sync (may be empty)
 #   local.enable_dind        bool          run the docker-in-docker sidecar
 #   local.enable_playwright  bool          install playwright chromium + OS deps
+#   local.wow_smb_share      string        //server/share/path, "" to skip WoW
 # ---------------------------------------------------------------------------
 
 locals {
@@ -266,6 +267,14 @@ locals {
     printf '%s' '${base64encode(file("${path.module}/shared/install-stacks.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/install-stacks.py"
     python3 "$HOME/.local/state/coder-environment/install-stacks.py"
 
+    if [ -n "$WOW_ADDONS_DIR" ]; then
+      sudo apt-get update -qq
+      sudo apt-get install -y --no-install-recommends inotify-tools rsync >/dev/null
+      mkdir -p "$HOME/.local/bin"
+      printf '%s' '${base64encode(file("${path.module}/shared/wow-sync.sh"))}' | base64 --decode > "$HOME/.local/bin/wow-sync"
+      chmod 0755 "$HOME/.local/bin/wow-sync"
+    fi
+
     # Personal dots only from here: language stacks/tool packages are already
     # installed above.
     bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder-dots.sh"
@@ -335,6 +344,8 @@ resource "coder_agent" "main" {
     CODER_REPO_KEYS               = join(",", [for repo in local.repos_set : sha256(repo)])
     CODER_REPO_DIRS               = local.repo_clone_dirs
     CODER_ENABLE_PLAYWRIGHT       = local.enable_playwright ? "1" : "0"
+    WOW_SMB_SHARE                 = local.wow_smb_share
+    WOW_ADDONS_DIR                = local.wow_smb_share != "" ? "/mnt/wow/addons" : ""
     ECC_GATEGUARD                 = "off"
     GOCACHE                       = "/tmp/go-build"
     GOLANGCI_LINT_CACHE           = "/tmp/golangci-lint"
