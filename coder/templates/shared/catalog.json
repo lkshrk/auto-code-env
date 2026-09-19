@@ -1,0 +1,138 @@
+{
+  "STACK_TOOLS": {
+    "go": [
+      "go",
+      "go-task",
+      "golangci-lint",
+      "gomplate",
+      "gopls"
+    ],
+    "python": [
+      "uv",
+      "python@3.14",
+      "pyright"
+    ],
+    "ts": [
+      "nvm",
+      "pnpm",
+      "typescript",
+      "typescript-language-server"
+    ],
+    "lua": [
+      "lua",
+      "luarocks",
+      "busted",
+      "lua-language-server",
+      "luacheck",
+      "stylua"
+    ],
+    "rust": [
+      "cargo"
+    ],
+    "k8s": [
+      "kubernetes-cli",
+      "helm",
+      "kustomize",
+      "krew",
+      "kubectx"
+    ],
+    "gitops": [
+      "kubernetes-cli",
+      "helm",
+      "flux",
+      "helmfile",
+      "sops"
+    ],
+    "argo": [
+      "argo"
+    ],
+    "talos": [
+      "talosctl"
+    ],
+    "cilium": [
+      "cilium-cli"
+    ],
+    "cnpg": [
+      "kubernetes-cli",
+      "kubectl-cnpg"
+    ],
+    "iac": [
+      "opentofu"
+    ],
+    "containers": [
+      "docker",
+      "skopeo"
+    ],
+    "quality": [
+      "actionlint",
+      "gitleaks",
+      "bats-core"
+    ],
+    "terminal-recording": [
+      "ffmpeg",
+      "ttyd",
+      "vhs"
+    ],
+    "media": [
+      "ffmpeg"
+    ]
+  },
+  "ALIASES": {
+    "infra": [
+      "k8s",
+      "gitops",
+      "argo",
+      "talos",
+      "cilium",
+      "cnpg",
+      "iac"
+    ],
+    "omni": [
+      "terminal-recording"
+    ]
+  },
+  "BASE": [
+    "git",
+    "curl",
+    "ca-certificates",
+    "jq",
+    "stow",
+    "unzip",
+    "xz-utils",
+    "openssl",
+    "zsh",
+    "oh-my-zsh",
+    "tmux",
+    "neovim",
+    "lazygit",
+    "lefthook",
+    "direnv",
+    "bat",
+    "eza",
+    "fd",
+    "ripgrep",
+    "build-essential",
+    "pkg-config",
+    "libssl-dev",
+    "tree-sitter-cli",
+    "git-delta"
+  ],
+  "CORE_DOTS": [
+    "zsh",
+    "zshenv",
+    "zshrc",
+    "env",
+    "tmux",
+    "nvim",
+    "lazygit"
+  ],
+  "RUNTIMES": [
+    "nvm",
+    "uv",
+    "cargo",
+    "bun",
+    "go",
+    "lua",
+    "luarocks"
+  ]
+}
