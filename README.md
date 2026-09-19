@@ -19,9 +19,9 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
     image build; the distribution is stock Ubuntu plus one checksummed file. See
     [`coder/worker/README.md`](coder/worker/README.md) for the runtime contract,
     installation, firewall, secrets, and verification details.
-- [`shared/windows/`](shared/windows/) holds the two PowerShell scripts both
-  workers use, `firewall.ps1` and `keepalive.ps1`, with their suites. Each
-  worker's release publishes its own copy, so a host only ever runs the version
+- [`shared/windows/`](shared/windows/) holds the two PowerShell scripts the
+  Coder worker uses, `firewall.ps1` and `keepalive.ps1`, with their suites.
+  Its release publishes its own copy, so a host only ever runs the version
   its release was built with.
 - [`openhands/`](openhands/) holds everything that targets an Agent Canvas
   deployment:
@@ -32,11 +32,14 @@ Reproducible OpenHands worker runtime for WSL, Docker, and Kubernetes.
     example `skills/agent-sandbox-deploy` for deploying into the h-cloud
     `agent-sandbox` namespace.
   - `automations/` holds automation definitions, one directory per backend.
-  - `worker/` builds and validates the multi-architecture
-    `ghcr.io/lkshrk/openhands-worker` OCI image and the architecture-specific WSL
-    artifacts. `image/` holds the build: `rootfs/`, `rootfs-oci/` and
-    `rootfs-wsl/` mirror the target filesystem and are copied verbatim into the
-    image, the OCI image and the WSL image respectively. `install/` holds the
-    host-side PowerShell scripts published as release assets. See
-    [`openhands/worker/README.md`](openhands/worker/README.md) for architecture,
-    installation, security, release and verification details.
+  - `profiles/` holds the profile-apply mechanism: `apply-profile.py` merges
+    per-host profile JSON onto a running Agent Canvas backend's settings and
+    secrets. It has no image or installer of its own — a `Job` (in the
+    cluster config, outside this repo) downloads it and the profile JSON as
+    checksummed assets from a pinned `openhands-worker-v*` release; publishing
+    that release is `.github/workflows/worker-release.yaml`'s only job. See
+    [`openhands/profiles/README.md`](openhands/profiles/README.md) for the
+    profile schema, backup/restore, and test details. There is intentionally
+    no standalone desktop Agent Canvas worker in this repo: an ephemeral
+    Coder-provisioned Docker workspace (`coder/`, with `enable_openhands` on
+    the `dev` template) covers that need without a second, always-on instance.

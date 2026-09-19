@@ -17,7 +17,7 @@ if importlib.metadata.version("agent-client-protocol") != "0.10.1":
     raise SystemExit("Expected agent-client-protocol==0.10.1")
 root = Path(__file__).resolve().parent
 suite = unittest.TestSuite()
-for pattern in ("test_backup_profile.py", "test_applier_contract.py", "test_settings_triggers.py"):
+for pattern in ("test_backup_profile.py", "test_applier_contract.py"):
     tests = unittest.defaultTestLoader.discover(str(root), pattern=pattern)
     if not tests.countTestCases():
         raise SystemExit(f"No tests discovered for {pattern}")

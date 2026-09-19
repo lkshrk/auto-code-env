@@ -34,7 +34,6 @@ $TlsPort = 2376
 $FirewallRuleName = "coder-worker-docker"
 $FirewallRuleDisplayName = "Coder worker Docker"
 
-# Duplicated from openhands/worker/install/install.ps1: both installers ship as standalone release assets.
 function Set-WslMirroredNetworking {
     param([Parameter(Mandatory)][string]$Path)
 

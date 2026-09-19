@@ -219,14 +219,13 @@ Until all three files under `/etc/docker/tls` exist, `docker.service` carries a
 and 2376 never opens without mutual TLS configured. Everything in the
 distribution runs as root; there is no `agent` user and no sudo.
 
-The WSL Hyper-V firewall is one shared object, so both products drive
-`shared/windows/firewall.ps1` under their own rule name, leaving
-`openhands-worker-https` untouched; `-RemoteAddresses` accepts only IPv4 hosts
-or /24-or-narrower ranges and `-Port` only 443 or 2376. That script and
-`keepalive.ps1` are copied into this release rather than referenced from the
-worker release, so one `checksums.txt` covers an install and the two version
-streams stay independent. Keepalive runs at logon, so the host must log the
-operator on for the backend to return after a reboot.
+The WSL Hyper-V firewall is one shared object, but only this product drives it
+today, under the `coder-worker-docker` rule name; `-RemoteAddresses` accepts
+only IPv4 hosts or /24-or-narrower ranges and `-Port` only 443 or 2376.
+`shared/windows/firewall.ps1` and `keepalive.ps1` are copied into this release
+rather than referenced elsewhere, so one `checksums.txt` covers an install.
+Keepalive runs at logon, so the host must log the operator on for the backend
+to return after a reboot.
 
 Ubuntu is asserted to be 26.04 `resolute`, the Docker apt signing key is
 SHA-256 verified against a constant before it is trusted, and `docker-ce`,
@@ -329,10 +328,10 @@ Get-NetFirewallHyperVRule | Where-Object DisplayName -match 'worker'
 wsl.exe -d coder-worker -u root -- coder-worker-overlay status
 ```
 
-`status` must show 2376 and nothing on 2375, and the rule list both
-`openhands-worker-https` and `coder-worker-docker` with their own port and
-source sets. A file check is not a runtime proof: complete a real workspace
-build before calling the backend done.
+`status` must show 2376 and nothing on 2375, and the rule list
+`coder-worker-docker` with its own port and source set. A file check is not a
+runtime proof: complete a real workspace build before calling the backend
+done.
 
 ## Troubleshooting
 

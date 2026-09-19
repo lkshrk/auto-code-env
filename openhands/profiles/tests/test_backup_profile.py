@@ -16,7 +16,7 @@ from openhands.agent_server.persistence import PersistedSettings
 from openhands.sdk.settings import ACPAgentSettings
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "profiles" / "backup-profile.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "backup-profile.py"
 SPEC = importlib.util.spec_from_file_location("backup_profile", SCRIPT)
 backup = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(backup)
