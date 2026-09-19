@@ -2,7 +2,7 @@ terraform {
   required_providers {
     coder = {
       source  = "coder/coder"
-      version = "2.18.0"
+      version = "2.19.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
@@ -246,7 +246,7 @@ resource "kubernetes_pod_v1" "workspace" {
       for_each = local.enable_dind ? [1] : []
       content {
         name              = "dind"
-        image             = "docker:27-dind"
+        image             = "docker:29-dind"
         image_pull_policy = "IfNotPresent"
 
         security_context {
