@@ -78,7 +78,7 @@ its own name.
 
 `orc.json` sets only `agent.kind`. Its model, base URL, and API key come from the
 HelmRelease environment, and it has no git sync, so `common.json` supplies
-everything else it needs: `secrets`, `skills`, and `mcp_servers`.
+everything else it needs: `agent.system_message_suffix`, `secrets`, `skills`, and `mcp_servers`.
 
 ## Gateway cutover
 
