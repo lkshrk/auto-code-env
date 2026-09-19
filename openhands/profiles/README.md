@@ -289,7 +289,7 @@ secrets also spans several reads and requires a quiet source for consistency.
 
 ```sh
 OPENHANDS_SUPPRESS_BANNER=1 python -m unittest discover \
-  -s openhands/worker/tests -p test_backup_profile.py -v
+  -s openhands/profiles/tests -p test_backup_profile.py -v
 ```
 
 The dedicated `settings-contracts` CI matrix installs exact server/SDK pairs
@@ -307,7 +307,7 @@ To run that same gate in an already provisioned compatible environment:
 
 ```sh
 EXPECTED_OPENHANDS_VERSION=1.44.0 OPENHANDS_SUPPRESS_BANNER=1 \
-  python openhands/worker/tests/settings-contracts.py
+  python openhands/profiles/tests/settings-contracts.py
 ```
 
 Tests need an already-installed OpenHands agent-server/SDK; the CLI itself needs

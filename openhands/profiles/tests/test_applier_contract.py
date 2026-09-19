@@ -11,7 +11,7 @@ from openhands.sdk.mcp.config import MCPServer
 from openhands.sdk.settings.api_models import MCPServerPatch
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "image/rootfs/usr/local/lib/openhands/apply-profile.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "apply-profile.py"
 SPEC = importlib.util.spec_from_file_location("apply_profile", SCRIPT)
 applier = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(applier)

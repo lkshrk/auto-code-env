@@ -2,14 +2,14 @@
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && until [ -e .git ]; do [ "$PWD" = / ] && exit 1; cd ..; done && pwd)
-applier="$repo_root/openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py"
-fixture_image=auto-code-env-wsl-overlay-fixture:ubuntu-26.04-python3
+applier="$repo_root/openhands/profiles/apply-profile.py"
+fixture_image=auto-code-env-applier-fixture:ubuntu-26.04-python3
 
 test -f "$applier"
 test -x "$applier"
-# The release reads the applier from the image tree; a symlink shortcut would drift from it.
+# The release reads the applier straight from this file; a symlink shortcut would drift from it.
 if find "$repo_root/openhands" -type l -name '*.py' | grep -q .; then
-  echo 'the applier must be published from the image tree, not through a symlink'; exit 1
+  echo 'the applier must be published from its source file, not through a symlink'; exit 1
 fi
 head -n 1 "$applier" | grep -Fxq '#!/usr/bin/env python3'
 if grep -Eq '^import (subprocess|requests)|^import yaml' "$applier"; then
@@ -28,7 +28,7 @@ script=$(cat <<'INNER'
 set -euo pipefail
 umask 022
 mkdir -p /tmp/log /tmp/api /tmp/state /tmp/secrets
-apply=/src/openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py
+apply=/src/openhands/profiles/apply-profile.py
 
 printf 'session-key-fixture\n' > /tmp/api-key
 printf 'sk-llm-FIXTUREKEY111111111111' > /tmp/secrets/LLM_API_KEY
@@ -57,7 +57,7 @@ EOF
 }
 fresh_state
 
-python3 /src/openhands/worker/tests/fake-agent-server.py --port 8000 --state /tmp/api/state.json \
+python3 /src/openhands/profiles/tests/fake-agent-server.py --port 8000 --state /tmp/api/state.json \
   --log /tmp/log/api --bodies /tmp/log/api-bodies --api-key-file /tmp/api-key &
 for _ in $(seq 1 100); do
   if python3 -c 'import socket,sys; sys.exit(socket.socket().connect_ex(("127.0.0.1", 8000)))'; then break; fi
@@ -309,7 +309,7 @@ import json
 import subprocess
 from pathlib import Path
 
-apply = '/src/openhands/worker/image/rootfs/usr/local/lib/openhands/apply-profile.py'
+apply = '/src/openhands/profiles/apply-profile.py'
 state_path = Path('/tmp/api/state.json')
 log_path = Path('/tmp/log/api')
 body_path = Path('/tmp/log/api-bodies')

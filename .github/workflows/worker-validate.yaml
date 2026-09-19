@@ -8,15 +8,13 @@ on:
       - .github/workflows/worker-validate.yaml
       - .github/workflows/worker-release.yaml
       - openhands/profiles/**
-      - openhands/worker/**
-      - shared/windows/**
       - tools/check-root-calculation.sh
 
 permissions:
   contents: read
 
 jobs:
-  checks-amd64:
+  checks:
     name: deterministic checks
     runs-on: ubuntu-24.04
     steps:
@@ -27,39 +25,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash openhands/worker/tests/provision.Tests.sh
-          bash openhands/worker/tests/runtime.Tests.sh
-          bash openhands/worker/tests/image.Tests.sh
-          bash openhands/worker/tests/overlay.Tests.sh
-          bash openhands/worker/tests/applier.Tests.sh
-          python3 -m unittest discover -s openhands/worker/tests -p test_settings_triggers.py -v
-          docker run --rm --platform linux/amd64 \
-            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
-            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File openhands/worker/tests/install.Tests.ps1
-          docker run --rm --platform linux/amd64 \
-            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
-            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File shared/windows/firewall.Tests.ps1
-          docker run --rm --platform linux/amd64 \
-            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
-            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File shared/windows/keepalive.Tests.ps1
-          docker run --rm --platform linux/amd64 \
-            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
-            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File openhands/worker/tests/setup.Tests.ps1
-          docker run --rm --platform linux/amd64 \
-            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
-            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File openhands/worker/tests/update.Tests.ps1
-          docker run --rm --platform linux/amd64 \
-            --volume "$GITHUB_WORKSPACE:/src:ro" --workdir /src \
-            mcr.microsoft.com/powershell@sha256:c2bee73acbaa53e9209daab8075b5d234f0f04e6824e7b6f7bf7dde1ba5b772b \
-            pwsh -NoProfile -File openhands/worker/tests/compat.Tests.ps1
+          bash openhands/profiles/tests/applier.Tests.sh
+          bash openhands/profiles/tests/profile-json.Tests.sh
           bash tools/check-root-calculation.sh
-          find openhands/worker shared -type f -name '*.sh' -print0 | xargs -0 shellcheck
-          shellcheck openhands/worker/image/rootfs/usr/local/sbin/openhands-overlay openhands/worker/image/rootfs-oci/usr/local/sbin/container-entrypoint
+          shellcheck openhands/profiles/tests/applier.Tests.sh openhands/profiles/tests/profile-json.Tests.sh
 
   settings-contracts:
     name: settings contracts ${{ matrix.openhands }}
@@ -90,54 +59,4 @@ jobs:
           EXPECTED_OPENHANDS_VERSION: ${{ matrix.openhands }}
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/settings-contracts/bin/python" openhands/worker/tests/settings-contracts.py
-
-  validate:
-    name: ${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
-
-      - name: Validate build definition
-        run: bash openhands/worker/tests/image.Tests.sh
-
-      - name: Smoke native image build
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker buildx build \
-            --file openhands/worker/image/Containerfile \
-            --platform '${{ matrix.platform }}' \
-            --target smoke \
-            --build-arg "OPENHANDS_WORKER_VERSION=ci-${GITHUB_SHA::12}" \
-            --output type=cacheonly \
-            .
-
-      - name: Export and inspect native WSL image
-        shell: bash
-        run: |
-          set -euo pipefail
-          output="$RUNNER_TEMP/worker-wsl"
-          version="ci-${GITHUB_SHA::12}"
-          openhands/worker/image/build-wsl.sh "$version" '${{ matrix.arch }}' "$output"
-          artifact="$output/openhands-worker-$version-${{ matrix.arch }}.wsl"
-          tar -tf "$artifact" | grep -E '^\.?/?etc/wsl\.conf$' >/dev/null
-          tar -tf "$artifact" | grep -E '^\.?/?etc/systemd/system/systemd-modules-load\.service\.d/10-wsl\.conf$' >/dev/null
-          tar -tf "$artifact" | grep -E '^\.?/?usr/lib/systemd/system/dbus\.socket$' >/dev/null
-          tar -tf "$artifact" | grep -E '^\.?/?usr/local/lib/openhands/apply-profile\.py$' >/dev/null
-          tar -xOf "$artifact" --wildcards '*etc/pam.d/common-session' | grep -E '^session[[:space:]]+optional[[:space:]]+pam_systemd\.so' >/dev/null
-          tar -xOf "$artifact" --wildcards '*etc/openhands/release' | grep -Fx "openhands-worker $version"
+          "$RUNNER_TEMP/settings-contracts/bin/python" openhands/profiles/tests/settings-contracts.py
