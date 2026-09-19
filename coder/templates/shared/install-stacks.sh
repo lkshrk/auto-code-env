@@ -71,9 +71,17 @@ install_stacks_link_node_commands() {
   return 0
 }
 
+# The raw config file this script writes only has group/host *names* --
+# the "tools" dict itself is merged in by Omni internally via $include,
+# so it isn't visible to plain jq. Active-group membership is, though,
+# which is enough to answer "is tool X part of what we're installing".
+install_stacks_active_has_tool() {
+  jq -e --arg tool "$2" '.hosts["coder-components"] as $active | any(.groups[]; (.name as $n | $active | index($n)) and (.tools // [] | index($tool)))' "$1" >/dev/null
+}
+
 install_stacks_path() {
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-  if jq -e '.tools | has("nvm")' "$1" >/dev/null && [[ -s "$NVM_DIR/nvm.sh" ]]; then
+  if install_stacks_active_has_tool "$1" nvm && [[ -s "$NVM_DIR/nvm.sh" ]]; then
     source "$NVM_DIR/nvm.sh" --no-use
     nvm use --silent default >/dev/null
     install_stacks_link_node_commands "$NVM_BIN"
@@ -82,8 +90,8 @@ install_stacks_path() {
 }
 
 install_stacks_link_npm_commands() {
-  local config="$1" required prefix binary stable_path
-  required="$(python3 "$SHARED_DIR/stack-install.py" --required-commands "$config" --required-provider npm --dotfiles "$CODER_DOTFILES_SOURCE_DIR")"
+  local required prefix binary stable_path
+  required="$(python3 "$SHARED_DIR/stack-install.py" --dotfiles "$CODER_DOTFILES_SOURCE_DIR" --required-commands --required-provider npm)"
   [[ -n "$required" ]] || return 0
   prefix="$(npm prefix -g)" || die "cannot resolve npm global prefix"
   [[ "$prefix" == /* ]] || die "npm global prefix must be absolute: $prefix"
@@ -97,7 +105,7 @@ install_stacks_link_npm_commands() {
 
 install_stacks_link_lsp_commands() {
   local config="$1" prefix
-  if jq -e '.tools | has("pyright")' "$config" >/dev/null; then
+  if install_stacks_active_has_tool "$config" pyright; then
     prefix="$(npm prefix -g)" || die "cannot resolve Pyright language server prefix"
     [[ "$prefix" == /* && -x "$prefix/bin/pyright-langserver" ]] || die "required Pyright language server missing"
     install_stacks_link_local_bin "$prefix/bin/pyright-langserver" pyright-langserver
@@ -106,8 +114,10 @@ install_stacks_link_lsp_commands() {
 }
 
 install_stacks_refresh_apt() {
-  local config="$1" package
+  local required package
+  required="$(python3 "$SHARED_DIR/stack-install.py" --dotfiles "$CODER_DOTFILES_SOURCE_DIR" --required-apt-packages)"
   while IFS= read -r package; do
+    [[ -n "$package" ]] || continue
     if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != 'install ok installed' ]]; then
       command -v apt-get >/dev/null || die "required component packages need Debian/Ubuntu apt"
       if [[ "$(id -u)" == 0 ]]; then
@@ -119,12 +129,12 @@ install_stacks_refresh_apt() {
       fi
       return
     fi
-  done < <(jq -r '. as $root | .groups[] | .tools[]? as $name | $root.tools[$name].providers | map(select(.provider != "brew")) | select(length == 1 and .[0].provider == "apt") | .[0].package // $name' "$config")
+  done <<< "$required"
 }
 
 install_stacks_check() {
   local config="$1" binary required tree_sitter_version
-  required="$(python3 "$SHARED_DIR/stack-install.py" --required-commands "$config" --dotfiles "$CODER_DOTFILES_SOURCE_DIR")"
+  required="$(python3 "$SHARED_DIR/stack-install.py" --dotfiles "$CODER_DOTFILES_SOURCE_DIR" --required-commands)"
   while IFS= read -r binary; do
     command -v "$binary" >/dev/null 2>&1 || die "required component binary missing: $binary"
   done <<< "$required"
@@ -132,7 +142,7 @@ install_stacks_check() {
   tree_sitter_version="$(tree-sitter --version)"
   python3 -c 'import re,sys; match=re.search(r"(\d+)\.(\d+)\.(\d+)",sys.argv[1]); sys.exit(0 if match and tuple(map(int,match.groups())) >= (0,26,1) else 1)' "$tree_sitter_version" || die "tree-sitter >=0.26.1 required"
   nvim --headless -u NONE -i NONE '+lua if vim.fn.filereadable(vim.env.VIMRUNTIME .. "/doc/help.txt") ~= 1 then vim.cmd("cquit") end' +qa || die "required Neovim runtime is incomplete"
-  if jq -e '.tools | has("python@3.14")' "$config" >/dev/null; then
+  if install_stacks_active_has_tool "$config" "python@3.14"; then
     uv python find 3.14 >/dev/null || die "required managed Python 3.14 missing"
   fi
 }
@@ -166,19 +176,19 @@ install_stacks_main() (
     install_omni_release
   fi
   omni --config "$config" settings show --format json >/dev/null
-  install_stacks_refresh_apt "$config"
+  install_stacks_refresh_apt
   while IFS= read -r group; do
     step "required component tools: $group"
     omni --config "$config" --yes tools sync "$group"
     install_stacks_path "$config"
-  done < <(jq -r '.groups[] | select((.tools // []) | length > 0) | .name' "$config")
+  done < <(jq -r '.hosts["coder-components"][]' "$config")
   if command -v batcat >/dev/null; then
     install_stacks_link_local_bin "$(command -v batcat)" bat
   fi
   if command -v fdfind >/dev/null; then
     install_stacks_link_local_bin "$(command -v fdfind)" fd
   fi
-  install_stacks_link_npm_commands "$config"
+  install_stacks_link_npm_commands
   install_stacks_link_lsp_commands "$config"
   install_stacks_check "$config"
   ok "required stacks ready; backend=${CODER_BACKEND:-kubernetes}, DinD=${CODER_ENABLE_DIND:-0} (daemon owned by parent)"

@@ -1,19 +1,33 @@
 #!/usr/bin/env python3
 """Coder-workspace stack/tool resolver.
 
-Resolves which Omni tools a selection of stacks/clients/plugins requires,
-and builds a *tools-only* Omni config to install them (no personal dots
-groups at all -- that stays entirely dotfiles' job).
+Resolves which Omni tools a selection of stacks/clients/plugins requires
+and renders an Omni config for the "coder-components" host that installs
+them. Owned by auto-code-env because this is machine/environment
+composition policy ("which packages does a Coder workspace need for
+stack X"), not personal computing configuration.
 
-Owned by auto-code-env because this is machine/environment composition
-policy ("which packages does a Coder workspace need for stack X"), not
-personal computing configuration. The Omni tool *provider* catalog (how
-to actually install each named tool: apt package, npm package, GitHub
-release recipe, ...) intentionally stays in dotfiles and is read live
-from the cloned checkout below -- it is the user's own package manifest,
-shared with their non-Coder machines via `setup.sh`/`omni bootstrap`,
-not something specific to Coder workspaces, so duplicating it here would
-recreate the exact drift PR #99 already fixed for the readiness checker.
+Deliberately does NOT read or copy the Omni tool *provider* catalog
+(how to actually install each named tool: apt package, npm package,
+GitHub release recipe, ...) into the rendered config -- that stays in
+dotfiles (the user's own package manifest, shared with their non-Coder
+machines via `setup.sh`/`omni bootstrap`, not Coder-specific) and is
+merged in natively via Omni's own `$include` mechanism, the same one
+dotfiles' settings.json already uses for its own settings.d/*.json
+files. Duplicating that catalog here, or hand-merging it in Python,
+would both recreate the drift PR #99 already fixed for the readiness
+checker AND reimplement (worse) the host-aware provider-priority
+resolution Omni's config loader already does correctly (e.g. the
+coder-components host already disables "brew" and prioritizes "apt" --
+see dotfiles' settings.json host_settings -- so a tool with both brew
+and apt providers resolves correctly with zero code here).
+
+linux-tools.json (this directory) is the one deliberate exception: a
+small, static set of native Linux install recipes for tools where a
+plain package isn't suitable for Coder's workspaces (Neovim built from
+a GitHub release tarball, delta/lefthook/tree-sitter-cli as GitHub
+release binaries). It $include-overrides dotfiles' definitions for the
+same names using Omni's own "later $include wins" merge rule.
 """
 
 import argparse
@@ -21,12 +35,12 @@ import copy
 import json
 import os
 from pathlib import Path
-import shlex
 import sys
 from urllib.parse import urlsplit
 
 HOST = "coder-components"
 CATALOG_KEYS = ("STACK_TOOLS", "ALIASES", "BASE", "CORE_DOTS", "RUNTIMES")
+DOTS_ROOT = "dotfiles/omni/.config/omni"
 
 
 def load_catalog(path=None):
@@ -76,125 +90,174 @@ def contract(env, catalog):
     return result
 
 
-def linux_core_providers(shared_dir):
-    # Native (non-Omni-provider) install recipes for tools where a
-    # plain apt/npm package is unavailable or unsuitable for Coder's
-    # Linux workspaces. Pure machine mechanics -- ported verbatim from
-    # dotfiles' coder-components.py, which is why coder-neovim.py moved
-    # alongside it rather than staying split across two repositories.
-    helper = shlex.quote(str(Path(shared_dir) / "coder-neovim.py"))
-    install = (
-        "set -eu; case \"$(uname -m)\" in x86_64|amd64) arch=x86_64 ;; aarch64|arm64) arch=arm64 ;; *) exit 1 ;; esac; "
-        "tmp=$(mktemp -d); trap 'rm -rf \"$tmp\"' EXIT; "
-        "curl -fsSL --proto-redir '=https' https://api.github.com/repos/neovim/neovim/releases/latest -o \"$tmp/release.json\"; "
-        "asset=nvim-linux-$arch.tar.gz; "
-        "url=$(jq -er --arg name \"$asset\" '.assets[] | select(.name == $name) | .browser_download_url' \"$tmp/release.json\"); "
-        "digest=$(jq -er --arg name \"$asset\" '.assets[] | select(.name == $name) | .digest | select(startswith(\"sha256:\")) | ltrimstr(\"sha256:\")' \"$tmp/release.json\"); "
-        "curl -fsSL --proto '=https' --proto-redir '=https' \"$url\" -o \"$tmp/nvim.tar.gz\"; "
-        f"python3 {helper} \"$tmp/nvim.tar.gz\" \"$digest\""
-    )
-
-    def native(owner, repo_name, binary, pattern, arch_map):
-        return {"providers": [{"provider": "script", "bin": binary,
-            "options": {"arch_map": arch_map},
-            "source": {"type": "github", "owner": owner, "repo": repo_name},
-            "recipe": {"type": "github_release_asset", "asset_pattern": pattern}}]}
-
-    return {
-        "neovim": {"providers": [{"provider": "script", "bin": "nvim", "options": {
-            "install": install,
-            "check": 'test -x "$HOME/.local/share/coder-neovim/current/bin/nvim" && test -f "$HOME/.local/share/coder-neovim/current/share/nvim/runtime/doc/help.txt" && test -x "$HOME/.local/bin/nvim"',
-            "version": '"$HOME/.local/bin/nvim" --version | head -1 | sed "s/^NVIM v//"',
-            "latest": "curl -fsSL https://api.github.com/repos/neovim/neovim/releases/latest | jq -er '.tag_name | ltrimstr(\"v\")'",
-        }}]},
-        "git-delta": native("dandavison", "delta", "delta", "delta-{version}-{arch}-unknown-linux-gnu.tar.gz", "aarch64:aarch64,arm64:aarch64,x86_64:x86_64,amd64:x86_64"),
-        "lefthook": native("evilmartians", "lefthook", "lefthook", "lefthook_{version}_Linux_{arch}.gz", "aarch64:arm64,arm64:arm64,x86_64:x86_64,amd64:x86_64"),
-        "tree-sitter-cli": native("tree-sitter", "tree-sitter", "tree-sitter", "tree-sitter-linux-{arch}.gz", "aarch64:arm64,arm64:arm64,x86_64:x64,amd64:x64"),
-    }
+def build_static_groups(catalog):
+    """Every group this host could ever need, derived purely from
+    catalog.json -- always present regardless of selection. Which of
+    these actually get synced for a given workspace is decided by
+    select_group_names(), not by which groups exist."""
+    groups = [{"name": "component-base", "tools": list(catalog["BASE"])}]
+    for runtime in catalog["RUNTIMES"]:
+        groups.append({"name": "runtime-" + runtime, "tools": [runtime]})
+    for stack in sorted(catalog["STACK_TOOLS"]):
+        extra = [t for t in catalog["STACK_TOOLS"][stack] if t not in catalog["RUNTIMES"] and t not in catalog["BASE"]]
+        groups.append({"name": "stack-" + stack, "tools": extra})
+    groups.append({"name": "client-claude", "tools": ["claude-code"]})
+    groups.append({"name": "client-codex", "tools": ["@openai/codex"]})
+    return groups
 
 
-def resolve_tools(dotfiles_dir, env, catalog):
-    """Build a tools-only Omni config: no dots/personal groups at all."""
+def select_group_names(selection, catalog):
+    """Ordered list of group names to actually sync. Runtimes are
+    always ordered first so tools that depend on them (npm packages
+    needing nvm, pyright needing a managed Python, ...) install
+    against a working toolchain."""
+    runtimes = []
+
+    def need(runtime):
+        if runtime not in runtimes:
+            runtimes.append(runtime)
+
+    for stack in selection["stacks"]:
+        for tool in catalog["STACK_TOOLS"][stack]:
+            if tool in catalog["RUNTIMES"]:
+                need(tool)
+    if "codex" in selection["clients"]:
+        need("nvm")
+        need("bun")
+    if selection["CODER_AGENT_PLUGINS"] == "1":
+        need("nvm")
+        need("bun")
+    if any("pyright" in catalog["STACK_TOOLS"][s] for s in selection["stacks"]):
+        need("nvm")
+    names = ["component-base"] + ["runtime-" + r for r in runtimes] + ["stack-" + s for s in selection["stacks"]]
+    if "claude" in selection["clients"]:
+        names.append("client-claude")
+    if "codex" in selection["clients"]:
+        names.append("client-codex")
+    if selection["CODER_AGENT_PLUGINS"] == "1":
+        names.append("ai-plugins")
+    return names
+
+
+def ai_plugins_group(dotfiles_dir, clients):
+    # The set of curated AI-agent CLI plugins is dotfiles' own personal
+    # opinion (it's read from the same groups.json dotfiles uses for
+    # its own, non-Coder bootstrap) -- this only narrows that list to
+    # the clients this workspace actually has, it doesn't own it.
+    path = Path(dotfiles_dir) / DOTS_ROOT / "settings.d/groups.json"
+    source_groups = json.loads(path.read_text())["groups"]
+    plugins = next(g["tools"] for g in source_groups if g["name"] == "ai-plugins")
+    tools = [t for t in plugins if t != "herdr-tether"
+             and not (t == "oh-my-codex" and "codex" not in clients)
+             and not (t == "ccundo" and "claude" not in clients)]
+    return {"name": "ai-plugins", "tools": tools}
+
+
+def render_config(dotfiles_dir, env, catalog, shared_dir):
     dotfiles_dir = Path(dotfiles_dir)
     selection = contract(env, catalog)
-    root = dotfiles_dir / "dotfiles/omni/.config/omni"
+    root = dotfiles_dir / DOTS_ROOT
     settings = json.loads((root / "settings.json").read_text())
-    tools = json.loads((root / "settings.d/tools.json").read_text())["tools"]
-    source_groups = json.loads((root / "settings.d/groups.json").read_text())["groups"]
-    selected = list(dict.fromkeys(t for s in selection["stacks"] for t in catalog["STACK_TOOLS"][s]))
-    if "claude" in selection["clients"]:
-        selected.append("claude-code")
-    if "codex" in selection["clients"]:
-        selected.extend(["nvm", "bun", "@openai/codex"])
+    groups = build_static_groups(catalog)
     if selection["CODER_AGENT_PLUGINS"] == "1":
-        plugins = next(g["tools"] for g in source_groups if g["name"] == "ai-plugins")
-        selected.extend(t for t in plugins if t != "herdr-tether"
-                        and not (t == "oh-my-codex" and "codex" not in selection["clients"])
-                        and not (t == "ccundo" and "claude" not in selection["clients"]))
-        selected.extend(["bun", "nvm"])
-    if "pyright" in selected:
-        selected.append("nvm")
-    selected = [t for t in dict.fromkeys(selected) if t not in catalog["BASE"]]
-    groups = [{"name": "component-base", "tools": catalog["BASE"]}]
-    for runtime in catalog["RUNTIMES"]:
-        if runtime in selected:
-            groups.append({"name": "runtime-" + runtime, "tools": [runtime]})
-    groups.append({"name": "component-tools", "tools": [t for t in selected if t not in catalog["RUNTIMES"]]})
-    tools = dict(tools)
-    tools.update(linux_core_providers(Path(__file__).parent))
-    names = list(dict.fromkeys(t for group in groups for t in group.get("tools", [])))
-    missing = set(names) - tools.keys()
-    if missing:
-        raise ValueError("missing Omni tool definitions: " + ", ".join(sorted(missing)))
+        groups.append(ai_plugins_group(dotfiles_dir, selection["clients"]))
+    names = select_group_names(selection, catalog)
     host_settings = copy.deepcopy(settings["host_settings"][HOST])
     host_settings["dots_repo"] = str(dotfiles_dir)
-    return {
+    config = {
         "$schema": settings["$schema"],
         "version": settings["version"],
+        "$include": [
+            str((root / "settings.d/tools.json").resolve()),
+            str((Path(shared_dir) / "linux-tools.json").resolve()),
+        ],
         "host_settings": {HOST: host_settings},
-        "hosts": {HOST: [g["name"] for g in groups]},
+        "hosts": {HOST: names},
         "groups": groups + [{"name": HOST, "special": "host"}],
-        "tools": {name: tools[name] for name in names},
         "settings": {"fallback_bin_dir": "~/.local/bin", "dots_git": {"auto_commit": False}},
     }
+    return config, names
 
 
-def required_commands(config, provider=None):
-    aliases = {
-        "nvm": ["node", "npm"], "cargo": ["rustc", "cargo"],
-        "python@3.14": [], "ca-certificates": [], "libssl-dev": [],
-        "build-essential": ["make", "cc", "c++"], "xz-utils": ["xz"],
-        "typescript": ["tsc"], "go-task": ["task"], "kubernetes-cli": ["kubectl"],
-        "cilium-cli": ["cilium"], "opentofu": ["tofu"],
-        "bats-core": ["bats"], "claude-code": ["claude"],
-        "@openai/codex": ["codex"], "oh-my-codex": ["omx"],
-        "krew": ["kubectl-krew"], "neovim": ["nvim"], "fd": ["fdfind", "fd"],
-        "bat": ["batcat", "bat"], "ripgrep": ["rg"], "oh-my-zsh": [], "tree-sitter-cli": ["tree-sitter"], "git-delta": ["delta"],
-    }
-    return list(dict.fromkeys(binary for group in config["groups"]
-                             for tool in group.get("tools", [])
-                             if provider is None or any(p["provider"] == provider for p in config["tools"][tool]["providers"])
-                             for binary in aliases.get(tool, [tool])))
+def load_tool_providers(dotfiles_dir, shared_dir):
+    # Narrow, read-only introspection for the shell orchestration's own
+    # bookkeeping (does this tool need npm/apt-specific post-install
+    # steps) -- NOT part of the install path above, which lets Omni's
+    # own $include + host provider-priority resolve this instead.
+    root = Path(dotfiles_dir) / DOTS_ROOT
+    tools = json.loads((root / "settings.d/tools.json").read_text())["tools"]
+    tools.update(json.loads((Path(shared_dir) / "linux-tools.json").read_text())["tools"])
+    return tools
+
+
+BINARY_ALIASES = {
+    "nvm": ["node", "npm"], "cargo": ["rustc", "cargo"],
+    "python@3.14": [], "ca-certificates": [], "libssl-dev": [],
+    "build-essential": ["make", "cc", "c++"], "xz-utils": ["xz"],
+    "typescript": ["tsc"], "go-task": ["task"], "kubernetes-cli": ["kubectl"],
+    "cilium-cli": ["cilium"], "opentofu": ["tofu"],
+    "bats-core": ["bats"], "claude-code": ["claude"],
+    "@openai/codex": ["codex"], "oh-my-codex": ["omx"],
+    "krew": ["kubectl-krew"], "neovim": ["nvim"], "fd": ["fdfind", "fd"],
+    "bat": ["batcat", "bat"], "ripgrep": ["rg"], "oh-my-zsh": [],
+    "tree-sitter-cli": ["tree-sitter"], "git-delta": ["delta"],
+}
+
+
+def required_commands(names, catalog, dotfiles_dir, shared_dir, provider=None):
+    groups = {g["name"]: g for g in build_static_groups(catalog)}
+    tools = load_tool_providers(dotfiles_dir, shared_dir) if provider else None
+    binaries = []
+    for name in names:
+        for tool in groups.get(name, {}).get("tools", []):
+            if provider is not None:
+                providers = tools.get(tool, {}).get("providers", [])
+                if not any(p.get("provider") == provider for p in providers):
+                    continue
+            for binary in BINARY_ALIASES.get(tool, [tool]):
+                if binary not in binaries:
+                    binaries.append(binary)
+    return binaries
+
+
+def required_apt_packages(names, catalog, dotfiles_dir, shared_dir):
+    # Apt package *names* (not binaries): used only to decide whether
+    # `apt-get update` is needed before a sync, mirroring what an apt
+    # provider entry, once Omni's own disabled/priority resolution
+    # picks it, would actually install.
+    groups = {g["name"]: g for g in build_static_groups(catalog)}
+    tools = load_tool_providers(dotfiles_dir, shared_dir)
+    packages = []
+    for name in names:
+        for tool in groups.get(name, {}).get("tools", []):
+            providers = [p for p in tools.get(tool, {}).get("providers", []) if p.get("provider") != "brew"]
+            if len(providers) == 1 and providers[0].get("provider") == "apt":
+                package = providers[0].get("package", tool)
+                if package not in packages:
+                    packages.append(package)
+    return packages
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dotfiles", type=Path, required=True, help="Cloned dotfiles checkout (personal dots + Omni tool provider catalog)")
     parser.add_argument("--catalog", type=Path, default=None)
-    parser.add_argument("--required-commands", type=Path)
+    parser.add_argument("--required-commands", action="store_true")
     parser.add_argument("--required-provider")
+    parser.add_argument("--required-apt-packages", action="store_true")
     args = parser.parse_args()
+    shared_dir = Path(__file__).parent
     try:
         catalog = load_catalog(args.catalog)
-    except (ValueError, OSError) as exc:
-        parser.error(str(exc))
-    if args.required_commands:
-        print("\n".join(required_commands(json.loads(args.required_commands.read_text()), args.required_provider)))
-        return
-    try:
-        config = resolve_tools(args.dotfiles.resolve(), os.environ, catalog)
+        config, names = render_config(args.dotfiles.resolve(), os.environ, catalog, shared_dir)
     except (ValueError, OSError, KeyError) as exc:
         parser.error(str(exc))
+    if args.required_apt_packages:
+        print("\n".join(required_apt_packages(names, catalog, args.dotfiles.resolve(), shared_dir)))
+        return
+    if args.required_commands:
+        print("\n".join(required_commands(names, catalog, args.dotfiles.resolve(), shared_dir, args.required_provider)))
+        return
     json.dump(config, sys.stdout, indent=2)
     print()
 

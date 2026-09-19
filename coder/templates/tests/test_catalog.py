@@ -71,20 +71,22 @@ class CatalogOwnershipTests(unittest.TestCase):
 
 @unittest.skipUnless(DOTFILES.is_dir(), "set CODER_TEST_DOTFILES to exact companion checkout")
 class StackInstallEquivalenceTests(unittest.TestCase):
-    """stack-install.py (auto-code-env) must resolve the exact same tool
-    selection, group composition, and provider definitions as dotfiles'
-    coder-components.py did/does for the tools-only subset of its config
-    -- the only intended difference is the coder-neovim.py helper path
-    baked into the neovim provider's install script, since that helper
-    moved to auto-code-env alongside the rest of the native Linux
-    install recipes (pure machine mechanics, not personal content).
+    """stack-install.py (auto-code-env) renders an Omni config that
+    relies on Omni's own $include + host provider-priority resolution
+    for tool provider definitions (see stack-install.py's module
+    docstring for why), instead of copying dotfiles' coder-components.py
+    resolver's approach of manually merging tool definitions into a
+    single generated file. What must still match exactly is the
+    *effective installed tool set* for every selection: expanding the
+    new design's active groups against its own static catalog-derived
+    group definitions must equal the old resolver's flat tool set.
     """
 
     STACKS = ["", "go", "infra,omni",
               "go,python,ts,lua,rust,k8s,gitops,argo,talos,cilium,cnpg,iac,containers,quality,terminal-recording,media"]
     CLIENTS = ["", "claude", "codex", "claude,codex"]
 
-    def test_tool_selection_and_providers_match_dotfiles_for_every_combination(self):
+    def test_effective_installed_tool_set_matches_dotfiles_for_every_combination(self):
         stack_install = load(SHARED / "stack-install.py", "stack_install")
         dotfiles_resolver = load(DOTFILES / RESOLVER, "dotfiles_coder_components")
         catalog = stack_install.load_catalog(CATALOG)
@@ -94,21 +96,37 @@ class StackInstallEquivalenceTests(unittest.TestCase):
             with self.subTest(stacks=stacks, clients=clients, plugins=plugins):
                 env = {"CODER_OMNI_STACKS": stacks, "CODER_AGENT_CLIENTS": clients, "CODER_AGENT_PLUGINS": plugins}
                 old = dotfiles_resolver.resolve(DOTFILES, env)
-                new = stack_install.resolve_tools(DOTFILES, env, catalog)
-                old_groups = [{"name": g["name"], "tools": sorted(g["tools"])} for g in old["groups"] if g.get("tools") is not None]
-                new_groups = [{"name": g["name"], "tools": sorted(g["tools"])} for g in new["groups"] if g.get("tools") is not None]
-                self.assertEqual(old_groups, new_groups)
-                names = {t for g in old["groups"] for t in g.get("tools", [])}
-                for name in names:
-                    if name == "neovim":
-                        # Only the baked-in helper path may legitimately differ.
-                        old_install = old["tools"][name]["providers"][0]["options"]["install"]
-                        new_install = new["tools"][name]["providers"][0]["options"]["install"]
-                        self.assertNotEqual(old_install, new_install)
-                        self.assertIn("scripts/coder-neovim.py", old_install)
-                        self.assertIn(str(SHARED / "coder-neovim.py"), new_install)
-                        continue
-                    self.assertEqual(old["tools"][name], new["tools"][name], name)
+                old_tools = {t for g in old["groups"] for t in g.get("tools", [])}
+
+                config, names = stack_install.render_config(DOTFILES, env, catalog, SHARED)
+                self.assertEqual(names, config["hosts"][stack_install.HOST])
+                active = set(names)
+                new_tools = {t for g in config["groups"] for t in g.get("tools", []) if g["name"] in active}
+                self.assertEqual(old_tools, new_tools)
+
+                # No duplicate/unknown group names, and every active
+                # name actually resolves to a declared group.
+                declared = {g["name"] for g in config["groups"]}
+                self.assertTrue(active <= declared, active - declared)
+                self.assertEqual(len(names), len(set(names)))
+
+    def test_static_groups_cover_every_catalog_stack_and_runtime(self):
+        stack_install = load(SHARED / "stack-install.py", "stack_install")
+        catalog = stack_install.load_catalog(CATALOG)
+        groups = {g["name"]: g["tools"] for g in stack_install.build_static_groups(catalog)}
+        for stack in catalog["STACK_TOOLS"]:
+            self.assertIn("stack-" + stack, groups)
+        for runtime in catalog["RUNTIMES"]:
+            self.assertIn("runtime-" + runtime, groups)
+            self.assertEqual(groups["runtime-" + runtime], [runtime])
+
+    def test_linux_tools_json_overrides_take_precedence_by_include_order(self):
+        stack_install = load(SHARED / "stack-install.py", "stack_install")
+        catalog = stack_install.load_catalog(CATALOG)
+        config, _ = stack_install.render_config(DOTFILES, {"CODER_OMNI_STACKS": ""}, catalog, SHARED)
+        includes = config["$include"]
+        self.assertTrue(includes[-1].endswith("linux-tools.json"), includes)
+        self.assertTrue(includes[0].endswith("settings.d/tools.json"), includes)
 
 
 if __name__ == "__main__":
