@@ -67,10 +67,12 @@ def validate_llm(llm):
 
 
 def validate_agent(agent):
-    object_keys("agent", agent, ("kind", "acp_server", "acp_command", "acp_model"))
+    object_keys("agent", agent, ("kind", "acp_server", "acp_command", "acp_model", "system_message_suffix"))
     kind = agent.get("kind")
     if kind is not None and kind not in AGENT_KINDS:
         fail("agent.kind must be one of %s" % ", ".join(AGENT_KINDS))
+    if "system_message_suffix" in agent:
+        as_text("agent.system_message_suffix", agent["system_message_suffix"])
     if "acp_server" in agent and agent["acp_server"] not in ACP_SERVERS:
         fail("agent.acp_server must be one of %s" % ", ".join(ACP_SERVERS))
     if "acp_command" in agent:
@@ -375,6 +377,11 @@ def apply_agent_settings(api, profile, secret, settings):
     for key in ("acp_server", "acp_command", "acp_model"):
         if key in agent and settings.get(key) != agent[key]:
             diff[key] = agent[key]
+    suffix = agent.get("system_message_suffix")
+    if suffix is not None and agent.get("kind", settings.get("agent_kind")) == "openhands":
+        context = settings.get("agent_context") or {}
+        if context.get("system_message_suffix") != suffix:
+            diff["agent_context"] = {"system_message_suffix": suffix}
     if not diff:
         print("settings unchanged")
         return
@@ -384,6 +391,26 @@ def apply_agent_settings(api, profile, secret, settings):
         current = api.json_call("GET", "/api/settings", headers={"X-Expose-Secrets": "plaintext"})
         settings.clear()
         settings.update(current.get("agent_settings") or {})
+
+
+def apply_agent_profiles(api, profile):
+    suffix = (profile.get("agent") or {}).get("system_message_suffix")
+    if suffix is None:
+        return
+    listing = api.json_call("GET", "/api/agent-profiles")
+    changed = []
+    for entry in listing.get("profiles") or []:
+        if entry.get("agent_kind", "openhands") != "openhands":
+            continue
+        name = entry["name"]
+        detail = api.json_call("GET", "/api/agent-profiles/%s" % name)
+        stored = detail.get("profile") or {}
+        if stored.get("system_message_suffix") == suffix:
+            continue
+        stored["system_message_suffix"] = suffix
+        api.json_call("POST", "/api/agent-profiles/%s" % name, stored)
+        changed.append(name)
+    print("agent_profiles applied: %s" % (", ".join(changed) if changed else "none changed"))
 
 
 def declared_secret(profile, secret, name):
@@ -574,6 +601,7 @@ def main(argv):
         current = api.json_call("GET", "/api/settings", headers={"X-Expose-Secrets": "plaintext"})
         settings = current.get("agent_settings") or {}
     apply_agent_settings(api, profile, secret, settings)
+    apply_agent_profiles(api, profile)
     apply_secrets(api, profile, secret)
     apply_mcp_servers(api, profile, secret, settings)
     apply_skills(api, profile)

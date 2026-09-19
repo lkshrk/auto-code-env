@@ -114,6 +114,7 @@ Every section is optional. Unknown sections and unknown keys are refused.
 | `acp_server` | `"claude-code"`, `"codex"`, `"gemini-cli"`, `"custom"` | ACP backend |
 | `acp_command` | string or array of strings | executable and arguments |
 | `acp_model` | string or null | model the ACP backend should use |
+| `system_message_suffix` | string | text appended to the OpenHands system prompt; also written to every stored `openhands` agent profile, ignored for `acp` |
 
 Any `acp_*` key requires `kind` to be `"acp"`.
 

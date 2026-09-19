@@ -1,4 +1,7 @@
 {
+  "agent": {
+    "system_message_suffix": "Never add a Co-authored-by trailer or any other agent attribution to commit messages. Commit with the git identity that is already configured."
+  },
   "secrets": {
     "LITELLM_API": {
       "item": "e11c580d-59d0-4b50-a932-bcde5c4e1b57",
