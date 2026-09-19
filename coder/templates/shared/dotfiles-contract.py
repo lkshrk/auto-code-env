@@ -7,17 +7,17 @@ import tempfile
 
 
 def verify(repo):
-    for name in ("setup-coder-components.sh", "scripts/install-omni-latest.sh", "scripts/volatile-dots.sh"):
+    for name in ("setup-coder-dots.sh", "scripts/volatile-dots.sh"):
         subprocess.run(["bash", "-n", str(repo / name)], check=True, capture_output=True)
-    for name in ("coder-components", "coder-core", "coder-client-config", "coder-neovim"):
+    for name in ("coder-dots", "coder-core", "coder-client-config"):
         source = repo / "scripts" / (name + ".py")
         compile(source.read_text(), str(source), "exec")
-    subprocess.run(["bash", str(repo / "setup-coder-components.sh"), "--print-config"],
+    subprocess.run(["bash", str(repo / "setup-coder-dots.sh"), "--print-config"],
                    check=True, capture_output=True, text=True)
-    result = subprocess.run(["python3", str(repo / "scripts/coder-components.py"), "--contract"],
+    result = subprocess.run(["python3", str(repo / "scripts/coder-dots.py"), "--contract"],
                             check=True, capture_output=True, text=True)
     contract = json.loads(result.stdout)
-    if contract["version"] != 1 or not contract["required_commands"]:
+    if contract["version"] != 1:
         raise ValueError("unsupported dotfiles component contract")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)

@@ -92,78 +92,29 @@ class ComponentsTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(path.exists())
 
-    def test_omni_required_tools_flattens_and_dedupes_groups(self):
-        config = {"groups": [
-            {"name": "component-base", "tools": ["git", "zsh"]},
-            {"name": "runtime-go", "tools": ["go"]},
-            {"name": "component-tools", "tools": ["gopls", "git"]},
-            {"name": "component-clients", "dots": [{"name": "claude"}]},
-        ]}
-        self.assertEqual(components.omni_required_tools(config), ["git", "zsh", "go", "gopls"])
-
-    def test_check_omni_tools_uses_real_subprocess_against_fake_omni(self):
-        # A real executable subprocess is used (not a Python-level mock) to
-        # exercise the actual --config file handoff and JSON parsing path,
-        # matching this repository's real-code-path testing preference. The
-        # fake only stands in for the omni binary itself, whose real
-        # behavior is separately verified against actual Coder workspaces.
+    def test_check_action_only_checks_docker_when_enabled(self):
+        # Tool readiness is install-stacks.py's own final_check()'s job now
+        # (see components.py's module docstring comment): the "check" action
+        # here only re-verifies docker-engine reachability, a genuine live
+        # daemon check that can't be folded into a package-install state.
         with tempfile.TemporaryDirectory() as directory:
-            fake_omni = Path(directory) / "omni"
-            fake_omni.write_text(
-                "#!/usr/bin/env python3\n"
-                "import json, sys\n"
-                "config = json.load(open(sys.argv[sys.argv.index('--config') + 1]))\n"
-                "assert sys.argv[-3:] == ['tools', 'list', '--format'] or sys.argv[-1] == 'json'\n"
-                "names = [t for g in config['groups'] for t in g.get('tools', [])]\n"
-                "report = [{'name': n, 'installed': n != 'missing-tool'} for n in names]\n"
-                "print(json.dumps(report))\n"
-            )
-            fake_omni.chmod(0o755)
-            config = {"groups": [{"name": "component-base", "tools": ["git", "missing-tool"]}]}
-            result = components.check_omni_tools(config, ["git", "missing-tool"], omni_binary=str(fake_omni))
-            self.assertEqual(result, {"git": True, "missing-tool": False})
-
-    def test_check_omni_tools_treats_absent_report_entry_as_not_installed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            fake_omni = Path(directory) / "omni"
-            fake_omni.write_text("#!/usr/bin/env python3\nprint('[]')\n")
-            fake_omni.chmod(0o755)
-            result = components.check_omni_tools({"groups": []}, ["never-reported"], omni_binary=str(fake_omni))
-            self.assertEqual(result, {"never-reported": False})
-
-    def test_check_omni_tools_raises_on_nonzero_exit(self):
-        with tempfile.TemporaryDirectory() as directory:
-            fake_omni = Path(directory) / "omni"
-            fake_omni.write_text("#!/usr/bin/env sh\necho boom >&2\nexit 1\n")
-            fake_omni.chmod(0o755)
-            with self.assertRaises(ValueError):
-                components.check_omni_tools({"groups": []}, ["git"], omni_binary=str(fake_omni))
-
-    def test_resolved_omni_config_calls_dotfiles_resolver_with_real_subprocess(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Path(directory)
-            (repo / "scripts").mkdir()
-            (repo / "scripts" / "coder-components.py").write_text(
-                "#!/usr/bin/env python3\n"
-                "import json, os\n"
-                "print(json.dumps({'groups': [{'name': 'component-base', 'tools': ['git']}], "
-                "'stacks_seen': os.environ.get('CODER_OMNI_STACKS', '')}))\n"
-            )
-            env = {"PATH": os.environ["PATH"], "CODER_OMNI_STACKS": "go,python"}
-            result = components.resolved_omni_config(str(repo), env)
-            self.assertEqual(result["stacks_seen"], "go,python")
-            self.assertEqual(components.omni_required_tools(result), ["git"])
-
-    def test_resolved_omni_config_raises_on_resolver_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Path(directory)
-            (repo / "scripts").mkdir()
-            (repo / "scripts" / "coder-components.py").write_text(
-                "#!/usr/bin/env python3\nimport sys\nprint('bad stacks', file=sys.stderr)\nsys.exit(1)\n"
-            )
+            path = Path(directory) / "ready.json"
             env = {"PATH": os.environ["PATH"]}
-            with self.assertRaises(ValueError):
-                components.resolved_omni_config(str(repo), env)
+            result = subprocess.run([sys.executable, str(SCRIPT), "check", "--report", str(path)], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(path.read_text())
+            self.assertEqual(report["checks"], {})
+            self.assertTrue(report["ready"])
+
+    def test_check_action_reports_docker_engine_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ready.json"
+            env = {"PATH": os.environ["PATH"], "CODER_ENABLE_DIND": "1"}
+            result = subprocess.run([sys.executable, str(SCRIPT), "check", "--report", str(path)], env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            report = json.loads(path.read_text())
+            self.assertFalse(report["checks"]["docker-engine"])
+            self.assertFalse(report["ready"])
 
 
 if __name__ == "__main__":

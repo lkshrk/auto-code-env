@@ -88,7 +88,7 @@ variable "mcp_url" {
 
 variable "omni_version" {
   type    = string
-  default = "0.10.16"
+  default = "0.11.1"
 
   validation {
     condition     = can(regex("^v?[0-9]+\\.[0-9]+\\.[0-9]+$", var.omni_version))
@@ -244,18 +244,31 @@ locals {
     ${file("${path.module}/shared/prepare-dotfiles.sh")}
 
     export CODER_DOTFILES_REVISION=$(git -C "$CODER_DOTFILES_SOURCE_DIR" rev-parse HEAD)
-    if [ ! -f "$CODER_DOTFILES_SOURCE_DIR/setup-coder-components.sh" ]; then
+    if [ ! -f "$CODER_DOTFILES_SOURCE_DIR/setup-coder-dots.sh" ]; then
       printf '%s\n' "Composable setup requires updated dotfiles. Update the preserved checkout at $CODER_DOTFILES_SOURCE_DIR explicitly." >&2
       exit 1
     fi
     mkdir -p "$HOME/.local/state/coder-environment"
-    printf '%s' '${base64encode(file("${path.module}/shared/catalog.json"))}' | base64 --decode > "$HOME/.local/state/coder-environment/catalog.json"
+    export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.krew/bin:$HOME/.local/share/pnpm:$HOME/.local/share/pnpm/bin:$PATH"
     printf '%s' '${base64encode(file("${path.module}/shared/dotfiles-contract.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/dotfiles-contract.py"
     python3 "$HOME/.local/state/coder-environment/dotfiles-contract.py" "$CODER_DOTFILES_SOURCE_DIR"
     printf '%s' '${base64encode(file("${path.module}/shared/components.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/components.py"
     python3 "$HOME/.local/state/coder-environment/components.py" validate --report "$HOME/.local/state/coder-environment/readiness.json"
     python3 "$HOME/.local/state/coder-environment/components.py" wait-repositories
-    bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder-components.sh"
+
+    # Stack/tool catalog + install: owned by this repository, not dotfiles
+    # (see stack-install.py). Runs before dotfiles' own script so `omni` is
+    # already on PATH by the time it gets there.
+    printf '%s' '${base64encode(file("${path.module}/shared/catalog.json"))}' | base64 --decode > "$HOME/.local/state/coder-environment/catalog.json"
+    printf '%s' '${base64encode(file("${path.module}/shared/linux-tools.json"))}' | base64 --decode > "$HOME/.local/state/coder-environment/linux-tools.json"
+    printf '%s' '${base64encode(file("${path.module}/shared/coder-neovim.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/coder-neovim.py"
+    printf '%s' '${base64encode(file("${path.module}/shared/stack-install.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/stack-install.py"
+    printf '%s' '${base64encode(file("${path.module}/shared/install-stacks.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/install-stacks.py"
+    python3 "$HOME/.local/state/coder-environment/install-stacks.py"
+
+    # Personal dots only from here: language stacks/tool packages are already
+    # installed above.
+    bash "$CODER_DOTFILES_SOURCE_DIR/setup-coder-dots.sh"
 
     # No browser preinstall: shiplight and each project's @playwright/test
     # fetch their own pinned revision on demand into ~/.cache/ms-playwright on
@@ -263,7 +276,6 @@ locals {
     # base image — install-deps covers those, version-stable. bun-first (omni
     # ts stack provides it; its shims are not on this script's PATH).
     if [ "$CODER_ENABLE_PLAYWRIGHT" = "1" ]; then
-      export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
       if command -v bun >/dev/null 2>&1; then
         bunx playwright@1.63.0 install-deps chromium
       else
@@ -271,7 +283,6 @@ locals {
       fi
     fi
 
-    export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.krew/bin:$HOME/.local/share/pnpm:$HOME/.local/share/pnpm/bin:$PATH"
     python3 "$HOME/.local/state/coder-environment/components.py" check
     ${module.openhands.startup_script}
     python3 "$HOME/.local/state/coder-environment/components.py" check --report "$HOME/.local/state/coder-environment/readiness.json"
