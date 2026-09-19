@@ -38,8 +38,8 @@ openhands-overlay settings --file /etc/openhands/profile-common.json --file /etc
 | `retired_secrets` | a later file replaces the list |
 
 `common.json` holds what every host shares. A host profile such as
-`towerr.json` holds only what is specific to that host, which today is `llm`,
-`agent`, and `git_sync`. Each file is validated on its own, then the merged
+`orc.json` holds only what is specific to that host, which today is
+`agent.kind`. Each file is validated on its own, then the merged
 result is checked for cross-section references.
 
 `retired_secrets` explicitly names stored secrets to delete after all profile
@@ -134,8 +134,9 @@ gateway requires `Bearer ` in `x-litellm-api-key`, and the dotfiles `apm.yml`
 expects the `LITELLM_API` variable to carry that prefix already.
 
 `common.json` declares `LITELLM_API`, which the MCP header below also consumes.
-`towerr.json` adds `GH_TOKEN` from the worker's GitHub PAT so `gh` and the GitHub
-API work inside a conversation; layering merges the two into one set.
+A host profile may add further secrets the same way; layering merges the
+files into one set. `orc` gets `GH_TOKEN` from its HelmRelease environment
+instead.
 
 ### `skills`
 
