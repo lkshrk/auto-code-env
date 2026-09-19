@@ -1,7 +1,7 @@
 {
   "name": "pr-review",
-  "model": "standard-auto",
-  "timeout": 900,
+  "agent_profile": "default",
+  "timeout": 1800,
   "keep_alive": false,
   "enabled": true,
   "trigger": {

@@ -5,6 +5,7 @@ import argparse
 import http.server
 import json
 import threading
+import uuid
 
 LOCK = threading.Lock()
 
@@ -91,10 +92,11 @@ def route(state, method, path, body, expose):
         profiles = state.setdefault("agent_profiles", {})
         if name not in profiles:
             return 404, json.dumps({"detail": "Agent profile '%s' not found" % name})
-        return 200, json.dumps({"name": name, "profile": profiles[name]})
+        # Shape observed on Agent Canvas 1.20.0: {"name", "profile"}, profile.id a 36-char UUID string
+        return 200, json.dumps({"name": name, "profile": {"id": str(uuid.uuid5(uuid.NAMESPACE_URL, name)), **profiles[name]}})
     if method == "POST" and path.startswith("/api/agent-profiles/"):
         name = path.rsplit("/", 1)[1]
-        state.setdefault("agent_profiles", {})[name] = dict(body)
+        state.setdefault("agent_profiles", {})[name] = {k: v for k, v in body.items() if k != "id"}
         return 201, json.dumps({"name": name, "message": "saved"})
     if method == "GET" and path == "/api/skills/installed":
         return 200, json.dumps({"skills": state["skills"]})

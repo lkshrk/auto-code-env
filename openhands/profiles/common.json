@@ -26,6 +26,31 @@
       "source": "https://github.com/OpenHands/extensions.git",
       "ref": "main",
       "repo_path": "skills/iterate"
+    },
+    {
+      "source": "https://github.com/OpenHands/extensions.git",
+      "ref": "main",
+      "repo_path": "skills/code-review"
+    },
+    {
+      "source": "https://github.com/OpenHands/extensions.git",
+      "ref": "main",
+      "repo_path": "skills/github-pr-review"
+    },
+    {
+      "source": "https://github.com/OpenHands/extensions.git",
+      "ref": "main",
+      "repo_path": "skills/github-agents-md-maintainer"
+    },
+    {
+      "source": "https://github.com/OpenHands/extensions.git",
+      "ref": "main",
+      "repo_path": "skills/linear-triage"
+    },
+    {
+      "source": "https://github.com/OpenHands/extensions.git",
+      "ref": "main",
+      "repo_path": "skills/upstream-fork-sync"
     }
   ],
   "mcp_servers": {

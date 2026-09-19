@@ -15,10 +15,14 @@ one run that posts at most one review.
 ## How the policy composes
 
 `prompt.md` handles orchestration: reading the event, skip rules, idempotency, fetching
-the head commit, posting exactly one COMMENT review, hard limits. The review
-methodology itself comes from OpenHands' bundled `code-review` skill (`/codereview`):
-data structures, complexity, pragmatism, breaking-change risk, security, testing
-evidence, dependency checks, risk assessment, verdict.
+the head commit and the existing review context, posting exactly one COMMENT review,
+hard limits. The methodology and the posting format come from two registry skills that
+`profiles/common.json` installs from `OpenHands/extensions`, the same pair the registry's
+`pr-review` GitHub Action uses: `code-review` (`/codereview`: data structures,
+complexity, pragmatism, breaking-change risk, security, testing evidence, dependency
+checks, risk assessment, verdict) and `github-pr-review` (`/github-pr-review`: one
+review API call, line-anchored comments with 🔴/🟠/🟡 priority labels, suggestion
+blocks, no nits). Each review ends with a 👍/👎 feedback footer.
 
 A repository overrides the reviewer by committing
 `.agents/skills/custom-codereview-guide.md` on the branch under review. That is the
@@ -43,6 +47,20 @@ or focus the review; it can never lift a hard limit (no pushes, no merges, no ap
 never leak the token). `AGENTS.md` at the repo root is read as well, and the PR is held
 to the conventions it states.
 
+## Run budget
+
+`timeout` is 1800 seconds. At 900 the agent-server killed reviews mid-run with
+`Command timed out after 900 seconds`, six of twelve runs on 2026-09-19. A review now
+fetches the existing threads, downloads the head tarball and reads the changed files, so
+one review simply costs more than it used to: the first run under the new budget took
+about eight minutes, comfortably over the old ceiling.
+
+A longer budget is not a fix for load. Runs still fan out, three reviews landed on head
+`d6ec0df` alone, and each resident run shares the pod's 2-core limit, so a higher ceiling
+keeps them resident longer rather than giving them more CPU. What actually removes that
+load is deduplicating deliveries, by delivery id or a lease per repository, pull request
+and head, at the service layer rather than in the prompt.
+
 ## Triggers and opt-outs
 
 - Automatic on `pull_request` `opened`, `synchronize`, `ready_for_review` and `reopened`.
@@ -63,7 +81,9 @@ that SHA was already reviewed.
 OPENHANDS_SESSION_API_KEY=... python3 openhands/automations/common/apply.py openhands/automations/orc/pr-review
 ```
 
-`common/apply.py` reads `automation.json`, injects `prompt.md` as the `prompt` field, then looks
+`common/apply.py` reads `automation.json`, injects `prompt.md` as the `prompt` field, resolves
+`agent_profile` (a stored agent profile name; runs then use that profile's model, MCP
+servers and condenser, so the spec carries no `model` of its own) to its id, then looks
 for an existing automation named `pr-review` via `GET /api/automation/v1`. It updates it
 with `PATCH /api/automation/v1/{id}` when found, otherwise creates it with
 `POST /api/automation/v1/preset/prompt`. The service rebuilds the preset tarball itself
@@ -71,5 +91,6 @@ whenever the prompt changes, so a re-apply is enough to roll out a policy edit.
 
 `OPENHANDS_URL` overrides the base URL, default
 `http://openhands.ai.svc.cluster.local:8000`. `--dry-run` prints the request body without
-calling the API. `--file automation.final.json` applies the
+calling the API, with `agent_profile` shown as the `agent_profile_id` placeholder the
+deploy path reads from the API. `--file automation.final.json` applies the
 ungated variant once rollout is done.

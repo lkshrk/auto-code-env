@@ -7,9 +7,14 @@ for profile in "$repo_root"/openhands/profiles/*.json; do
   python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$profile"
 done
 
-python3 - "$repo_root/openhands/profiles/common.json" <<'PY'
-import json, re, sys
+python3 - "$repo_root/openhands/profiles/common.json" "$repo_root" <<'PY'
+import json, os, re, sys
 profile = json.load(open(sys.argv[1]))
+for skill in profile.get("skills", []):
+    repo_path = skill.get("repo_path")
+    assert repo_path and re.fullmatch(r"[A-Za-z0-9_./-]+", repo_path) and ".." not in repo_path, skill
+    if skill["source"].endswith("/auto-code-env.git"):
+        assert os.path.isfile(os.path.join(sys.argv[2], repo_path, "SKILL.md")), skill
 assert set(profile) == {"agent", "secrets", "skills", "mcp_servers", "retired_secrets"}, sorted(profile)
 assert set(profile["agent"]) == {"system_message_suffix"}, sorted(profile["agent"])
 assert profile["retired_secrets"] == ["CODER_SESSION_TOKEN"], profile["retired_secrets"]
