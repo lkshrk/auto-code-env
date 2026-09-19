@@ -79,6 +79,23 @@ def route(state, method, path, body, expose):
             return 404, json.dumps({"detail": "MCP server '%s' was not found" % name})
         merge(servers[name], body)
         return 200, json.dumps(settings_response(state, None))
+    if method == "GET" and path == "/api/agent-profiles":
+        profiles = state.setdefault("agent_profiles", {})
+        summaries = [
+            {"name": name, "agent_kind": profile.get("agent_kind", "openhands")}
+            for name, profile in sorted(profiles.items())
+        ]
+        return 200, json.dumps({"profiles": summaries, "active_agent_profile_id": None})
+    if method == "GET" and path.startswith("/api/agent-profiles/"):
+        name = path.rsplit("/", 1)[1]
+        profiles = state.setdefault("agent_profiles", {})
+        if name not in profiles:
+            return 404, json.dumps({"detail": "Agent profile '%s' not found" % name})
+        return 200, json.dumps({"name": name, "profile": profiles[name]})
+    if method == "POST" and path.startswith("/api/agent-profiles/"):
+        name = path.rsplit("/", 1)[1]
+        state.setdefault("agent_profiles", {})[name] = dict(body)
+        return 201, json.dumps({"name": name, "message": "saved"})
     if method == "GET" and path == "/api/skills/installed":
         return 200, json.dumps({"skills": state["skills"]})
     if method == "POST" and path == "/api/skills/install":

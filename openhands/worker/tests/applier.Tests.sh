@@ -45,6 +45,10 @@ fresh_state() {
     "llm": {"model": "stale/model", "base_url": "https://stale.example/v1", "api_key": "stale-key"},
     "mcp_config": {}
   },
+  "agent_profiles": {
+    "default": {"agent_kind": "openhands", "llm_profile_ref": "default", "condenser": {"condenser_kind": "no_op"}},
+    "codex": {"agent_kind": "acp", "acp_server": "codex"}
+  },
   "secrets": {},
   "skills": [],
   "git_sync": {"enabled": false, "repo_url": "", "branch": "common", "path": "common/automations", "interval_seconds": 900}
@@ -69,6 +73,7 @@ run() {
 cat > /tmp/common.json <<'EOF'
 {
   "llm": {"model": "common/model", "base_url": "https://common.example/v1"},
+  "agent": {"system_message_suffix": "No trailers."},
   "secrets": {
     "ANTHROPIC_API_KEY": {"item": "77777777-7777-7777-7777-777777777777"},
     "CODER_SESSION_TOKEN": {"item": "99999999-9999-9999-9999-999999999999"},
@@ -131,7 +136,8 @@ LLM_API_KEY 66666666-6666-6666-6666-666666666666'
 
 test ! -e /tmp/log/api
 applied=$(run /tmp/common.json /tmp/host.json)
-printf '%s\n' "$applied" | grep -Fq 'settings applied: llm'
+printf '%s\n' "$applied" | grep -Fq 'settings applied: agent_context, llm'
+printf '%s\n' "$applied" | grep -Fq 'agent_profiles applied: default'
 printf '%s\n' "$applied" | grep -Fq 'secrets applied: ANTHROPIC_API_KEY, CODER_SESSION_TOKEN, LITELLM_API'
 printf '%s\n' "$applied" | grep -Fq 'mcp_servers applied: coder, litellm-tools, openaiDeveloperDocs'
 printf '%s\n' "$applied" | grep -Fq 'skills applied: agent-sandbox-deploy, common-only'
@@ -146,6 +152,15 @@ agent = state['agent_settings']
 assert agent['llm']['model'] == 'openai/gpt-5.6-sol', agent
 assert agent['llm']['base_url'] == 'https://api.ai.h-cloud.lan/v1', agent
 assert agent['llm']['api_key'] == 'sk-llm-FIXTUREKEY111111111111', agent
+assert agent['agent_context'] == {'system_message_suffix': 'No trailers.'}, agent
+profiles = state['agent_profiles']
+assert profiles['default'] == {
+    'agent_kind': 'openhands',
+    'llm_profile_ref': 'default',
+    'condenser': {'condenser_kind': 'no_op'},
+    'system_message_suffix': 'No trailers.',
+}, profiles
+assert profiles['codex'] == {'agent_kind': 'acp', 'acp_server': 'codex'}, profiles
 servers = agent['mcp_config']
 assert sorted(servers) == ['coder', 'litellm-tools', 'openaiDeveloperDocs'], servers
 assert servers['litellm-tools']['headers'] == {'x-litellm-api-key': 'Bearer sk-llm-FIXTUREKEY111111111111'}, servers
@@ -174,6 +189,7 @@ PY
 : > /tmp/log/api
 repeated=$(run /tmp/common.json /tmp/host.json)
 printf '%s\n' "$repeated" | grep -Fxq 'settings unchanged'
+printf '%s\n' "$repeated" | grep -Fq 'agent_profiles applied: none changed'
 printf '%s\n' "$repeated" | grep -Fq 'secrets applied: none changed'
 printf '%s\n' "$repeated" | grep -Fq 'mcp_servers applied: none changed'
 printf '%s\n' "$repeated" | grep -Fq 'skills applied: none changed'
@@ -233,6 +249,8 @@ mkdir -p /tmp/state
 fresh_state
 : > /tmp/log/api
 orc=$(run /src/openhands/profiles/common.json /src/openhands/profiles/orc.json)
+printf '%s\n' "$orc" | grep -Fxq 'settings applied: agent_context'
+printf '%s\n' "$orc" | grep -Fq 'agent_profiles applied: default'
 printf '%s\n' "$orc" | grep -Fq 'secrets applied: LITELLM_API'
 printf '%s\n' "$orc" | grep -Fq 'mcp_servers applied: litellm-tools, openaiDeveloperDocs'
 printf '%s\n' "$orc" | grep -Fq 'skills applied: agent-sandbox-deploy, coder-workspaces'
@@ -243,6 +261,9 @@ import json
 state = json.load(open('/tmp/api/state.json'))
 assert state['agent_settings']['agent_kind'] == 'openhands', state['agent_settings']
 assert state['agent_settings']['llm']['model'] == 'stale/model', state['agent_settings']
+assert 'Co-authored-by' in state['agent_settings']['agent_context']['system_message_suffix'], state['agent_settings']
+assert 'Co-authored-by' in state['agent_profiles']['default']['system_message_suffix'], state['agent_profiles']
+assert 'system_message_suffix' not in state['agent_profiles']['codex'], state['agent_profiles']
 assert sorted(state['secrets']) == ['LITELLM_API'], state['secrets']
 assert 'coder' not in state['agent_settings']['mcp_config']
 PY
