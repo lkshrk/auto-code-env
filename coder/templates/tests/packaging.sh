@@ -24,7 +24,6 @@ class PackagingTests(unittest.TestCase):
         self.output = self.root / "package"
         self.write("common.tf", 'module "openhands" { source = "./modules/openhands" }\n')
         self.write("backends/kubernetes.tf", 'locals { backend_kind = "kubernetes" }\n')
-        self.write("backends/docker.tf", 'locals { backend_kind = "docker" }\n')
         self.write("dev/main.tf", "locals { repos = [] }\n")
         self.write("dev/variables.tf", 'variable "example" { default = "ok" }\n')
         self.write("dev/README.md", "not packaged\n")
@@ -52,26 +51,25 @@ class PackagingTests(unittest.TestCase):
         self.package()
         self.assertEqual(
             {str(path.relative_to(self.output)) for path in self.output.rglob("*") if path.is_file()},
-            {"main.tf", "variables.tf", "common.tf", "docker.tf", "backend", "environment.auto.tfvars.json", "shared/nested/bootstrap.sh",
+            {"main.tf", "variables.tf", "common.tf", "kubernetes.tf", "backend", "environment.auto.tfvars.json", "shared/nested/bootstrap.sh",
              "modules/openhands/main.tf", "modules/openhands/nested/config.json"},
         )
         for name in ("main.tf", "variables.tf"):
             self.assertEqual((self.output / name).read_bytes(), (self.source / name).read_bytes())
         self.assertEqual((self.output / "common.tf").read_bytes(), (self.templates / "common.tf").read_bytes())
-        self.assertEqual((self.output / "backend").read_text(), "docker\n")
+        self.assertEqual((self.output / "backend").read_text(), "kubernetes\n")
         self.assertEqual((self.output / "modules/openhands/nested/config.json").read_bytes(), (self.modules / "openhands/nested/config.json").read_bytes())
         self.assertEqual((self.output / "shared/nested/bootstrap.sh").stat().st_mode & 0o777, 0o755)
         (self.source / "main.tf").write_text("changed after packaging\n")
         self.assertEqual((self.output / "main.tf").read_text(), "locals { repos = [] }\n")
         self.assertFalse((self.source / "backend").exists())
 
-    def test_explicit_docker_backend(self):
-        self.write("dev/backend", " docker\n")
+    def test_explicit_kubernetes_backend(self):
+        self.write("dev/backend", " kubernetes\n")
         self.package()
-        self.assertTrue((self.output / "docker.tf").is_file())
-        self.assertFalse((self.output / "kubernetes.tf").exists())
-        self.assertEqual((self.output / "backend").read_text(), " docker\n")
-        self.assertEqual((self.output / "docker.tf").read_bytes(), (self.templates / "backends/docker.tf").read_bytes())
+        self.assertTrue((self.output / "kubernetes.tf").is_file())
+        self.assertEqual((self.output / "backend").read_text(), " kubernetes\n")
+        self.assertEqual((self.output / "kubernetes.tf").read_bytes(), (self.templates / "backends/kubernetes.tf").read_bytes())
 
     def test_interpreter_caches_are_not_packaged(self):
         self.write("shared/__pycache__/components.cpython-313.pyc", "cache")
@@ -88,14 +86,14 @@ class PackagingTests(unittest.TestCase):
         self.assertFalse((self.output / "modules").exists())
 
     def test_invalid_backend_markers(self):
-        for marker in ("", "../common", "docker\nkubernetes", "dock er", "/tmp/backend", "missing"):
+        for marker in ("", "../common", "kubernetes\ndocker", "kube rnetes", "/tmp/backend", "missing", "docker"):
             with self.subTest(marker=marker):
                 self.write("dev/backend", marker)
                 self.package(success=False)
                 self.assertFalse(self.output.exists())
 
     def test_reserved_file_collisions(self):
-        for name in ("common.tf", "docker.tf"):
+        for name in ("common.tf", "kubernetes.tf"):
             with self.subTest(name=name):
                 collision = self.write(f"dev/{name}", "collision\n")
                 self.package(success=False)
@@ -103,7 +101,7 @@ class PackagingTests(unittest.TestCase):
                 collision.unlink()
 
     def test_missing_sources(self):
-        for path in (self.source / "main.tf", self.templates / "common.tf", self.templates / "backends/docker.tf", self.templates / "shared"):
+        for path in (self.source / "main.tf", self.templates / "common.tf", self.templates / "backends/kubernetes.tf", self.templates / "shared"):
             with self.subTest(path=path):
                 moved = path.with_name(path.name + ".hidden")
                 path.rename(moved)
@@ -142,9 +140,9 @@ class PackagingTests(unittest.TestCase):
 
 
     def test_dev_backend_targets_have_fixed_composable_defaults(self):
-        marker = self.write("dev/backend", "docker\n")
+        marker = self.write("dev/backend", "kubernetes\n")
         self.write("dev/secrets.auto.tfvars.json", '{"synthetic_secret": "must-not-copy"}')
-        for backend in ("docker", "kubernetes"):
+        for backend in ("kubernetes",):
             with self.subTest(backend=backend):
                 self.output = self.root / f"dev-{backend}"
                 self.package("--backend", backend)
@@ -152,12 +150,12 @@ class PackagingTests(unittest.TestCase):
                 self.assertEqual({p.name for p in self.output.glob("*.tf")}, {"main.tf", "variables.tf", "common.tf", backend + ".tf"})
                 self.assertEqual(json.loads((self.output / "environment.auto.tfvars.json").read_text()), {"environment_mode_default": "composable"})
                 self.assertFalse((self.output / "secrets.auto.tfvars.json").exists())
-        self.assertEqual(marker.read_text(), "docker\n")
+        self.assertEqual(marker.read_text(), "kubernetes\n")
 
     def test_obsolete_sources_cannot_be_packaged(self):
         self.source.rename(self.templates / "legacy")
         self.source = self.templates / "legacy"
-        for options in ((), ("--backend", "docker"), ("--backend", "kubernetes")):
+        for options in ((), ("--backend", "kubernetes")):
             with self.subTest(options=options):
                 self.package(*options, success=False)
                 self.assertFalse(self.output.exists())
@@ -165,7 +163,7 @@ class PackagingTests(unittest.TestCase):
     def test_repository_targets_package_dev_with_original_backend_resources(self):
         repo = SCRIPT.parents[2]
         catalog = json.loads((repo / "coder/targets.json").read_text())
-        self.assertEqual(set(catalog["targets"]), {"dev", "dev-kubernetes"})
+        self.assertEqual(set(catalog["targets"]), {"dev"})
         self.assertEqual({p.parent.name for p in (repo / "coder/templates").glob("*/main.tf")}, {"dev"})
         self.source = repo / "coder/templates/dev"
         for name, target in catalog["targets"].items():
@@ -190,7 +188,7 @@ class PackagingTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_invalid_backend_override_arguments(self):
-        for options in (("--backend", "../docker"), ("--backend", "unknown"), ("--backend",), ("--other", "docker")):
+        for options in (("--backend", "../kubernetes"), ("--backend", "unknown"), ("--backend", "docker"), ("--backend",), ("--other", "kubernetes")):
             with self.subTest(options=options):
                 self.package(*options, success=False)
                 self.assertFalse(self.output.exists())

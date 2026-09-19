@@ -13,10 +13,10 @@ def fail(message):
 
 
 if len(sys.argv) not in {3, 5}:
-    fail("Usage: package-template.sh TEMPLATE_DIR NEW_OUTPUT_DIR [--backend docker|kubernetes]")
+    fail("Usage: package-template.sh TEMPLATE_DIR NEW_OUTPUT_DIR [--backend kubernetes]")
 override = None
 if len(sys.argv) == 5:
-    if sys.argv[3] != "--backend" or sys.argv[4] not in {"docker", "kubernetes"}:
+    if sys.argv[3] != "--backend" or sys.argv[4] != "kubernetes":
         fail("Invalid backend override")
     override = sys.argv[4]
 
@@ -39,8 +39,8 @@ if output.resolve().is_relative_to(coder.resolve()):
     fail("Output must be outside the Coder source tree")
 
 marker = source / "backend"
-backend = override if override is not None else (marker.read_text().strip() if marker.exists() else "docker")
-if backend not in {"docker", "kubernetes"}:
+backend = override if override is not None else (marker.read_text().strip() if marker.exists() else "kubernetes")
+if backend != "kubernetes":
     fail("Invalid backend marker")
 
 files = [templates / "common.tf", templates / "backends" / f"{backend}.tf"]

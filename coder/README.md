@@ -12,11 +12,11 @@ coder/templates/
   shared/                scripts copied next to every template
   tests/                 static tests for shared/
   dev/main.tf            composable parameters and presets
-  dev/backend            default Docker backend marker
+  dev/backend            backend marker (kubernetes)
 ```
 
 The dev family is defined once in `templates/dev` and packaged using
-`targets.json`: `dev` uses Docker on towerr, and `dev-kubernetes` uses Kubernetes.
+`targets.json` as the single `dev` target on the Kubernetes backend.
 Tool stacks, repositories, agent clients, and presets are composable selections,
 not separate language or project templates. Obsolete template sources are no
 longer selectable or publishable from this repository. Existing published
@@ -29,60 +29,31 @@ Coder modules, the bootstrap, and the `coder` provider configuration.
 Everything that actually creates a workspace lives in `backends/<name>.tf`:
 the backend's provider, its storage, the workspace itself, and the
 docker-in-docker sidecar. Terraform accepts only one `required_providers`
-block per module, so that block lives in each backend file and declares `coder`
-alongside the backend's own provider.
+block per module, so that block lives in the backend file and declares `coder`
+alongside the backend's own provider. Only `kubernetes` exists today; the split
+stays so a second backend is a file, not a refactor.
 
 The target catalog explicitly selects the backend. The packager accepts only the
-`dev` definition; without an override it uses `dev/backend` (Docker also when
-no marker is present). CI copies exactly one backend file into each package,
-so each target sees only its own backend provider. Both targets share presets.
+`dev` definition and only the `kubernetes` backend (`dev/backend` marker or
+`--backend`). CI copies exactly one backend file into each package.
 
-The seam between the two halves is `local.backend_bootstrap`: every backend
+The seam between the two halves is `local.backend_bootstrap`: the backend
 file defines it and `common.tf` interpolates it into the agent startup script
 at a fixed position. The Kubernetes backend writes the in-cluster kubeconfig
-there; the Docker backend defines it empty. Backend files may read the shared
-locals from `common.tf`; `common.tf` must never reference a backend resource.
+there. Backend files may read the shared locals from `common.tf`; `common.tf`
+must never reference a backend resource.
 
-## Docker backend (towerr)
+## Desktop node (towerr)
 
-The `dev` target runs workspaces as Docker containers in a WSL2
-distribution on the Windows desktop instead of as pods in the cluster. The
-provisioner reaches that host's Docker API over mutual TLS.
-
-- `docker_host` (template variable, default `tcp://172.16.20.195:2376`) is the
-  daemon endpoint.
-- `docker_cert_path` (default `/etc/coder/docker-tls`) is the directory in the
-  coderd pod holding `ca.pem`, `cert.pem`, and `key.pem`. h-cloud mounts the
-  `coder-docker-tls` Secret there read-only.
-- The provider sets `disable_docker_daemon_check = true`, so template import
-  and `coder templates push` never contact the desktop. Only workspace start,
-  stop, and delete do.
-- With the desktop asleep or the distro stopped those three operations fail
-  with a provider connection error and leave no partial state. Clear the
-  workspace record with `coder delete --orphan <workspace>`; its containers and
-  volumes stay on the desktop until it comes back. Template pushes keep working
-  throughout.
-- The home volume carries `ignore_changes = all` and outlives a workspace
-  delete, matching the upstream registry template. Reclaim it on the desktop.
-- `/etc/ssl/lan/lan-ca.pem` is bind-mounted read-only from the distro for
-  `OMNI_OTEL_CA_PATH`, and the workspace images must already be pulled there.
-- With docker-in-docker enabled the workspace joins a private network with a
-  `docker:29-dind` sibling reachable as `docker`, TLS on
-  (`DOCKER_TLS_CERTDIR=/certs`); the workspace reads the generated client
-  certificate from the shared `/certs` volume.
-
-Desktop workspaces cannot mount cluster Secrets, so the host supplies them:
-`coder-worker-overlay secrets --env-id` writes `/etc/coder-worker/workspace.env`
-from a Vaultwarden item, the container bind-mounts it read-only at
-`/run/coder-worker/workspace.env`, and the entrypoint exports each `NAME=value`
-line before the agent starts. Populate it with the same names the Kubernetes
-backend sets (`LITELLM_API`, `GH_TOKEN`, `GITHUB_TOKEN`,
-`GITHUB_PERSONAL_ACCESS_TOKEN`). Values never pass through Coder or Terraform
-state; rotation is a SOPS edit for the cluster and a vault edit for the
-desktop, two places on purpose. Desktop workspaces still get no
-`<template>-workspace-env` (project-scoped, intentional) and no
-service-account token or kubeconfig. Per-user Claude and Codex credentials
-are Coder user secrets and work unchanged.
+There is no second backend for the Windows desktop any more. towerr runs the
+Talos worker `k8s-12` in a Hyper-V VM (h-cloud `talos/nodes/k8s-12.yaml.j2`),
+tainted `dedicated=desktop:NoSchedule`. The `dev` template's `location`
+parameter (`cluster` default, preset `desktop`) adds the matching node selector
+and toleration and switches the home PVC to `openebs-hostpath`, so the home
+lives on the VM's data disk and follows the node. While the desktop is off the
+node is NotReady, the pod is evicted, and `coder start` waits; nothing needs
+`--orphan`. Cluster Secrets, the service-account token and the kubeconfig are
+identical to any other workspace.
 
 ## CI
 
@@ -90,7 +61,7 @@ are Coder user secrets and work unchanged.
 `workflow_dispatch`.
 
 - Pull requests package affected catalog targets. Main pushes and manual runs
-  validate both catalog targets. No legacy selection or publication option exists.
+  validate every catalog target. No legacy selection or publication option exists.
 - Packages are built once and validated with pinned OpenTofu before publication.
 - Pushes to `main` validate only. Publication requires `workflow_dispatch` on
   `main` with `publish: true`.
@@ -161,7 +132,10 @@ providing:
   optional `env_from` source.
 - ConfigMap `lan-root-ca` (trust-manager Bundle target) with key `lan-root-ca.crt`, mounted at
   `/etc/ssl/lan/lan-ca.pem` for `OMNI_OTEL_CA_PATH`.
-- StorageClass `ceph-block` for the per-workspace home PVC.
+- StorageClass `ceph-block` for the per-workspace home PVC, and
+  `openebs-hostpath` for `location=desktop`.
+- Node `k8s-12` labelled `dedicated=desktop` and tainted
+  `dedicated=desktop:NoSchedule`; nothing else tolerates that taint.
 
 Per-user Claude and Codex credentials are Coder user secrets, not cluster
 secrets. Each user creates them once with `coder secret create`.

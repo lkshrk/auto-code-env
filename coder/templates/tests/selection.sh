@@ -90,14 +90,14 @@ class SelectionTests(unittest.TestCase):
         self.git("checkout", "--quiet", "topic")
         self.assertEqual(self.select("targets-changed", base, head), [])
 
-    def test_nested_dev_changes_select_both_backends(self):
+    def test_nested_dev_changes_select_all_targets(self):
         for path in ("backend", "variables.tf", "nested/config.json", "file with spaces", "\ncoder/modules/file"):
             with self.subTest(path=path):
                 base = self.git("rev-parse", "HEAD")
                 self.write(f"coder/templates/dev/{path}")
                 self.assertEqual(self.select("targets-changed", base, self.commit()), self.select("targets"))
 
-    def test_deleted_shared_file_selects_both_backends(self):
+    def test_deleted_shared_file_selects_all_targets(self):
         (self.root / "coder/templates/common.tf").unlink()
         self.assertEqual(self.select("targets-changed", self.base, self.commit()), self.select("targets"))
 
@@ -108,22 +108,21 @@ class SelectionTests(unittest.TestCase):
     def catalog(self):
         self.write("coder/templates/dev/main.tf")
         catalog = {"version": 1, "targets": {
-            "dev": {"source": "dev", "backend": "docker"},
-            "dev-kubernetes": {"source": "dev", "backend": "kubernetes"},
+            "dev": {"source": "dev", "backend": "kubernetes"},
         }}
         self.write("coder/targets.json", json.dumps(catalog))
         return catalog
 
-    def test_targets_are_two_packages_from_one_source(self):
+    def test_targets_are_one_package_from_one_source(self):
         self.catalog()
-        self.assertEqual(self.select("targets"), ["dev\tcoder/templates/dev\tdocker", "dev-kubernetes\tcoder/templates/dev\tkubernetes"])
+        self.assertEqual(self.select("targets"), ["dev\tcoder/templates/dev\tkubernetes"])
 
     def test_target_changes_exclude_legacy_catalog_by_default(self):
         self.catalog()
         base = self.commit()
         self.write("coder/templates/alpha/extra.tf")
         self.assertEqual(self.select("targets-changed", base, self.commit()), [])
-        for path in ("coder/templates/dev/main.tf", "coder/templates/common.tf", "coder/templates/backends/docker.tf", "coder/templates/shared/nested/setup.sh", "coder/modules/runtime/main.tf", "coder/scripts/example.sh", "coder/templates/tests/example.sh", ".github/workflows/coder-templates.yaml"):
+        for path in ("coder/templates/dev/main.tf", "coder/templates/common.tf", "coder/templates/backends/kubernetes.tf", "coder/templates/shared/nested/setup.sh", "coder/modules/runtime/main.tf", "coder/scripts/example.sh", "coder/templates/tests/example.sh", ".github/workflows/coder-templates.yaml"):
             with self.subTest(path=path):
                 base = self.git("rev-parse", "HEAD")
                 self.write(path, f"edited {path}\n")
@@ -132,16 +131,17 @@ class SelectionTests(unittest.TestCase):
     def test_target_catalog_change_selects_targets(self):
         catalog = self.catalog()
         base = self.commit()
-        catalog["targets"]["dev"]["backend"] = "kubernetes"
+        catalog["targets"]["dev-desktop"] = {"source": "dev", "backend": "kubernetes"}
         self.write("coder/targets.json", json.dumps(catalog))
         self.assertEqual(self.select("targets-changed", base, self.commit()), self.select("targets"))
 
     def test_invalid_target_catalogs_fail_closed(self):
         for catalog in ({"version": 2, "targets": {}}, {"version": 1, "targets": {}},
-                        {"version": 1, "targets": {"bad name": {"source": "dev", "backend": "docker"}}},
-                        {"version": 1, "targets": {"target": {"source": "alpha", "backend": "docker"}}},
+                        {"version": 1, "targets": {"bad name": {"source": "dev", "backend": "kubernetes"}}},
+                        {"version": 1, "targets": {"target": {"source": "alpha", "backend": "kubernetes"}}},
                         {"version": 1, "targets": {"target": {"source": "dev", "backend": "unknown"}}},
-                        {"version": 1, "targets": {"target": {"source": "dev", "backend": "docker", "extra": True}}}):
+                        {"version": 1, "targets": {"target": {"source": "dev", "backend": "docker"}}},
+                        {"version": 1, "targets": {"target": {"source": "dev", "backend": "kubernetes", "extra": True}}}):
             with self.subTest(catalog=catalog):
                 self.catalog()
                 self.write("coder/targets.json", json.dumps(catalog))
