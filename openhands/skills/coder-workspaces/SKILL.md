@@ -93,7 +93,32 @@ Discover actual paths with coder_workspace_ls; do not assume /home/coder/<repo-n
 
 Use coder_workspace_bash for project commands and native coder_workspace_ls, coder_workspace_read_file, coder_workspace_write_file and coder_workspace_edit_file for project files. Follow each schema encoding requirements. Keep commits, tests and authorized pushes inside the bound workspace. Do not treat workspace selection as permission to push, merge or deploy. Install project dependencies using the repository lockfiles/package manager; do not confuse ordinary project dependency installation with rebuilding a missing workspace toolchain.
 
-Use bounded calls for short commands. For long work, start once with durable output and exit-status reporting, then poll. Preserve running jobs across gateway timeouts and avoid printing credentials from logs or environment dumps.
+### Long-running commands
+
+Coder MCP allows only 60 seconds for a tool invocation. A synchronous `coder_workspace_bash` call can therefore return a gateway timeout while its command is still running. A timeout is not evidence that the command failed, stopped, or needs a retry.
+
+For work that might exceed that boundary, use the native `coder_workspace_bash` `background: true` mode, with a short launch timeout (normally 5–10 seconds). An exit code of `124` with `Command continues running in background` confirms a successful detached launch. Do not retry that launch. Coder does not provide a command ID or output-retrieval API for this tool, so the command itself must persist a non-secret job record before its long-running work begins.
+
+Background mode prefixes the command with `nohup`, so the first token is resolved as a program name. Variable assignments, redirections and multi-statement scripts fail with `nohup: failed to run command ...` unless the whole job is wrapped in an explicit shell, `bash -c '<script>'`. Because the tool sends the command over SSH and the wrapper adds its own redirection, keep quoting simple and prefer a job script over a long inline one-liner.
+
+Choose a unique, caller-known job directory under the checked-out repository's ignored `.agent-jobs/` directory. The launched shell must write `status` as `running` first; redirect stdout/stderr to `output.log`; write the numeric process exit code to `exit_code`; and update `status` to `finished` or `failed`. For example, after replacing the placeholders with shell-safe values:
+
+```sh
+bash -c 'job_dir=.agent-jobs/<job-id>
+mkdir -p "$job_dir"
+printf "running\n" > "$job_dir/status"
+<command> > "$job_dir/output.log" 2>&1
+rc=$?
+printf "%s\n" "$rc" > "$job_dir/exit_code"
+if [ "$rc" -eq 0 ]; then printf "finished\n" > "$job_dir/status"; else printf "failed\n" > "$job_dir/status"; fi
+exit "$rc"'
+```
+
+A launch response reporting `nohup: failed to run command` means nothing started, so the job record will never appear; fix the wrapping and launch again. That is the one case where relaunching after a `124` is correct.
+
+Poll with separate, short `coder_workspace_read_file` calls for `status`, `exit_code`, and bounded portions of `output.log`. Do not hold an MCP request open with `sleep`, assume a missing final status means failure, or use a gateway timeout as a trigger to relaunch. Before stopping or cleaning a workspace, inspect outstanding `.agent-jobs/` records and preserve any `running` job.
+
+`output.log` captures whatever the command printed, so treat it as untrusted for disclosure: never launch a job that dumps the environment or echoes credentials, and read back bounded portions rather than whole logs. Use bounded calls for short commands, and avoid printing credentials from logs or environment dumps in either mode.
 
 ## Delegate and recover
 
