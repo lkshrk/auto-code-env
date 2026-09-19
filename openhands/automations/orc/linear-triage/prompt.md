@@ -23,8 +23,10 @@ yourself and exit 0 without writing anything if either fails. Log one line sayin
 
 ## 2. Scope and hard limits
 
-- Teams: Routivo (key `ROU`, id `b6a02ec0-3a75-44a7-a36e-01e5231d10f5`) and Civora
-  (key `CIV`, id `84914fef-1dcb-4d85-888c-2c127a8a5124`). Nothing else, ever.
+- Teams: Routivo (key `ROU`, id `ROUTIVO_TEAM_ID`) and Civora (key `CIV`, id
+  `CIVORA_TEAM_ID`). Nothing else, ever. Those two ids are substituted from the spec's
+  `vars`, which the trigger filter reads from the same file, so filter and policy cannot
+  drift apart.
 - Allowed writes, on that one issue only: post one triage comment, apply labels, set
   priority.
 - Never assign or delegate, never change status, never close, cancel or archive, never

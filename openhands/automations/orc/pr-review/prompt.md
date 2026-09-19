@@ -122,6 +122,11 @@ start parallel runs, and a check that ran minutes earlier cannot see a review th
 run posted meanwhile. If a review for this `head_sha` now exists and your trigger was a
 `pull_request` event, exit 0 without posting. A `@openhands review` comment still posts.
 
+This narrows the window, it does not close it: two runs can both read, find nothing, and
+both post. Three reviews landed on `d6ec0df` that way. Closing it needs deduplication by
+delivery id or a lease per repository, pull request and head, neither of which a prompt
+can do.
+
 Post exactly one review per trigger via
 `POST /repos/{repo}/pulls/{pr}/reviews` with `"event": "COMMENT"` and
 `"commit_id": "<head_sha>"`. Never `APPROVE`, never `REQUEST_CHANGES`; a human decides

@@ -20,6 +20,12 @@ one exact path on `envoy-external` (`kubernetes/apps/ai/openhands/app/httproute-
 The match is exact rather than a prefix, so the `github` source stays reachable only from
 the in-cluster bridge.
 
+## Idempotency marker
+
+`<!-- linear-triage:v1 -->` survives a Linear round trip. Verified on CIV-359: the comment
+`linear-save_comment` wrote came back from `linear-list_comments` with the literal string
+intact, so section 3's skip actually fires on a redelivery.
+
 ## Trigger
 
 `event_key_expr: type` makes Linear's `type` field the event key, so `on: ["Issue"]`
@@ -51,5 +57,15 @@ over eight calls and 1,049,800 prompt tokens, most of it tool schemas and histor
 than the issue itself.
 
 `apply-profile.py` propagates `agent.system_message_suffix` into every stored openhands
-profile but does not create profiles, so `triage` was created through
-`POST /api/agent-profiles/triage` and lives only on the backend.
+profile but cannot create one, so `agent-profile.json` next to this file is the profile's
+source of truth. Recreate it on a rebuilt backend before the first deploy:
+
+```bash
+curl -fsS -X POST "$OPENHANDS_URL/api/agent-profiles/triage" \
+  -H "X-Session-API-Key: $OPENHANDS_SESSION_API_KEY" \
+  -H 'Content-Type: application/json' --data @agent-profile.json
+```
+
+The file carries no `system_message_suffix`: `apply-profile.py` writes that into every
+stored profile from `openhands/profiles/common.json`, so duplicating it here would be a
+second copy to keep in sync.

@@ -50,11 +50,16 @@ to the conventions it states.
 ## Run budget
 
 `timeout` is 1800 seconds. At 900 the agent-server killed reviews mid-run with
-`Command timed out after 900 seconds`, six of twelve runs on 2026-09-19: the review now
-fetches the existing threads, downloads the head tarball and reads changed files, and
-several pull requests land at once when a branch is pushed repeatedly. The pod's CPU
-limit is 2 cores shared by every concurrent run, so three simultaneous reviews each get
-a fraction of one.
+`Command timed out after 900 seconds`, six of twelve runs on 2026-09-19. A review now
+fetches the existing threads, downloads the head tarball and reads the changed files, so
+one review simply costs more than it used to: the first run under the new budget took
+about eight minutes, comfortably over the old ceiling.
+
+A longer budget is not a fix for load. Runs still fan out, three reviews landed on head
+`d6ec0df` alone, and each resident run shares the pod's 2-core limit, so a higher ceiling
+keeps them resident longer rather than giving them more CPU. What actually removes that
+load is deduplicating deliveries, by delivery id or a lease per repository, pull request
+and head, at the service layer rather than in the prompt.
 
 ## Triggers and opt-outs
 
