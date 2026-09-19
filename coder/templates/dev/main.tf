@@ -89,6 +89,6 @@ locals {
   enable_dind       = tobool(data.coder_parameter.enable_dind.value)
   enable_playwright = tobool(data.coder_parameter.enable_playwright.value)
   repos             = split(",", data.coder_parameter.repos.value)
-  wow_smb_share      = trimspace(data.coder_parameter.wow_smb_share.value)
-  wow_smb_secret     = trimspace(data.coder_parameter.wow_smb_secret.value)
+  wow_smb_share     = trimspace(data.coder_parameter.wow_smb_share.value)
+  wow_smb_secret    = trimspace(data.coder_parameter.wow_smb_secret.value)
 }

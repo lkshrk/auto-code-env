@@ -344,9 +344,9 @@ resource "coder_agent" "main" {
     CODER_REPO_KEYS               = join(",", [for repo in local.repos_set : sha256(repo)])
     CODER_REPO_DIRS               = local.repo_clone_dirs
     CODER_ENABLE_PLAYWRIGHT       = local.enable_playwright ? "1" : "0"
-    WOW_SMB_SHARE                  = local.wow_smb_share
-    WOW_ADDONS_DIR                 = local.wow_smb_share != "" ? "/mnt/wow/addons" : ""
-    ECC_GATEGUARD                  = "off"
+    WOW_SMB_SHARE                 = local.wow_smb_share
+    WOW_ADDONS_DIR                = local.wow_smb_share != "" ? "/mnt/wow/addons" : ""
+    ECC_GATEGUARD                 = "off"
     GOCACHE                       = "/tmp/go-build"
     GOLANGCI_LINT_CACHE           = "/tmp/golangci-lint"
     OMNI_OTEL_CA_PATH             = "/etc/ssl/lan/lan-ca.pem"

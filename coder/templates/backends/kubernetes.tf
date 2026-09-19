@@ -371,8 +371,8 @@ resource "kubernetes_persistent_volume_v1" "wow_addons" {
         driver        = "smb.csi.k8s.io"
         volume_handle = "${local.workspace_k8s_name}-wow-addons"
         volume_attributes = {
-          source  = local.wow_smb_source
-          subDir  = local.wow_smb_subdir
+          source = local.wow_smb_source
+          subDir = local.wow_smb_subdir
         }
         node_stage_secret_ref {
           name      = local.wow_smb_secret
