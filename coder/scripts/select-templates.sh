@@ -63,8 +63,8 @@ def target_catalog(root):
             fail(f"Invalid target name: {name!r}")
         if not isinstance(target, dict) or set(target) != {"source", "backend"}:
             fail(f"Invalid target entry: {name}")
-        if target["source"] != "dev" or target["backend"] not in ("docker", "kubernetes"):
-            fail("Targets must use dev with an explicit Docker or Kubernetes backend")
+        if target["source"] != "dev" or target["backend"] != "kubernetes":
+            fail("Targets must use dev with the Kubernetes backend")
         if not (root / "coder/templates/dev/main.tf").is_file():
             fail(f"Missing target source: {target['source']}")
     return targets

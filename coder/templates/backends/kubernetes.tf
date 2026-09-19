@@ -39,8 +39,34 @@ data "coder_parameter" "disk_size" {
   }
 }
 
+data "coder_parameter" "location" {
+  name         = "location"
+  display_name = "Location"
+  description  = "cluster: any h-cloud node, Ceph-backed home. desktop: the k8s-12 VM on towerr, node-local home, unavailable while the desktop is off."
+  default      = "cluster"
+  mutable      = false
+  option {
+    name  = "Cluster"
+    value = "cluster"
+  }
+  option {
+    name  = "Desktop (towerr)"
+    value = "desktop"
+  }
+}
+
+data "coder_workspace_preset" "desktop" {
+  name = "desktop"
+  parameters = {
+    location = "desktop"
+  }
+}
+
 locals {
-  backend_bootstrap = <<-SCRIPT
+  desktop            = data.coder_parameter.location.value == "desktop"
+  home_storage_class = local.desktop ? "openebs-hostpath" : "ceph-block"
+  node_selector      = local.desktop ? { dedicated = "desktop" } : {}
+  backend_bootstrap  = <<-SCRIPT
     umask 077
     mkdir -p "$HOME/.kube"
     cat > "$HOME/.kube/h-cloud" <<'KUBECONFIG'
@@ -78,7 +104,7 @@ resource "kubernetes_persistent_volume_claim_v1" "home" {
   wait_until_bound = false
   spec {
     access_modes       = ["ReadWriteOnce"]
-    storage_class_name = "ceph-block"
+    storage_class_name = local.home_storage_class
     resources {
       requests = {
         storage = "${max(30, tonumber(data.coder_parameter.disk_size.value))}Gi"
@@ -106,6 +132,17 @@ resource "kubernetes_pod_v1" "workspace" {
   spec {
     service_account_name            = local.workspace_service_account_name
     automount_service_account_token = false
+    node_selector                   = local.node_selector
+
+    dynamic "toleration" {
+      for_each = local.desktop ? [1] : []
+      content {
+        key      = "dedicated"
+        operator = "Equal"
+        value    = "desktop"
+        effect   = "NoSchedule"
+      }
+    }
 
     security_context {
       fs_group = 1000
