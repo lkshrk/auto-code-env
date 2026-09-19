@@ -95,6 +95,9 @@ jobs:
             bash coder/scripts/package-template.sh "$dir" "$packages/$name" --backend "$backend"
           done < "$RUNNER_TEMP/coder-template-targets"
 
+      - name: Check provider pins exist on registry.terraform.io
+        run: bash coder/scripts/check-provider-registry.sh coder/templates/backends/*.tf
+
       - name: Validate packaged templates
         if: steps.selected.outputs.has_templates == 'true'
         env:
