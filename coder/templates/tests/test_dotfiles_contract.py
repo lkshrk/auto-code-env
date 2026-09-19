@@ -16,7 +16,7 @@ CHECK = ROOT / "coder/templates/shared/dotfiles-contract.py"
 class DotfilesContractTests(unittest.TestCase):
     def test_stub_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "setup-coder-components.sh").write_text("#!/bin/bash\ntrue\n")
+            Path(directory, "setup-coder-dots.sh").write_text("#!/bin/bash\ntrue\n")
             result = subprocess.run(["python3", str(CHECK), directory], capture_output=True)
             self.assertNotEqual(result.returncode, 0)
 
@@ -24,24 +24,24 @@ class DotfilesContractTests(unittest.TestCase):
     def test_missing_bootstrap_helper_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            shutil.copy2(DOTFILES / "setup-coder-components.sh", root)
+            shutil.copy2(DOTFILES / "setup-coder-dots.sh", root)
             shutil.copytree(DOTFILES / "scripts", root / "scripts")
             (root / "scripts/coder-bootstrap.sh").unlink(missing_ok=True)
             result = subprocess.run(["python3", str(CHECK), str(root)],
                                     capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("setup-coder-components.sh", result.stderr)
+            self.assertIn("setup-coder-dots.sh", result.stderr)
 
     @unittest.skipUnless(DOTFILES.is_dir(), "set CODER_TEST_DOTFILES to exact companion checkout")
     def test_pair_and_negative_selection(self):
-        resolver = subprocess.run(["python3", str(DOTFILES / "scripts/coder-components.py"), "--contract"],
+        resolver = subprocess.run(["python3", str(DOTFILES / "scripts/coder-dots.py"), "--contract"],
                                   capture_output=True, text=True)
         self.assertEqual(resolver.returncode, 0, resolver.stderr)
-        selections = ("", "go,python,ts,lua,rust,k8s,gitops,argo,talos,cilium,cnpg,iac,containers,quality,terminal-recording,media", "infra,omni", "unknown-stack")
+        selections = ("", "claude", "claude,codex", "unknown-client")
         for selection in selections:
             result = subprocess.run(["python3", str(CHECK), str(DOTFILES)],
-                                    env=dict(os.environ, CODER_OMNI_STACKS=selection), capture_output=True, text=True)
-            self.assertEqual(result.returncode == 0, selection != "unknown-stack", result.stderr)
+                                    env=dict(os.environ, CODER_AGENT_CLIENTS=selection), capture_output=True, text=True)
+            self.assertEqual(result.returncode == 0, selection != "unknown-client", result.stderr)
             if result.returncode == 0:
                 self.assertEqual(json.loads(result.stdout)["version"], 1)
 

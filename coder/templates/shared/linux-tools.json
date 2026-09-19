@@ -1,0 +1,51 @@
+{
+  "tools": {
+    "neovim": {
+      "providers": [
+        {
+          "provider": "script",
+          "bin": "nvim",
+          "options": {
+            "install": "set -eu; case \"$(uname -m)\" in x86_64|amd64) arch=x86_64 ;; aarch64|arm64) arch=arm64 ;; *) exit 1 ;; esac; tmp=$(mktemp -d); trap 'rm -rf \"$tmp\"' EXIT; curl -fsSL --proto-redir '=https' https://api.github.com/repos/neovim/neovim/releases/latest -o \"$tmp/release.json\"; asset=nvim-linux-$arch.tar.gz; url=$(jq -er --arg name \"$asset\" '.assets[] | select(.name == $name) | .browser_download_url' \"$tmp/release.json\"); digest=$(jq -er --arg name \"$asset\" '.assets[] | select(.name == $name) | .digest | select(startswith(\"sha256:\")) | ltrimstr(\"sha256:\")' \"$tmp/release.json\"); curl -fsSL --proto '=https' --proto-redir '=https' \"$url\" -o \"$tmp/nvim.tar.gz\"; python3 \"$HOME/.local/state/coder-environment/coder-neovim.py\" \"$tmp/nvim.tar.gz\" \"$digest\"",
+            "check": "test -x \"$HOME/.local/share/coder-neovim/current/bin/nvim\" && test -f \"$HOME/.local/share/coder-neovim/current/share/nvim/runtime/doc/help.txt\" && test -x \"$HOME/.local/bin/nvim\"",
+            "version": "\"$HOME/.local/bin/nvim\" --version | head -1 | sed \"s/^NVIM v//\"",
+            "latest": "curl -fsSL https://api.github.com/repos/neovim/neovim/releases/latest | jq -er '.tag_name | ltrimstr(\"v\")'"
+          }
+        }
+      ]
+    },
+    "git-delta": {
+      "providers": [
+        {
+          "provider": "script",
+          "bin": "delta",
+          "options": {"arch_map": "aarch64:aarch64,arm64:aarch64,x86_64:x86_64,amd64:x86_64"},
+          "source": {"type": "github", "owner": "dandavison", "repo": "delta"},
+          "recipe": {"type": "github_release_asset", "asset_pattern": "delta-{version}-{arch}-unknown-linux-gnu.tar.gz"}
+        }
+      ]
+    },
+    "lefthook": {
+      "providers": [
+        {
+          "provider": "script",
+          "bin": "lefthook",
+          "options": {"arch_map": "aarch64:arm64,arm64:arm64,x86_64:x86_64,amd64:x86_64"},
+          "source": {"type": "github", "owner": "evilmartians", "repo": "lefthook"},
+          "recipe": {"type": "github_release_asset", "asset_pattern": "lefthook_{version}_Linux_{arch}.gz"}
+        }
+      ]
+    },
+    "tree-sitter-cli": {
+      "providers": [
+        {
+          "provider": "script",
+          "bin": "tree-sitter",
+          "options": {"arch_map": "aarch64:arm64,arm64:arm64,x86_64:x64,amd64:x64"},
+          "source": {"type": "github", "owner": "tree-sitter", "repo": "tree-sitter"},
+          "recipe": {"type": "github_release_asset", "asset_pattern": "tree-sitter-linux-{arch}.gz"}
+        }
+      ]
+    }
+  }
+}

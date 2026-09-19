@@ -176,7 +176,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertNotIn("setup-coder.sh", common)
                 self.assertNotIn("setup-hermes.sh", common)
                 self.assertNotIn('"legacy"', common)
-                self.assertIn("setup-coder-components.sh", common)
+                self.assertIn("setup-coder-dots.sh", common)
 
     def test_generated_configuration_collision_fails(self):
         path = self.write("dev/environment.auto.tfvars.json", "{}")
