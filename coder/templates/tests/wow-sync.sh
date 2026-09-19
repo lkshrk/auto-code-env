@@ -86,6 +86,19 @@ printf 'dry\n' > "$REPO_A/Modules/init.lua"
 bash "$SYNC_SCRIPT" --dry-run
 [[ "$(<"$ADDONS/Alpha-Dev/Modules/init.lua")" == "AlphaDBDev = 2" ]]
 
+# A destination that is not this addon is never emptied, even under the dev name.
+rm -rf "$ADDONS/Beta-Dev"
+mkdir -p "$ADDONS/Beta-Dev"
+printf 'mine\n' > "$ADDONS/Beta-Dev/precious.txt"
+if CODER_REPO_DIRS="bundle" bash "$SYNC_SCRIPT" > "$TEST_ROOT/foreign.log" 2>&1; then
+  printf 'FAIL: sync into a foreign directory exited 0\n' >&2
+  exit 1
+fi
+grep -q 'refusing to sync Beta' "$TEST_ROOT/foreign.log"
+[[ "$(<"$ADDONS/Beta-Dev/precious.txt")" == mine ]]
+[[ ! -e "$ADDONS/Beta-Dev/Beta-Dev_Mainline.toc" ]]
+rm -rf "$ADDONS/Beta-Dev"
+
 # A failed transfer is reported, not announced as synced, and fails the run.
 mkdir -p "$ADDONS/Beta-Dev"
 chmod 0555 "$ADDONS/Beta-Dev"

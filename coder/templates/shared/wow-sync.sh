@@ -123,6 +123,15 @@ sync_addon() {
   [ -n "$WOW_DEV_SUFFIX" ] && target="$name-$WOW_DEV_SUFFIX"
   dest="$WOW_REMOTE:$WOW_ADDONS_PATH/$target"
 
+  # A destination that exists but holds no <target>.toc belongs to something
+  # else; sync would delete its contents, so refuse instead of guessing.
+  local existing
+  if existing=$(rclone lsf "$dest" --max-depth 1 2>/dev/null) && [ -n "$existing" ] \
+    && ! printf '%s\n' "$existing" | grep -qi "^${target}.*\.toc$"; then
+    log "refusing to sync $name: $dest exists and is not a $target addon (no $target*.toc)"
+    return 1
+  fi
+
   stage=$(mktemp -d -t wow-sync.XXXXXX)
   # shellcheck disable=SC2064
   trap "rm -rf '$stage'" RETURN
