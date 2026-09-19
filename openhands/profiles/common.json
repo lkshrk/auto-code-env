@@ -1,6 +1,6 @@
 {
   "agent": {
-    "system_message_suffix": "Never add a Co-authored-by trailer or any other agent attribution to commit messages. Commit with the git identity that is already configured."
+    "system_message_suffix": "Never add a Co-authored-by trailer or any other agent attribution to commit messages. Commit with the git identity that is already configured. Keep every tool call well under 10000 output tokens: create a large file in pieces (create the first part, then insert the rest) and never regenerate a whole large file in one call. An empty reply from you means your previous output was cut off at the output-token cap; retry with a smaller piece."
   },
   "secrets": {
     "LITELLM_API": {
@@ -8,7 +8,9 @@
       "prefix": "Bearer "
     }
   },
-  "retired_secrets": ["CODER_SESSION_TOKEN"],
+  "retired_secrets": [
+    "CODER_SESSION_TOKEN"
+  ],
   "skills": [
     {
       "source": "https://github.com/lkshrk/auto-code-env.git",

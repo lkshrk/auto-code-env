@@ -29,7 +29,7 @@
   "log_completions_folder": "logs/completions",
   "max_input_tokens": null,
   "max_message_chars": 30000,
-  "max_output_tokens": 16384,
+  "max_output_tokens": 32768,
   "model": "anthropic/claude-opus-5",
   "model_canonical_name": null,
   "modify_params": true,
@@ -50,7 +50,7 @@
   "stream": true,
   "subscription_vendor": null,
   "temperature": null,
-  "timeout": 300,
+  "timeout": 600,
   "top_k": null,
   "top_p": null,
   "usage_id": "default"
