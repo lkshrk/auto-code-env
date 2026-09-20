@@ -275,9 +275,9 @@ locals {
       sudo apt-get update -qq
       sudo apt-get install -y --no-install-recommends inotify-tools unzip >/dev/null
       mkdir -p "$HOME/.local/bin"
-      if [ "$("$HOME/.local/bin/rclone" version 2>/dev/null | head -1)" != "rclone v$RCLONE_VERSION" ]; then
+      if [ "$("$HOME/.local/bin/rclone" version 2>/dev/null | head -1)" != "rclone v$WOW_RCLONE_VERSION" ]; then
         rclone_tmp=$(mktemp -d)
-        curl -fsSL "https://downloads.rclone.org/v$RCLONE_VERSION/rclone-v$RCLONE_VERSION-linux-amd64.zip" -o "$rclone_tmp/rclone.zip"
+        curl -fsSL "https://downloads.rclone.org/v$WOW_RCLONE_VERSION/rclone-v$WOW_RCLONE_VERSION-linux-amd64.zip" -o "$rclone_tmp/rclone.zip"
         unzip -qo "$rclone_tmp/rclone.zip" -d "$rclone_tmp"
         install -m 0755 "$rclone_tmp"/rclone-*/rclone "$HOME/.local/bin/rclone"
         rm -rf "$rclone_tmp"
@@ -370,7 +370,7 @@ resource "coder_agent" "main" {
     WOW_DEV                            = local.wow_dev ? "1" : "0"
     WOW_ADDONS_PATH                    = local.wow_addons_path
     WOW_DEV_SUFFIX                     = local.wow_dev_suffix
-    RCLONE_VERSION                     = "1.75.1"
+    WOW_RCLONE_VERSION                 = "1.75.1"
     RCLONE_CONFIG_WOW_TYPE             = local.wow_dev ? "sftp" : ""
     RCLONE_CONFIG_WOW_HOST             = local.wow_dev ? local.wow_host : ""
     RCLONE_CONFIG_WOW_PORT             = local.wow_dev ? "2022" : ""
