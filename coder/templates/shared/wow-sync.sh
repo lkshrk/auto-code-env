@@ -100,7 +100,7 @@ apply_dev_suffix() {
   done
 
   while IFS= read -r toc; do
-    perl -pi -e "s/^(## Title:.*)\$/\$1 [${suffix^^}]/" "$toc"
+    perl -pi -e "s/^(## Title:[^\\r\\n]*)/\$1 [${suffix^^}]/" "$toc"
     [ -n "$expr" ] && perl -pi -e "if (/^## SavedVariables(PerCharacter)?:/) { $expr }" "$toc"
     mv -- "$toc" "$stage/$name-$suffix${toc#"$stage/$name"}"
   done < <(find "$stage" -maxdepth 1 -type f -name "$name*.toc")

@@ -37,7 +37,13 @@ REPO_B="$HOME/bundle"
 mkdir -p "$REPO_B/Beta"
 printf '## Title: Beta\n' > "$REPO_B/Beta/Beta_Mainline.toc"
 
-export CODER_REPO_DIRS="my-addon-repo,bundle"
+# A repository checked out with CRLF line endings and a BOM, as Windows editors produce.
+REPO_C="$HOME/crlf"
+mkdir -p "$REPO_C/Gamma"
+printf '\xef\xbb\xbf## Interface: 110200\r\n## Title: Gamma\r\n## SavedVariables: GammaDB\r\nGamma.lua\r\n' > "$REPO_C/Gamma/Gamma.toc"
+printf 'GammaDB = GammaDB or {}\r\n' > "$REPO_C/Gamma/Gamma.lua"
+
+export CODER_REPO_DIRS="my-addon-repo,bundle,crlf"
 
 # An unrelated addon already installed must survive every sync, and so must
 # the released copy of an addon that is being developed.
@@ -62,6 +68,9 @@ grep -q '^LibStub = LibStub or {}$' "$ADDONS/Alpha-Dev/Libs/LibStub/LibStub.lua"
 [[ ! -e "$ADDONS/Alpha-Dev/.git" ]]
 [[ ! -e "$ADDONS/my-addon-repo" ]]
 [[ -f "$ADDONS/Beta-Dev/Beta-Dev_Mainline.toc" ]]
+# CRLF endings and the BOM survive; the suffix lands before the CR, never after it.
+printf '\xef\xbb\xbf## Interface: 110200\r\n## Title: Gamma [DEV]\r\n## SavedVariables: GammaDBDev\r\nGamma.lua\r\n' | cmp -s - "$ADDONS/Gamma-Dev/Gamma-Dev.toc"
+printf 'GammaDBDev = GammaDBDev or {}\r\n' | cmp -s - "$ADDONS/Gamma-Dev/Gamma.lua"
 [[ "$(<"$ADDONS/Bystander/Bystander.toc")" == keep ]]
 [[ "$(<"$ADDONS/Alpha/Alpha.toc")" == release ]]
 
