@@ -90,6 +90,9 @@ def contract(env, catalog):
     return result
 
 
+NODE_TOOLS = {"pyright", "yaml-language-server", "bash-language-server"}
+
+
 def build_static_groups(catalog):
     """Every group this host could ever need, derived purely from
     catalog.json -- always present regardless of selection. Which of
@@ -127,7 +130,7 @@ def select_group_names(selection, catalog):
     if selection["CODER_AGENT_PLUGINS"] == "1":
         need("nvm")
         need("bun")
-    if any("pyright" in catalog["STACK_TOOLS"][s] for s in selection["stacks"]):
+    if any(t in NODE_TOOLS for s in selection["stacks"] for t in catalog["STACK_TOOLS"][s]):
         need("nvm")
     names = ["component-base"] + ["runtime-" + r for r in runtimes] + ["stack-" + s for s in selection["stacks"]]
     if "claude" in selection["clients"]:

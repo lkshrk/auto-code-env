@@ -27,37 +27,45 @@
       "stylua"
     ],
     "rust": [
-      "cargo"
+      "cargo",
+      "rust-analyzer"
     ],
     "k8s": [
       "kubernetes-cli",
       "helm",
       "kustomize",
       "krew",
-      "kubectx"
+      "kubectx",
+      "yaml-language-server"
     ],
     "gitops": [
       "kubernetes-cli",
       "helm",
       "flux",
       "helmfile",
-      "sops"
+      "sops",
+      "yaml-language-server"
     ],
     "argo": [
-      "argo"
+      "argo",
+      "yaml-language-server"
     ],
     "talos": [
-      "talosctl"
+      "talosctl",
+      "yaml-language-server"
     ],
     "cilium": [
-      "cilium-cli"
+      "cilium-cli",
+      "yaml-language-server"
     ],
     "cnpg": [
       "kubernetes-cli",
-      "kubectl-cnpg"
+      "kubectl-cnpg",
+      "yaml-language-server"
     ],
     "iac": [
-      "opentofu"
+      "opentofu",
+      "terraform-ls"
     ],
     "containers": [
       "docker",
@@ -66,7 +74,9 @@
     "quality": [
       "actionlint",
       "gitleaks",
-      "bats-core"
+      "bats-core",
+      "shellcheck",
+      "bash-language-server"
     ],
     "terminal-recording": [
       "ffmpeg",

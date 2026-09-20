@@ -22,6 +22,13 @@ servers = {
                                                            ".js": "javascript", ".jsx": "javascriptreact",
                                                            ".mjs": "javascript", ".cjs": "javascript"}},
     "lua-language-server": {"command": "lua-language-server", "extensionToLanguage": {".lua": "lua"}},
+    "rust-analyzer": {"command": "rust-analyzer", "extensionToLanguage": {".rs": "rust"}},
+    "yaml-language-server": {"command": "yaml-language-server", "args": ["--stdio"],
+                             "extensionToLanguage": {".yaml": "yaml", ".yml": "yaml"}},
+    "terraform-ls": {"command": "terraform-ls", "args": ["serve"],
+                     "extensionToLanguage": {".tf": "terraform", ".tfvars": "terraform-vars"}},
+    "bash-language-server": {"command": "bash-language-server", "args": ["start"],
+                             "extensionToLanguage": {".sh": "shellscript", ".bash": "shellscript"}},
 }
 found = {name: spec for name, spec in servers.items() if shutil.which(spec["command"])}
 if found:

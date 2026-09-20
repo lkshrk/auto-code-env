@@ -14,7 +14,7 @@ PLUGIN="$HOME/.claude/skills/coder-lsp/.claude-plugin/plugin.json"
 # A PATH holding only the servers two stacks would have installed.
 BIN="$TEST_ROOT/bin"
 mkdir -p "$BIN"
-for tool in gopls lua-language-server; do
+for tool in gopls lua-language-server yaml-language-server terraform-ls; do
   printf '#!/bin/sh\n' > "$BIN/$tool"
   chmod 0755 "$BIN/$tool"
 done
@@ -28,14 +28,17 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["name"] == "coder-lsp", d
 s = d["lspServers"]
-assert set(s) == {"gopls", "lua-language-server"}, list(s)
+assert set(s) == {"gopls", "lua-language-server", "yaml-language-server", "terraform-ls"}, list(s)
 assert s["lua-language-server"]["extensionToLanguage"] == {".lua": "lua"}, s["lua-language-server"]
 assert s["gopls"]["command"] == "gopls"
-assert "pyright" not in s and "typescript-language-server" not in s
+assert s["yaml-language-server"]["args"] == ["--stdio"] and s["yaml-language-server"]["extensionToLanguage"][".yml"] == "yaml"
+assert s["terraform-ls"]["args"] == ["serve"] and s["terraform-ls"]["extensionToLanguage"][".tfvars"] == "terraform-vars"
+for absent in ("pyright", "typescript-language-server", "rust-analyzer", "bash-language-server"):
+    assert absent not in s, absent
 PY
 
 # Losing a server drops it; losing all of them removes the plugin.
-rm "$BIN/gopls"
+rm "$BIN/gopls" "$BIN/yaml-language-server" "$BIN/terraform-ls"
 PATH="$BIN:/usr/bin:/bin" bash "$SCRIPT"
 python3 -c 'import json,sys; assert list(json.load(open(sys.argv[1]))["lspServers"]) == ["lua-language-server"]' "$PLUGIN"
 
