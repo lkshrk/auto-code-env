@@ -59,13 +59,26 @@ identical to any other workspace.
 
 When `claude` is among the agent clients, startup writes
 `~/.claude/skills/coder-lsp/.claude-plugin/plugin.json`, a skills-directory
-plugin Claude Code loads at user scope. Its `lspServers` list whichever of
-`gopls`, `pyright-langserver`, `typescript-language-server` and
-`lua-language-server` the selected stacks put on `PATH`, so Claude gets
+plugin Claude Code loads at user scope. Its `lspServers` list whichever
+language servers the selected stacks put on `PATH`, so Claude gets
 diagnostics after every edit and go-to-definition, references and hover
 through its `LSP` tool without a marketplace plugin. Servers that are not
 installed are left out, and the plugin disappears when none is. The same
 list lives in dotfiles `apm/ai-plugins/apm.yml` for hosts that run apm.
+
+| Stack | Server | Files |
+|---|---|---|
+| `go` | `gopls` | `.go` |
+| `python` | `pyright-langserver` | `.py`, `.pyi` |
+| `ts` | `typescript-language-server` | `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs` |
+| `lua` | `lua-language-server` | `.lua` |
+| `rust` | `rust-analyzer` (rustup component) | `.rs` |
+| `k8s`, `gitops`, `argo`, `talos`, `cilium`, `cnpg` | `yaml-language-server` | `.yaml`, `.yml` |
+| `iac` | `terraform-ls` | `.tf`, `.tfvars` |
+| `quality` | `bash-language-server` (with `shellcheck`) | `.sh`, `.bash` |
+
+Claude matches files by extension only, so a bare `Dockerfile` has no server
+even with the `containers` stack.
 
 ## WoW addon workspaces
 

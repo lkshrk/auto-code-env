@@ -155,51 +155,41 @@ def active_has_tool(catalog, names, tool):
     return any(tool in groups.get(name, []) for name in names)
 
 
-def link_npm_commands(catalog, names, dotfiles_dir, shared_dir):
-    required = stack_install.required_commands(names, catalog, dotfiles_dir, shared_dir, provider="npm")
+def node_package_bin_dirs():
+    dirs = []
+    if shutil.which("npm"):
+        prefix = subprocess.run(["npm", "prefix", "-g"], capture_output=True, text=True, check=True).stdout.strip()
+        if not prefix.startswith("/"):
+            raise SystemExit(f"npm global prefix must be absolute: {prefix}")
+        dirs.append(Path(prefix) / "bin")
+    if shutil.which("bun"):
+        # bun's global bin follows XDG_CACHE_HOME (~/.cache/.bun/bin), not ~/.bun/bin; ask bun.
+        prefix = subprocess.run(["bun", "pm", "bin", "-g"], capture_output=True, text=True, check=True).stdout.strip()
+        if not prefix.startswith("/"):
+            raise SystemExit(f"bun global bin directory must be absolute: {prefix}")
+        dirs.append(Path(prefix))
+    return dirs
+
+
+def link_node_package_commands(catalog, names, dotfiles_dir, shared_dir):
+    required = []
+    for provider in ("npm", "bun"):
+        for binary in stack_install.required_commands(names, catalog, dotfiles_dir, shared_dir, provider=provider):
+            if binary not in required:
+                required.append(binary)
     if not required:
         return
-    prefix = subprocess.run(["npm", "prefix", "-g"], capture_output=True, text=True, check=True).stdout.strip()
-    if not prefix.startswith("/"):
-        raise SystemExit(f"npm global prefix must be absolute: {prefix}")
+    bin_dirs = node_package_bin_dirs()
     stable_path = f"{Path.home()}/.local/bin:{Path.home()}/.bun/bin:{Path.home()}/.cargo/bin:{Path.home()}/.krew/bin:{Path.home()}/.local/share/pnpm:/bin"
     for binary in required:
-        candidate = Path(prefix) / "bin" / binary
-        if not os.access(candidate, os.X_OK):
-            raise SystemExit(f"required npm executable missing: {candidate}")
+        candidate = next((d / binary for d in bin_dirs if os.access(d / binary, os.X_OK)), None)
+        if candidate is None:
+            raise SystemExit(f"required npm/bun executable missing: {binary}")
         link_local_bin(candidate, binary)
         env = {k: v for k, v in os.environ.items() if k != "NVM_BIN"}
         env["PATH"] = stable_path
         if subprocess.run([binary, "--version"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
-            raise SystemExit(f"required npm executable failed on stable PATH: {binary}")
-
-
-def link_bun_commands(catalog, names, dotfiles_dir, shared_dir):
-    # bun's global install bin dir is *not* ~/.bun/bin (that's only
-    # where the bun/bunx binaries themselves land from the installer
-    # script) -- once XDG_CACHE_HOME is set (it always is in this
-    # workspace image), bun resolves its own package-manager global
-    # root under it instead, e.g. ~/.cache/.bun/bin. Verified live:
-    # ~/.bun/bin never contained a bun-provider tool's binary, causing
-    # final_check() to correctly, but fatally, report it missing.
-    # Mirrors link_npm_commands below; ask bun itself rather than
-    # hardcoding its XDG-dependent path.
-    required = stack_install.required_commands(names, catalog, dotfiles_dir, shared_dir, provider="bun")
-    if not required:
-        return
-    prefix = subprocess.run(["bun", "pm", "bin", "-g"], capture_output=True, text=True, check=True).stdout.strip()
-    if not prefix.startswith("/"):
-        raise SystemExit(f"bun global bin directory must be absolute: {prefix}")
-    stable_path = f"{Path.home()}/.local/bin:{Path.home()}/.bun/bin:{Path.home()}/.cargo/bin:{Path.home()}/.krew/bin:{Path.home()}/.local/share/pnpm:/bin"
-    for binary in required:
-        candidate = Path(prefix) / binary
-        if not os.access(candidate, os.X_OK):
-            raise SystemExit(f"required bun executable missing: {candidate}")
-        link_local_bin(candidate, binary)
-        env = {k: v for k, v in os.environ.items() if k != "NVM_BIN"}
-        env["PATH"] = stable_path
-        if subprocess.run([binary, "--version"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
-            raise SystemExit(f"required bun executable failed on stable PATH: {binary}")
+            raise SystemExit(f"required npm/bun executable failed on stable PATH: {binary}")
 
 
 def link_lsp_commands(catalog, names):
@@ -285,8 +275,7 @@ def run(dotfiles_dir):
         fdfind = shutil.which("fdfind")
         if fdfind:
             link_local_bin(fdfind, "fd")
-        link_npm_commands(catalog, names, dotfiles_dir, SHARED_DIR)
-        link_bun_commands(catalog, names, dotfiles_dir, SHARED_DIR)
+        link_node_package_commands(catalog, names, dotfiles_dir, SHARED_DIR)
         link_lsp_commands(catalog, names)
         final_check(catalog, names, dotfiles_dir, SHARED_DIR)
         backend = os.environ.get("CODER_BACKEND", "kubernetes")

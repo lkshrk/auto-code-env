@@ -33,6 +33,27 @@ class CatalogOwnershipTests(unittest.TestCase):
         self.assertIn("go", catalog["STACK_TOOLS"])
         self.assertIn("git", catalog["BASE"])
 
+    def test_stacks_with_node_language_servers_pull_the_nvm_runtime(self):
+        stack_install = load(SHARED / "stack-install.py", "stack_install")
+        catalog = stack_install.load_catalog(CATALOG)
+        for stack in ("python", "k8s", "gitops", "quality"):
+            selection = {"stacks": [stack], "clients": [], "CODER_AGENT_PLUGINS": "0"}
+            names = stack_install.select_group_names(selection, catalog)
+            self.assertIn("runtime-nvm", names, stack)
+            self.assertLess(names.index("runtime-nvm"), names.index("stack-" + stack), names)
+        selection = {"stacks": ["rust", "iac"], "clients": [], "CODER_AGENT_PLUGINS": "0"}
+        self.assertNotIn("runtime-nvm", stack_install.select_group_names(selection, catalog))
+
+    def test_every_stack_language_has_a_claude_language_server(self):
+        catalog = json.loads(CATALOG.read_text())
+        script = (SHARED / "claude-lsp.sh").read_text()
+        for stack, server in {"go": "gopls", "python": "pyright", "ts": "typescript-language-server",
+                              "lua": "lua-language-server", "rust": "rust-analyzer", "iac": "terraform-ls",
+                              "k8s": "yaml-language-server", "gitops": "yaml-language-server",
+                              "quality": "bash-language-server"}.items():
+            self.assertIn(server, catalog["STACK_TOOLS"][stack], stack)
+            self.assertIn(f'"{server}": {{', script, server)
+
 
 @unittest.skipUnless(DOTFILES.is_dir(), "set CODER_TEST_DOTFILES to exact companion checkout")
 class StackInstallStructureTests(unittest.TestCase):
