@@ -121,7 +121,7 @@ sync_addon() {
 
   target=$name
   [ -n "$WOW_DEV_SUFFIX" ] && target="$name-$WOW_DEV_SUFFIX"
-  dest="$WOW_REMOTE:$WOW_ADDONS_PATH/$target"
+  dest="$WOW_REMOTE:${WOW_ADDONS_PATH%/}/$target"
 
   # A destination that exists but holds no <target>.toc belongs to something
   # else; sync would delete its contents, so refuse instead of guessing.
