@@ -65,7 +65,7 @@ data "coder_workspace_preset" "desktop" {
 locals {
   desktop            = data.coder_parameter.location.value == "desktop"
   home_storage_class = local.desktop ? "openebs-hostpath" : "ceph-block"
-  node_selector      = local.desktop ? { dedicated = "desktop" } : {}
+  node_selector      = local.desktop ? { dedicated = "towerr" } : {}
   backend_bootstrap  = <<-SCRIPT
     umask 077
     mkdir -p "$HOME/.kube"
@@ -139,7 +139,7 @@ resource "kubernetes_pod_v1" "workspace" {
       content {
         key      = "dedicated"
         operator = "Equal"
-        value    = "desktop"
+        value    = "towerr"
         effect   = "NoSchedule"
       }
     }

@@ -47,7 +47,7 @@ must never reference a backend resource.
 
 There is no second backend for the Windows desktop any more. towerr runs the
 Talos worker `k8s-12` in a Hyper-V VM (h-cloud `talos/nodes/k8s-12.yaml.j2`),
-tainted `dedicated=desktop:NoSchedule`. The `dev` template's `location`
+tainted `dedicated=towerr:NoSchedule`. The `dev` template's `location`
 parameter (`cluster` default, preset `desktop`) adds the matching node selector
 and toleration and switches the home PVC to `openebs-hostpath`, so the home
 lives on the VM's data disk and follows the node. While the desktop is off the
@@ -217,8 +217,8 @@ providing:
   `/etc/ssl/lan/lan-ca.pem` for `OMNI_OTEL_CA_PATH`.
 - StorageClass `ceph-block` for the per-workspace home PVC, and
   `openebs-hostpath` for `location=desktop`.
-- Node `k8s-12` labelled `dedicated=desktop` and tainted
-  `dedicated=desktop:NoSchedule`; nothing else tolerates that taint.
+- Node `k8s-12` labelled `dedicated=towerr` and tainted
+  `dedicated=towerr:NoSchedule`; nothing else tolerates that taint.
 
 Per-user Claude and Codex credentials are Coder user secrets, not cluster
 secrets. Each user creates them once with `coder secret create`.
