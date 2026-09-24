@@ -8,14 +8,8 @@ set -euo pipefail
 export RCLONE_CONFIG=/dev/null
 
 readonly STAGE_EXCLUDES=(
-  --exclude '.git/**'
-  --exclude '.github/**'
-  --exclude '.claude/**'
-  --exclude '.gitignore'
-  --exclude '.gitattributes'
-  --exclude '.editorconfig'
-  --exclude '.luacheckrc'
-  --exclude '.pkgmeta'
+  --exclude '.*/**'
+  --exclude '.*'
   --exclude 'node_modules/**'
 )
 
@@ -39,13 +33,18 @@ Pushes every addon found in the given checkouts to the game's AddOns directory
 on the rclone remote `wow:`, at WOW_ADDONS_PATH. With no repo arguments, uses
 CODER_REPO_DIRS.
 
-An addon is any directory holding a .toc file; the addon name comes from the
-.toc, not from the directory, so a repository may be named anything.
+An addon is any directory holding a .toc file, except embedded libraries under
+Libs/; the addon name comes from the .toc, not from the directory, so a
+repository may be named anything.
 
 With WOW_DEV_SUFFIX set (default "Dev"), each addon is installed as
 <Name>-<suffix>: the .toc is renamed, its Title is marked, and every
 SavedVariables name gains the suffix in the .toc and in the Lua sources. The
 dev copy then runs beside the released addon and cannot touch its settings.
+Addons synced together form a set: dependency lines, Interface\AddOns\<Name>
+paths and Lua string literals naming another member are pointed at its dev
+copy, so a suite keeps working as a whole. Nested addon directories and
+hidden files are never copied into a parent addon.
 
 The remote is configured entirely through RCLONE_CONFIG_WOW_* environment
 variables, which Coder user secrets provide; wow-sync never reads a config file.
@@ -79,15 +78,18 @@ discover_addons() {
       name=$(addon_name_from_toc "$toc")
       [ -n "$name" ] || continue
       printf '%s\t%s\n' "$name" "$dir"
-    done < <(find "$repo" -maxdepth 3 -type f -name '*.toc' -not -path '*/.git/*' 2>/dev/null)
+    done < <(find "$repo" -maxdepth 3 -type f -name '*.toc' -not -path '*/.*/*' -not -ipath '*/libs/*' 2>/dev/null)
   done | sort -u
 }
 
 # Rewrites the staged copy into the dev variant: renamed .toc files, a marked
-# Title, and suffixed SavedVariables names in both the .toc and the Lua sources.
+# Title, suffixed SavedVariables names, and every reference to an addon of the
+# synced set (dependency lines, AddOns\<Name> paths, whole Lua string literals)
+# pointed at that addon's dev copy.
 apply_dev_suffix() {
   local stage=$1 name=$2 suffix=$3
-  local toc vars=() var expr=""
+  shift 3
+  local toc vars=() var expr="" dep_expr="" ref_expr="" member
 
   while IFS= read -r toc; do
     while IFS= read -r var; do
@@ -98,19 +100,30 @@ apply_dev_suffix() {
   for var in "${vars[@]+"${vars[@]}"}"; do
     expr+="s/\\b\Q${var}\E\\b/${var}${suffix}/g;"
   done
+  for member in "$@"; do
+    dep_expr+="s/(?<![\\w-])\Q${member}\E(?![\\w-])/${member}-${suffix}/g;"
+    ref_expr+="s/(AddOns[\\\\\\/]+)\Q${member}\E(?=[\\\\\\/])/\$1${member}-${suffix}/gi;"
+    ref_expr+="s/([\"'])\Q${member}\E\\1/\$1${member}-${suffix}\$1/g;"
+  done
 
   while IFS= read -r toc; do
     perl -pi -e "s/^(## Title:[^\\r\\n]*)/\$1 [${suffix^^}]/" "$toc"
     [ -n "$expr" ] && perl -pi -e "if (/^## SavedVariables(PerCharacter)?:/) { $expr }" "$toc"
+    [ -n "$dep_expr" ] && perl -pi -e "if (/^## (Dependencies|RequiredDeps|OptionalDeps|LoadWith|LoadManagers|Dep\\d*):/i) { $dep_expr }" "$toc"
+    [ -n "$ref_expr" ] && perl -pi -e "$ref_expr" "$toc"
     mv -- "$toc" "$stage/$name-$suffix${toc#"$stage/$name"}"
   done < <(find "$stage" -maxdepth 1 -type f -name "$name*.toc")
 
-  [ -n "$expr" ] || return 0
-  find "$stage" -type f -name '*.lua' -not -path '*/Libs/*' -exec perl -pi -e "$expr" {} +
+  [ -n "$expr" ] && find "$stage" -type f -name '*.lua' -not -path '*/Libs/*' -exec perl -pi -e "$expr" {} +
+  [ -n "$ref_expr" ] && find "$stage" -type f \( -name '*.lua' -o -name '*.xml' \) -not -path '*/Libs/*' -exec perl -pi -e "$ref_expr" {} +
+  return 0
 }
 
+# sync_addon <name> <src> <dry> <member>... ; SET_DIRS lists every addon
+# directory of the run so nested addons are left out of their parent's copy.
 sync_addon() {
   local name=$1 src=$2 dry=$3 stage target dest
+  shift 3
 
   case "$name" in
     '' | . | .. | */* | *\\*)
@@ -136,9 +149,16 @@ sync_addon() {
   # shellcheck disable=SC2064
   trap "rm -rf '$stage'" RETURN
 
-  rclone copy "$src" "$stage" "${STAGE_EXCLUDES[@]}" || { log "staging $name failed"; return 1; }
+  local nested=() other
+  for other in "${SET_DIRS[@]+"${SET_DIRS[@]}"}"; do
+    case "$other" in
+      "$src"/*) nested+=(--exclude "${other#"$src"/}/**") ;;
+    esac
+  done
+
+  rclone copy "$src" "$stage" "${STAGE_EXCLUDES[@]}" "${nested[@]+"${nested[@]}"}" || { log "staging $name failed"; return 1; }
   if [ -n "$WOW_DEV_SUFFIX" ]; then
-    apply_dev_suffix "$stage" "$name" "$WOW_DEV_SUFFIX" || { log "dev rewrite of $name failed"; return 1; }
+    apply_dev_suffix "$stage" "$name" "$WOW_DEV_SUFFIX" "$@" || { log "dev rewrite of $name failed"; return 1; }
   fi
 
   # rclone sync only ever deletes inside $dest, which is one addon directory,
@@ -151,7 +171,9 @@ sync_addon() {
 sync_all() {
   local dry=$1
   shift
-  local name src status=0 count=0 seen=""
+  local name src status=0 i seen=""
+  local names=() srcs=()
+  SET_DIRS=()
 
   while IFS=$'\t' read -r name src; do
     [ -n "$name" ] || continue
@@ -162,11 +184,15 @@ sync_all() {
         ;;
     esac
     seen="$seen|$name|"
-    count=$((count + 1))
-    sync_addon "$name" "$src" "$dry" || status=1
+    names+=("$name")
+    srcs+=("$src")
+    SET_DIRS+=("$src")
   done < <(discover_addons "$@")
 
-  [ "$count" -gt 0 ] || log "no addons found in: $*"
+  [ ${#names[@]} -gt 0 ] || log "no addons found in: $*"
+  for i in "${!names[@]}"; do
+    sync_addon "${names[$i]}" "${srcs[$i]}" "$dry" "${names[@]}" || status=1
+  done
   return "$status"
 }
 

@@ -29,6 +29,7 @@ Modules/init.lua
 TOC
 printf 'AlphaDB = AlphaDB or {}\nlocal x = AlphaDBExtra\nAlphaCharDB = 1\n' > "$REPO_A/Modules/init.lua"
 printf 'LibStub = LibStub or {}\n' > "$REPO_A/Libs/LibStub/LibStub.lua"
+printf '## Title: LibStub\nLibStub.lua\n' > "$REPO_A/Libs/LibStub/LibStub.toc"
 printf 'stale\n' > "$REPO_A/drop-me.lua"
 printf 'secret\n' > "$REPO_A/.git/config"
 
@@ -43,7 +44,32 @@ mkdir -p "$REPO_C/Gamma"
 printf '\xef\xbb\xbf## Interface: 110200\r\n## Title: Gamma\r\n## SavedVariables: GammaDB\r\nGamma.lua\r\n' > "$REPO_C/Gamma/Gamma.toc"
 printf 'GammaDB = GammaDB or {}\r\n' > "$REPO_C/Gamma/Gamma.lua"
 
-export CODER_REPO_DIRS="my-addon-repo,bundle,crlf"
+# A suite: the repository root is one addon and ships its modules as nested
+# addons that depend on it, reference each other by name, and load media
+# through Interface\AddOns\<Name> paths.
+REPO_D="$HOME/suite"
+mkdir -p "$REPO_D/SuiteBags" "$REPO_D/Libs/LibFoo" "$REPO_D/.tools" "$REPO_D/media"
+cat > "$REPO_D/Suite.toc" <<'TOC'
+## Interface: 110200
+## Title: Suite
+## IconTexture: Interface\AddOns\Suite\media\logo.tga
+## SavedVariables: SuiteDB
+Suite.lua
+TOC
+printf 'SuiteDB = SuiteDB or {}\nlocal colors = { ["Suite"] = 1, ["SuiteBags"] = 2, ["Suiteness"] = 3 }\nlocal font = "Interface\\\\AddOns\\\\Suite\\\\media\\\\f.ttf"\nif C_AddOns.IsAddOnLoaded("SuiteBags") then end\n' > "$REPO_D/Suite.lua"
+printf 'local n = "Suite"\n' > "$REPO_D/Libs/LibFoo/LibFoo.lua"
+printf 'x\n' > "$REPO_D/.tools/gen.sh"
+printf 'x\n' > "$REPO_D/media/logo.tga"
+cat > "$REPO_D/SuiteBags/SuiteBags.toc" <<'TOC'
+## Interface: 110200
+## Title: Suite Bags
+## Dependencies: Suite
+## OptionalDeps: LibStub, SuiteBags, Other
+SuiteBags.lua
+TOC
+printf 'if folder == "Suite" then end\nlocal t = "Interface/AddOns/suite/media/x.tga"\n' > "$REPO_D/SuiteBags/SuiteBags.lua"
+
+export CODER_REPO_DIRS="my-addon-repo,bundle,crlf,suite"
 
 # An unrelated addon already installed must survive every sync, and so must
 # the released copy of an addon that is being developed.
@@ -65,12 +91,30 @@ grep -q '^AlphaCharDBDev = 1$' "$ADDONS/Alpha-Dev/Modules/init.lua"
 grep -q 'AlphaDBExtra$' "$ADDONS/Alpha-Dev/Modules/init.lua"
 # Libraries are never rewritten.
 grep -q '^LibStub = LibStub or {}$' "$ADDONS/Alpha-Dev/Libs/LibStub/LibStub.lua"
+[[ -f "$ADDONS/Alpha-Dev/Libs/LibStub/LibStub.toc" ]]
+[[ ! -e "$ADDONS/LibStub-Dev" ]]
 [[ ! -e "$ADDONS/Alpha-Dev/.git" ]]
 [[ ! -e "$ADDONS/my-addon-repo" ]]
 [[ -f "$ADDONS/Beta-Dev/Beta-Dev_Mainline.toc" ]]
 # CRLF endings and the BOM survive; the suffix lands before the CR, never after it.
 printf '\xef\xbb\xbf## Interface: 110200\r\n## Title: Gamma [DEV]\r\n## SavedVariables: GammaDBDev\r\nGamma.lua\r\n' | cmp -s - "$ADDONS/Gamma-Dev/Gamma-Dev.toc"
 printf 'GammaDBDev = GammaDBDev or {}\r\n' | cmp -s - "$ADDONS/Gamma-Dev/Gamma.lua"
+# A suite: nested addons and hidden directories stay out of the parent, and
+# every reference between members follows the rename.
+[[ ! -e "$ADDONS/Suite-Dev/SuiteBags" ]]
+[[ ! -e "$ADDONS/Suite-Dev/.tools" ]]
+[[ -f "$ADDONS/Suite-Dev/media/logo.tga" ]]
+grep -q '^## IconTexture: Interface\\AddOns\\Suite-Dev\\media\\logo.tga$' "$ADDONS/Suite-Dev/Suite-Dev.toc"
+grep -q '^## SavedVariables: SuiteDBDev$' "$ADDONS/Suite-Dev/Suite-Dev.toc"
+grep -q '^## Dependencies: Suite-Dev$' "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc"
+grep -q '^## OptionalDeps: LibStub, SuiteBags-Dev, Other$' "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc"
+grep -qF '["Suite-Dev"] = 1, ["SuiteBags-Dev"] = 2, ["Suiteness"] = 3' "$ADDONS/Suite-Dev/Suite.lua"
+grep -qF 'Interface\\AddOns\\Suite-Dev\\media\\f.ttf' "$ADDONS/Suite-Dev/Suite.lua"
+grep -qF 'IsAddOnLoaded("SuiteBags-Dev")' "$ADDONS/Suite-Dev/Suite.lua"
+grep -q '^SuiteDBDev = SuiteDBDev or {}$' "$ADDONS/Suite-Dev/Suite.lua"
+grep -qxF 'local n = "Suite"' "$ADDONS/Suite-Dev/Libs/LibFoo/LibFoo.lua"
+grep -qF 'if folder == "Suite-Dev" then' "$ADDONS/SuiteBags-Dev/SuiteBags.lua"
+grep -qF 'Interface/AddOns/Suite-Dev/media/x.tga' "$ADDONS/SuiteBags-Dev/SuiteBags.lua"
 [[ "$(<"$ADDONS/Bystander/Bystander.toc")" == keep ]]
 [[ "$(<"$ADDONS/Alpha/Alpha.toc")" == release ]]
 

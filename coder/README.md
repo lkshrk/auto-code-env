@@ -117,6 +117,15 @@ two copies toggle independently in the addon list and never share settings,
 which live under `WTF/`, not `Interface/AddOns`. An empty suffix syncs under the
 real name and overwrites the release.
 
+Addons synced in one run form a set, so a suite such as BigWigs or EllesmereUI
+keeps working as a whole: `## Dependencies: Alpha` becomes `Alpha-Dev`,
+`Interface\AddOns\Alpha\media\x.tga` follows the rename, and a Lua string
+literal that is exactly an addon name (`IsAddOnLoaded("AlphaBags")`,
+`folder == "AlphaBags"`) becomes `"AlphaBags-Dev"`. Only whole literals are
+rewritten; a name built at runtime (`"Alpha" .. mod`) is not seen. Nested
+addon directories, embedded libraries with their own `.toc` under `Libs/`, and
+hidden files never end up inside another addon's copy.
+
 The transport is SFTP to a small `rclone serve sftp` on the desktop, set up
 from h-cloud with `just talos wow-sync-server -AuthorizedKey '"<pubkey>"'`
 (`talos/hyperv/Enable-WowSync.ps1`). It runs as a scheduled task under SYSTEM,
