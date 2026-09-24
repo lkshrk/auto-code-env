@@ -5,6 +5,7 @@ set -euo pipefail
 : "${WOW_ADDONS_PATH:?WOW_ADDONS_PATH is required}"
 : "${WOW_DEV_SUFFIX=Dev}"
 : "${WOW_REMOTE:=wow}"
+: "${WOW_SWITCH_ADDON:=WowSync}"
 export RCLONE_CONFIG=/dev/null
 
 readonly STAGE_EXCLUDES=(
@@ -27,11 +28,12 @@ readonly SYNC_FLAGS=(
 
 usage() {
   cat <<'USAGE'
-Usage: wow-sync [--watch] [--dry-run] [repo...]
+Usage: wow-sync [--watch] [--dry-run] [--addon NAME]... [--changed] [path...]
+       wow-sync --off
 
-Pushes every addon found in the given checkouts to the game's AddOns directory
-on the rclone remote `wow:`, at WOW_ADDONS_PATH. With no repo arguments, uses
-CODER_REPO_DIRS.
+Pushes addons found under the given paths (repositories or single addon
+directories) to the game's AddOns directory on the rclone remote `wow:`, at
+WOW_ADDONS_PATH. With no path arguments, uses CODER_REPO_DIRS.
 
 An addon is any directory holding a .toc file, except embedded libraries under
 Libs/; the addon name comes from the .toc, not from the directory, so a
@@ -43,14 +45,23 @@ SavedVariables name gains the suffix in the .toc and in the Lua sources. The
 dev copy then runs beside the released addon and cannot touch its settings.
 Addons synced together form a set: dependency lines, Interface\AddOns\<Name>
 paths and Lua string literals naming another member are pointed at its dev
-copy, so a suite keeps working as a whole. Nested addon directories and
-hidden files are never copied into a parent addon.
+copy, so a suite keeps working as a whole. Sync a single module directory and
+its references keep pointing at the released rest of the suite. Nested addon
+directories and hidden files are never copied into a parent addon.
+
+Every dev sync also installs the helper addon WowSync, which at login disables
+each released addon that has a dev copy and enables the copy, then reloads
+once. In game, /wowsync release|dev|status flips between the two.
 
 The remote is configured entirely through RCLONE_CONFIG_WOW_* environment
 variables, which Coder user secrets provide; wow-sync never reads a config file.
 
-  --watch     resync on every change instead of exiting after one pass
-  --dry-run   show what rclone would change without writing to the game
+  --addon NAME  sync only this addon of those found (repeatable)
+  --changed     sync only addons with uncommitted changes or commits ahead of
+                their git upstream
+  --watch       resync on every change instead of exiting after one pass
+  --dry-run     show what rclone would change without writing to the game
+  --off         switch the game back to the released addons at next login
 USAGE
 }
 
@@ -68,18 +79,34 @@ addon_name_from_toc() {
   printf '%s\n' "$base"
 }
 
-# Emits "<name>\t<directory>" for every addon directory in the given checkouts.
+# Emits "<name>\t<directory>" for every addon directory under the given paths.
 discover_addons() {
-  local repo toc dir name
-  for repo in "$@"; do
-    [ -d "$repo" ] || continue
+  local path toc dir name
+  for path in "$@"; do
+    [ -d "$path" ] || continue
     while IFS= read -r toc; do
       dir=${toc%/*}
       name=$(addon_name_from_toc "$toc")
       [ -n "$name" ] || continue
       printf '%s\t%s\n' "$name" "$dir"
-    done < <(find "$repo" -maxdepth 3 -type f -name '*.toc' -not -path '*/.*/*' -not -ipath '*/libs/*' 2>/dev/null)
+    done < <(find "$path" -maxdepth 3 -type f -name '*.toc' -not -path '*/.*/*' -not -ipath '*/libs/*' 2>/dev/null)
   done | sort -u
+}
+
+# Emits absolute paths of files changed in the checkout holding $1: the working
+# tree against HEAD, plus commits ahead of the upstream branch when one is set.
+changed_files() {
+  local root
+  root=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 0
+  {
+    git -C "$root" status --porcelain --untracked-files=all | cut -c4- | sed -E 's/^.* -> //'
+    git -C "$root" diff --name-only '@{upstream}...HEAD' 2>/dev/null || true
+  } | sed "s|^|$root/|" | sort -u
+}
+
+# Highest ## Interface number declared by the given .toc files.
+max_interface() {
+  cat "$@" 2>/dev/null | sed -n -E 's/^## Interface:[[:space:]]*//p' | tr -d ' \t\r' | tr ',' '\n' | grep -E '^[0-9]+$' | sort -n | tail -1
 }
 
 # Rewrites the staged copy into the dev variant: renamed .toc files, a marked
@@ -119,6 +146,17 @@ apply_dev_suffix() {
   return 0
 }
 
+# A destination that exists but holds no <target>*.toc belongs to something
+# else; sync would delete its contents, so refuse instead of guessing.
+check_dest() {
+  local name=$1 target=$2 dest=$3 existing
+  if existing=$(rclone lsf "$dest" --max-depth 1 2>/dev/null) && [ -n "$existing" ] \
+    && ! printf '%s\n' "$existing" | grep -qi "^${target}.*\.toc$"; then
+    log "refusing to sync $name: $dest exists and is not a $target addon (no $target*.toc)"
+    return 1
+  fi
+}
+
 # sync_addon <name> <src> <dry> <member>... ; SET_DIRS lists every addon
 # directory of the run so nested addons are left out of their parent's copy.
 sync_addon() {
@@ -135,15 +173,7 @@ sync_addon() {
   target=$name
   [ -n "$WOW_DEV_SUFFIX" ] && target="$name-$WOW_DEV_SUFFIX"
   dest="$WOW_REMOTE:${WOW_ADDONS_PATH%/}/$target"
-
-  # A destination that exists but holds no <target>.toc belongs to something
-  # else; sync would delete its contents, so refuse instead of guessing.
-  local existing
-  if existing=$(rclone lsf "$dest" --max-depth 1 2>/dev/null) && [ -n "$existing" ] \
-    && ! printf '%s\n' "$existing" | grep -qi "^${target}.*\.toc$"; then
-    log "refusing to sync $name: $dest exists and is not a $target addon (no $target*.toc)"
-    return 1
-  fi
+  check_dest "$name" "$target" "$dest" || return 1
 
   stage=$(mktemp -d -t wow-sync.XXXXXX)
   # shellcheck disable=SC2064
@@ -168,11 +198,120 @@ sync_addon() {
   log "synced $name -> $dest"
 }
 
+# Installs the in-game switch addon. Its Interface version follows the synced
+# addons, else the copy already on the remote, so the game never hides it.
+install_switch_addon() {
+  local mode=$1 interface=$2 dry=$3 dest stage
+  dest="$WOW_REMOTE:${WOW_ADDONS_PATH%/}/$WOW_SWITCH_ADDON"
+  [ -n "$dry" ] && return 0
+  check_dest "$WOW_SWITCH_ADDON" "$WOW_SWITCH_ADDON" "$dest" || return 1
+
+  if [ -z "$interface" ]; then
+    interface=$(rclone cat "$dest/$WOW_SWITCH_ADDON.toc" 2>/dev/null | sed -n -E 's/^## Interface:[[:space:]]*//p' | tr -d ' \r')
+  fi
+  if [ -z "$interface" ]; then
+    log "no ## Interface found to give $WOW_SWITCH_ADDON; set WOW_INTERFACE or sync an addon first"
+    return 1
+  fi
+
+  stage=$(mktemp -d -t wow-sync.XXXXXX)
+  # shellcheck disable=SC2064
+  trap "rm -rf '$stage'" RETURN
+
+  cat > "$stage/$WOW_SWITCH_ADDON.toc" <<TOC
+## Interface: $interface
+## Title: $WOW_SWITCH_ADDON
+## Notes: Switches between released addons and the -$WOW_DEV_SUFFIX copies pushed by wow-sync.
+## SavedVariables: WowSyncDB
+Mode.lua
+$WOW_SWITCH_ADDON.lua
+TOC
+  printf 'WowSyncMode = "%s"\nWowSyncStamp = "%s"\n' "$mode" "$(date +%s)" > "$stage/Mode.lua"
+  cat > "$stage/$WOW_SWITCH_ADDON.lua" <<'LUA'
+local SUFFIX = "-@SUFFIX@"
+local RELOAD_GUARD = 60
+
+local function devAddons()
+  local list = {}
+  for i = 1, C_AddOns.GetNumAddOns() do
+    local name = C_AddOns.GetAddOnInfo(i)
+    if name:sub(-#SUFFIX) == SUFFIX then list[#list + 1] = name end
+  end
+  return list
+end
+
+local function isEnabled(name)
+  return C_AddOns.GetAddOnEnableState(name, UnitName("player")) ~= Enum.AddOnEnableState.None
+end
+
+local function setEnabled(name, on)
+  if on then C_AddOns.EnableAddOn(name, UnitName("player")) else C_AddOns.DisableAddOn(name, UnitName("player")) end
+end
+
+local function apply(mode)
+  local wantDev, changed = mode == "dev", 0
+  for _, dev in ipairs(devAddons()) do
+    local rel = dev:sub(1, -#SUFFIX - 1)
+    if isEnabled(dev) ~= wantDev then setEnabled(dev, wantDev) changed = changed + 1 end
+    if C_AddOns.DoesAddOnExist(rel) and isEnabled(rel) == wantDev then setEnabled(rel, not wantDev) changed = changed + 1 end
+    local _, _, _, loadable, reason = C_AddOns.GetAddOnInfo(dev)
+    if wantDev and not loadable and reason ~= "DISABLED" then
+      print(("|cff33ff99WowSync|r: %s is not loadable (%s); tick 'Load out of date AddOns' if it is INTERFACE_VERSION"):format(dev, tostring(reason)))
+    end
+  end
+  return changed
+end
+
+local function status()
+  local list = devAddons()
+  print(("|cff33ff99WowSync|r: mode %s, %d dev copies: %s"):format(WowSyncDB.mode, #list, table.concat(list, ", ")))
+end
+
+local function switch(mode, reason)
+  WowSyncDB.mode = mode
+  local changed = apply(mode)
+  if changed == 0 then status() return end
+  if WowSyncDB.lastReload and time() - WowSyncDB.lastReload < RELOAD_GUARD then
+    print(("|cff33ff99WowSync|r: %d addon states changed for %s mode but a reload just happened; /reload by hand"):format(changed, mode))
+    return
+  end
+  WowSyncDB.lastReload = time()
+  print(("|cff33ff99WowSync|r: %s, switched %d addon states to %s mode, reloading"):format(reason, changed, mode))
+  C_Timer.After(1, ReloadUI)
+end
+
+SLASH_WOWSYNC1 = "/wowsync"
+SlashCmdList.WOWSYNC = function(msg)
+  msg = (msg or ""):lower():match("^%s*(%S*)")
+  if msg == "dev" or msg == "release" then
+    switch(msg, "/wowsync " .. msg)
+  else
+    status()
+  end
+end
+
+local f = CreateFrame("Frame")
+f:RegisterEvent("PLAYER_LOGIN")
+f:SetScript("OnEvent", function()
+  WowSyncDB = WowSyncDB or {}
+  if WowSyncDB.stamp ~= WowSyncStamp then
+    WowSyncDB.stamp = WowSyncStamp
+    WowSyncDB.mode = WowSyncMode
+  end
+  switch(WowSyncDB.mode or WowSyncMode, "login")
+end)
+LUA
+  perl -pi -e "s/\@SUFFIX\@/${WOW_DEV_SUFFIX}/" "$stage/$WOW_SWITCH_ADDON.lua"
+
+  rclone sync "$stage" "$dest" "${SYNC_FLAGS[@]}" || { log "install of $WOW_SWITCH_ADDON failed"; return 1; }
+  log "installed $WOW_SWITCH_ADDON (mode $mode, Interface $interface)"
+}
+
 sync_all() {
   local dry=$1
   shift
-  local name src status=0 i seen=""
-  local names=() srcs=()
+  local name src status=0 i j seen="" changed=() f best
+  local names=() srcs=() pick=()
   SET_DIRS=()
 
   while IFS=$'\t' read -r name src; do
@@ -187,12 +326,72 @@ sync_all() {
     names+=("$name")
     srcs+=("$src")
     SET_DIRS+=("$src")
+    pick+=(1)
   done < <(discover_addons "$@")
 
-  [ ${#names[@]} -gt 0 ] || log "no addons found in: $*"
+  if [ ${#ONLY_ADDONS[@]} -gt 0 ]; then
+    for i in "${!names[@]}"; do
+      pick[i]=0
+      for name in "${ONLY_ADDONS[@]}"; do
+        [ "${names[$i]}" = "$name" ] && pick[i]=1
+      done
+    done
+  fi
+
+  if [ "$CHANGED_ONLY" -eq 1 ]; then
+    # git reports physical paths, so addon directories are compared the same way.
+    local real=()
+    for i in "${!srcs[@]}"; do real+=("$(cd "${srcs[$i]}" && pwd -P)"); done
+    for src in "$@"; do
+      while IFS= read -r f; do
+        [ -n "$f" ] && changed+=("$f")
+      done < <(changed_files "$src")
+    done
+    for i in "${!names[@]}"; do
+      [ "${pick[$i]}" -eq 1 ] || continue
+      pick[i]=0
+      for f in "${changed[@]+"${changed[@]}"}"; do
+        case "$f" in
+          "${real[$i]}"/*) ;;
+          *) continue ;;
+        esac
+        # A change inside a nested addon belongs to the nested addon.
+        best=1
+        for j in "${!real[@]}"; do
+          [ "$j" != "$i" ] && case "${real[$j]}" in "${real[$i]}"/*) case "$f" in "${real[$j]}"/*) best=0 ;; esac ;; esac
+        done
+        [ "$best" -eq 1 ] && { pick[i]=1; break; }
+      done
+    done
+  fi
+
+  local members=() tocs=() count=0
   for i in "${!names[@]}"; do
-    sync_addon "${names[$i]}" "${srcs[$i]}" "$dry" "${names[@]}" || status=1
+    [ "${pick[$i]}" -eq 1 ] || continue
+    members+=("${names[$i]}")
+    while IFS= read -r f; do tocs+=("$f"); done < <(find "${srcs[$i]}" -maxdepth 1 -type f -name '*.toc')
   done
+
+  if [ ${#members[@]} -eq 0 ]; then
+    [ ${#names[@]} -gt 0 ] && log "nothing selected to sync" || log "no addons found in: $*"
+    return 0
+  fi
+
+  for i in "${!names[@]}"; do
+    [ "${pick[$i]}" -eq 1 ] || continue
+    if [ -n "$WOW_DEV_SUFFIX" ]; then
+      count=0
+      for j in "${!srcs[@]}"; do
+        [ "${pick[$j]}" -eq 0 ] && case "${srcs[$j]}" in "${srcs[$i]}"/*) count=$((count + 1)) ;; esac
+      done
+      [ "$count" -gt 0 ] && log "warning: ${names[$i]} goes out as ${names[$i]}-$WOW_DEV_SUFFIX while $count nested addon(s) stay on the released ${names[$i]}; sync them together or set WOW_DEV_SUFFIX=''"
+    fi
+    sync_addon "${names[$i]}" "${srcs[$i]}" "$dry" "${members[@]}" || status=1
+  done
+
+  if [ -n "$WOW_DEV_SUFFIX" ]; then
+    install_switch_addon dev "${WOW_INTERFACE:-$(max_interface "${tocs[@]+"${tocs[@]}"}")}" "$dry" || status=1
+  fi
   return "$status"
 }
 
@@ -224,8 +423,11 @@ watch_repos() {
   done
 }
 
+ONLY_ADDONS=()
+CHANGED_ONLY=0
+
 main() {
-  local watch=0 dry=""
+  local watch=0 dry="" off=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --watch)
@@ -234,6 +436,19 @@ main() {
         ;;
       --dry-run)
         dry="--dry-run"
+        shift
+        ;;
+      --addon)
+        [ $# -ge 2 ] || { usage >&2; return 2; }
+        ONLY_ADDONS+=("$2")
+        shift 2
+        ;;
+      --changed)
+        CHANGED_ONLY=1
+        shift
+        ;;
+      --off)
+        off=1
         shift
         ;;
       -h | --help)
@@ -265,6 +480,12 @@ main() {
 
   if [ "$WOW_ADDONS_PATH" != "/" ] && [ "${WOW_ADDONS_PATH##*/}" != "AddOns" ]; then
     log "warning: $WOW_ADDONS_PATH is not named AddOns; check the remote path"
+  fi
+
+  if [ "$off" -eq 1 ]; then
+    [ -n "$WOW_DEV_SUFFIX" ] || { log "--off needs WOW_DEV_SUFFIX; nothing to switch"; return 1; }
+    install_switch_addon release "${WOW_INTERFACE:-}" "$dry"
+    return
   fi
 
   local repos=() entry

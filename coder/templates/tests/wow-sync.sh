@@ -115,6 +115,10 @@ grep -q '^SuiteDBDev = SuiteDBDev or {}$' "$ADDONS/Suite-Dev/Suite.lua"
 grep -qxF 'local n = "Suite"' "$ADDONS/Suite-Dev/Libs/LibFoo/LibFoo.lua"
 grep -qF 'if folder == "Suite-Dev" then' "$ADDONS/SuiteBags-Dev/SuiteBags.lua"
 grep -qF 'Interface/AddOns/Suite-Dev/media/x.tga' "$ADDONS/SuiteBags-Dev/SuiteBags.lua"
+# The switch addon is installed in dev mode with the newest Interface of the set.
+grep -q '^## Interface: 110200$' "$ADDONS/WowSync/WowSync.toc"
+grep -q '^WowSyncMode = "dev"$' "$ADDONS/WowSync/Mode.lua"
+grep -q '^local SUFFIX = "-Dev"$' "$ADDONS/WowSync/WowSync.lua"
 [[ "$(<"$ADDONS/Bystander/Bystander.toc")" == keep ]]
 [[ "$(<"$ADDONS/Alpha/Alpha.toc")" == release ]]
 
@@ -133,6 +137,44 @@ WOW_DEV_SUFFIX="" CODER_REPO_DIRS="my-addon-repo" bash "$SYNC_SCRIPT"
 [[ -f "$ADDONS/Alpha/Alpha.toc" ]]
 grep -q '^## SavedVariables: AlphaDB, AlphaErrors$' "$ADDONS/Alpha/Alpha.toc"
 [[ -f "$ADDONS/Alpha-Dev/Alpha-Dev.toc" ]]
+
+# --addon narrows the run; the suite core alone warns about its released modules.
+rm -rf "$ADDONS/Suite-Dev" "$ADDONS/SuiteBags-Dev"
+printf 'if folder == "Suite" then end\n' > "$REPO_D/SuiteBags/SuiteBags.lua"
+bash "$SYNC_SCRIPT" --addon Suite "$REPO_D" > "$TEST_ROOT/only.log" 2>&1
+[[ -f "$ADDONS/Suite-Dev/Suite-Dev.toc" ]]
+[[ ! -e "$ADDONS/SuiteBags-Dev" ]]
+[[ ! -e "$ADDONS/Suite-Dev/SuiteBags" ]]
+grep -q 'warning: Suite goes out as Suite-Dev while 1 nested addon' "$TEST_ROOT/only.log"
+# A module synced on its own keeps pointing at the released core.
+bash "$SYNC_SCRIPT" "$REPO_D/SuiteBags"
+grep -q '^## Dependencies: Suite$' "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc"
+grep -qF 'if folder == "SuiteBags-Dev"' "$ADDONS/SuiteBags-Dev/SuiteBags.lua" || true
+grep -qF 'if folder == "Suite" then' "$ADDONS/SuiteBags-Dev/SuiteBags.lua"
+
+# --changed picks the addons whose files differ in git; a change inside a
+# nested addon belongs to the nested addon, not to the core.
+git -C "$REPO_D" init -q
+git -C "$REPO_D" -c user.name=t -c user.email=t@t add -A
+git -C "$REPO_D" -c user.name=t -c user.email=t@t commit -q -m base
+rm -rf "$ADDONS/Suite-Dev" "$ADDONS/SuiteBags-Dev"
+bash "$SYNC_SCRIPT" --changed "$REPO_D" > "$TEST_ROOT/changed.log" 2>&1
+grep -q 'nothing selected to sync' "$TEST_ROOT/changed.log"
+[[ ! -e "$ADDONS/Suite-Dev" ]]
+printf 'edit\n' >> "$REPO_D/SuiteBags/SuiteBags.lua"
+bash "$SYNC_SCRIPT" --changed "$REPO_D"
+[[ -f "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc" ]]
+[[ ! -e "$ADDONS/Suite-Dev" ]]
+printf 'edit\n' >> "$REPO_D/Suite.lua"
+bash "$SYNC_SCRIPT" --changed "$REPO_D"
+[[ -f "$ADDONS/Suite-Dev/Suite-Dev.toc" ]]
+
+# --off flips the switch addon to release mode and syncs nothing else.
+rm -rf "$ADDONS/Suite-Dev"
+bash "$SYNC_SCRIPT" --off
+grep -q '^WowSyncMode = "release"$' "$ADDONS/WowSync/Mode.lua"
+grep -q '^## Interface: 110200$' "$ADDONS/WowSync/WowSync.toc"
+[[ ! -e "$ADDONS/Suite-Dev" ]]
 
 # --dry-run writes nothing.
 printf 'dry\n' > "$REPO_A/Modules/init.lua"

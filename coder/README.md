@@ -107,7 +107,11 @@ dev variant, and runs `rclone sync` into `<wow_addons_path>/<Name>-<suffix>`.
 rclone writes each file once, retries, and verifies size and modification time,
 so the stage-then-verify dance a hand-written copy needs is built in.
 `wow-sync --watch` repeats that on every change; `--dry-run` shows the plan.
-WoW reads addon files only at load, so `/reload` in game after a sync.
+`/reload` in game after a sync. A path may also be a single addon directory
+inside a repository, `--addon NAME` narrows a run to named addons, and
+`--changed` syncs only addons whose files differ in git (uncommitted, or
+committed ahead of the upstream branch), so the module being edited is the
+only thing that moves.
 
 `wow_dev_suffix` (default `Dev`) is what makes this safe to run beside the
 released addon: `Alpha` is installed as `Alpha-Dev` with `Alpha-Dev.toc`, its
@@ -124,7 +128,18 @@ literal that is exactly an addon name (`IsAddOnLoaded("AlphaBags")`,
 `folder == "AlphaBags"`) becomes `"AlphaBags-Dev"`. Only whole literals are
 rewritten; a name built at runtime (`"Alpha" .. mod`) is not seen. Nested
 addon directories, embedded libraries with their own `.toc` under `Libs/`, and
-hidden files never end up inside another addon's copy.
+hidden files never end up inside another addon's copy. Syncing one module
+directory alone keeps its references on the released rest of the suite, which
+is the right thing for a small fix; syncing the core alone while its modules
+stay released prints a warning, since the released modules would still load
+the released core.
+
+Every dev sync also installs `WowSync`, a small helper addon: at login it
+disables each released addon that has a dev copy, enables the copy, and
+reloads once. `/wowsync release` and `/wowsync dev` flip between the two in
+game, `/wowsync` prints the state, `wow-sync --off` flips to release at the
+next login. Its `## Interface` follows the synced addons, so it never counts
+as out of date while they do not.
 
 The transport is SFTP to a small `rclone serve sftp` on the desktop, set up
 from h-cloud with `just talos wow-sync-server -AuthorizedKey '"<pubkey>"'`
