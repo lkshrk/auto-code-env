@@ -78,7 +78,7 @@ jobs:
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" targets-changed "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/coder-template-targets"
-          elif [[ "$GITHUB_EVENT_NAME" == push && "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+          elif [[ "$GITHUB_EVENT_NAME" == push && "${BEFORE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
             bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" targets-changed "$BEFORE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/coder-template-targets"
           else
             bash coder/scripts/select-templates.sh "$GITHUB_WORKSPACE" targets > "$RUNNER_TEMP/coder-template-targets"

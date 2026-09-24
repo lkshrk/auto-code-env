@@ -162,7 +162,7 @@ class SelectionTests(unittest.TestCase):
         self.select("targets-changed", self.base, self.commit(), success=False)
 
 
-    def workflow_selection(self, event, base=None, success=True):
+    def workflow_selection(self, event, base=None, success=True, before=None):
         workflow = SCRIPT.parents[2] / ".github/workflows/coder-templates.yaml"
         lines = workflow.read_text().splitlines()
         start = lines.index("      - name: Select templates")
@@ -181,7 +181,8 @@ class SelectionTests(unittest.TestCase):
         output.write_text("")
         env = dict(self.env, GITHUB_WORKSPACE=str(self.root), RUNNER_TEMP=str(runner),
                    GITHUB_OUTPUT=str(output), GITHUB_EVENT_NAME=event,
-                   BASE_SHA=base or self.base, HEAD_SHA=self.git("rev-parse", "HEAD"))
+                   BASE_SHA=base or self.base, HEAD_SHA=self.git("rev-parse", "HEAD"),
+                   **({"BEFORE_SHA": before} if before is not None else {}))
         result = subprocess.run(["bash", "-c", "\n".join(body)], cwd=self.root, env=env, capture_output=True, text=True)
         if success:
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -214,6 +215,25 @@ class SelectionTests(unittest.TestCase):
         expected = self.select("targets")
         self.assertEqual(self.workflow_selection("push", base), expected)
         self.assertEqual(self.workflow_selection("workflow_dispatch", base), expected)
+
+    def test_workflow_push_selects_changed_targets_since_before(self):
+        self.catalog()
+        base = self.commit()
+        self.write("coder/templates/alpha/extra.tf")
+        self.commit()
+        self.assertEqual(self.workflow_selection("push", before=self.git("rev-parse", base)), [])
+        self.write("coder/templates/dev/extra.tf")
+        self.commit()
+        self.assertEqual(self.workflow_selection("push", before=self.git("rev-parse", base)), self.select("targets"))
+
+    def test_workflow_push_without_usable_before_selects_all_targets(self):
+        self.catalog()
+        self.commit()
+        self.write("coder/templates/alpha/extra.tf")
+        self.commit()
+        expected = self.select("targets")
+        self.assertEqual(self.workflow_selection("push", before="0000000000000000000000000000000000000000"), expected)
+        self.assertEqual(self.workflow_selection("push", before=""), expected)
 
     def test_workflow_invalid_git_fails_without_success_output(self):
         self.catalog()
