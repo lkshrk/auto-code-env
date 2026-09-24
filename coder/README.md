@@ -166,11 +166,12 @@ or `/reload` afterwards; the client holds files open while loading.
 `coder-templates.yaml` runs on pull requests, on pushes to `main`, and on
 `workflow_dispatch`.
 
-- Pull requests package affected catalog targets. Main pushes and manual runs
-  validate every catalog target. No legacy selection or publication option exists.
+- Pull requests and pushes to `main` package the catalog targets affected by
+  the change; manual runs validate every catalog target.
 - Packages are built once and validated with pinned OpenTofu before publication.
-- Pushes to `main` validate only. Publication requires `workflow_dispatch` on
-  `main` with `publish: true`.
+- Every green push to `main` publishes the affected templates, tested against
+  the dotfiles default branch head. `workflow_dispatch` with `publish: true`
+  re-publishes everything or pins a specific `dotfiles_revision`.
 - CI exercises the version-1 dotfiles resolver/core-layout contract and companion
   component tests without installing tools or syncing the runner's dotfiles. Manual
   publication requires `dotfiles_revision` to be a full tested commit SHA matching
