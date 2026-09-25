@@ -32,7 +32,6 @@
   "max_output_tokens": 65536,
   "model": "anthropic/anthropic-auto",
   "model_canonical_name": null,
-  "modify_params": true,
   "native_tool_calling": true,
   "num_retries": 5,
   "ollama_base_url": null,

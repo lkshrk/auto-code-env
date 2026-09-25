@@ -1,6 +1,6 @@
 {
   "name": "h-cloud-upgrader",
-  "model": "claude-opus-5",
+  "model": "smart-auto",
   "timeout": 43200,
   "keep_alive": false,
   "enabled": true,

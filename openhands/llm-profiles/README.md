@@ -25,7 +25,10 @@ config with `GET /api/profiles/<name>` (the body is under `.config`).
 ## What the profiles point at
 
 Every profile targets the LiteLLM gateway. `claude-*` and `gpt-*` name one
-model; the `*-auto` profiles name a router that picks per request:
+model family (`claude-opus`, `gpt-sol`, ...): the gateway pins the concrete
+upstream id per family and follows the newest one CLIProxyAPI serves, so these
+profiles never carry a version. The `*-auto` profiles name a router that picks
+per request:
 
 | profile | routes to |
 | --- | --- |
