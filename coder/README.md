@@ -47,13 +47,20 @@ must never reference a backend resource.
 
 There is no second backend for the Windows desktop any more. towerr runs the
 Talos worker `k8s-12` in a Hyper-V VM (h-cloud `talos/nodes/k8s-12.yaml.j2`),
-tainted `dedicated=towerr:NoSchedule`. The `dev` template's `location`
-parameter (`cluster` default, preset `desktop`) adds the matching node selector
-and toleration and switches the home PVC to `openebs-hostpath`, so the home
-lives on the VM's data disk and follows the node. While the desktop is off the
-node is NotReady, the pod is evicted, and `coder start` waits; nothing needs
-`--orphan`. Cluster Secrets, the service-account token and the kubeconfig are
-identical to any other workspace.
+tainted `dedicated=towerr:NoSchedule`. Every workspace pod tolerates that
+taint. The `dev` template's `location` parameter decides the rest:
+
+- `cluster` (default): `ceph-block` home, node affinity that prefers k8s-12.
+  The workspace lands on the desktop whenever it is up and on k8s-01/02 when it
+  is not; the home follows because Ceph is network storage and the RBD/CephFS
+  node plugins tolerate the taint (h-cloud `ceph-csi-drivers` HelmRelease).
+- `desktop` (preset): node selector for k8s-12 and an `openebs-hostpath` home
+  on the VM's data disk. Faster, node-bound: while the desktop is off the node
+  is NotReady, the pod is evicted, and `coder start` waits; nothing needs
+  `--orphan`. For I/O-heavy work such as `wow-sync --watch`.
+
+Cluster Secrets, the service-account token and the kubeconfig are identical
+either way.
 
 ## Claude Code language servers
 

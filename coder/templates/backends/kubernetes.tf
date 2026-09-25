@@ -42,7 +42,7 @@ data "coder_parameter" "disk_size" {
 data "coder_parameter" "location" {
   name         = "location"
   display_name = "Location"
-  description  = "cluster: any h-cloud node, Ceph-backed home. desktop: the k8s-12 VM on towerr, node-local home, unavailable while the desktop is off."
+  description  = "cluster: Ceph-backed home, runs on the desktop VM k8s-12 whenever it is up and on any other node otherwise. desktop: pinned to k8s-12 with a node-local NVMe home, unavailable while the desktop is off."
   default      = "cluster"
   mutable      = false
   option {
@@ -134,13 +134,28 @@ resource "kubernetes_pod_v1" "workspace" {
     automount_service_account_token = false
     node_selector                   = local.node_selector
 
-    dynamic "toleration" {
-      for_each = local.desktop ? [1] : []
+    toleration {
+      key      = "dedicated"
+      operator = "Equal"
+      value    = "towerr"
+      effect   = "NoSchedule"
+    }
+
+    dynamic "affinity" {
+      for_each = local.desktop ? [] : [1]
       content {
-        key      = "dedicated"
-        operator = "Equal"
-        value    = "towerr"
-        effect   = "NoSchedule"
+        node_affinity {
+          preferred_during_scheduling_ignored_during_execution {
+            weight = 100
+            preference {
+              match_expressions {
+                key      = "dedicated"
+                operator = "In"
+                values   = ["towerr"]
+              }
+            }
+          }
+        }
       }
     }
 
