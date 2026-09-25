@@ -121,16 +121,17 @@ appear:
 - `skipped:deadline` / "ran out of time" — there is no deadline.
 - `skipped:major` — a major is processed like anything else: research it fully, then
   apply or ask. Majors go last, not away.
-- `skipped:risk` / "looked dangerous" — risk is the reason to ask, never the reason
-  to stay silent. Comment on the PR.
+- `skipped:risk` / "looked dangerous" — risk is handled by migrating, verifying and
+  fixing (section 3 step 4, section 4 step 6). If a blocked criterion holds, ask.
 - `skipped:hard-to-verify` — see section 3 step 5.
 - `skipped:no-pr` — see section 5 for what to do when no Renovate PR exists.
 - "left for next run" for any reason other than embargo or budget.
 
-If you find yourself wanting to skip for any reason not in the sanctioned list, that
-is an ask: comment on the PR (section 5), record `asked:#N`, and move on. Silence is
-the one outcome that is always wrong — an undecided dependency is invisible to the
-operator, whereas a PR comment is a decision they can act on.
+If you find yourself wanting to skip for any reason not in the sanctioned list, apply
+it — with a migration where one is needed (section 3 step 4). Only if one of the
+blocked criteria there holds, comment on the PR (section 5), record `asked:#N`, and
+move on. Silence is the one outcome that is always wrong — an undecided dependency is
+invisible to the operator, whereas a PR comment is a decision they can act on.
 
 ## 1. Discover
 
@@ -167,7 +168,8 @@ same variant suffix such as `-alpine`, `-ls123`, `-debian`; skip pre-releases, `
 
 Deduplicate: the same image pinned in several places is one dependency and one
 commit. Renovate PRs are candidates like any other; if you apply the same upgrade
-yourself, close the PR with a one-line comment saying which commit supersedes it. If
+yourself, close the PR with a comment naming the commit that supersedes it, followed
+by the research findings block (section 3 step 3). If
 the PR's version is embargoed, leave it open. If you asked instead of applying, the
 ask is a comment on that PR and the PR stays open.
 
@@ -237,44 +239,104 @@ Skip rules, checked in this order; log which rule fired:
    `gh search issues "<name> <version>" --state open` — regression, breakage, crash
    loop, upgrade-path reports count as doubt. If the source repo has no notes, fall
    back to a web search for `<name> <version> changelog` / `release notes` /
-   `breaking`. Compare findings against *how this repo uses the dependency* (values
-   actually set, CRDs actually present, features actually enabled). A breaking change
-   in something the repo does not use is not risky; say so.
+   `breaking`.
+
+   **Relevance check.** A breaking change or issue matters only if it touches what
+   this repo and cluster actually run. Prove it either way with evidence, never from
+   the wording of the note alone:
+   - Breaking change: grep the repo for the removed/renamed key, flag, env var, CRD
+     field or API version (`grep -rn`, including `*.j2` and `*.json5`); render the
+     release with this repo's values (`helm template` / `flux build`) and look for it
+     in the output, since chart defaults count too; for CRD changes, list the live
+     objects (`kubectl get <kind> -A -o yaml`) and check whether any set the field;
+     for changed defaults, check whether the repo pins the value or inherits it.
+   - Upstream issue: compare the reporter's setup with ours — architecture, Kubernetes
+     and Talos version, storage and database backend, auth mode, enabled features,
+     config options named in the report. Read the stack trace or failing code path and
+     check whether our config reaches it. An issue in a feature we do not enable, on a
+     platform we do not run, or already fixed in the target version is not relevant.
+   Record the verdict per item as `relevant — <evidence>` or `not relevant —
+   <evidence>`, where evidence is a `file:line`, a command and its output, or the
+   issue detail that differs. If relevance is still unknown after checking, say so
+   and rely on the health gate and section 4 step 6 instead of asking — unless a
+   failure would hit a blocked criterion (data loss, the revert path), where
+   unknown counts as relevant. Only `relevant` items drive the decision in step 4.
    For charts bundling CRDs: diff old and new CRDs (`helm show crds` or the chart
    tarball) for removed/renamed fields. For a chart bump, render values with
    `helm template` old vs new where feasible and diff for renamed keys. A large diff
    is a reason to read more, not a reason to skip.
+   Record the outcome as a **research findings block**, reused verbatim in the commit
+   body, the PR-close comment and any ask:
+   - `Breaking changes:` one line per breaking change between current and target,
+     each with a link to its release note or changelog entry, its relevance verdict
+     with evidence, and for relevant ones the migration edit that handles it. `none`
+     if none.
+   - `Upstream issues:` one line per issue from the searches above that you judged
+     relevant or had to rule out, each with its link, state and its relevance verdict
+     with evidence. `none found` if the searches came back empty.
    Verify the target tag (and digest, where the pin carries one) against the registry
    with `crane digest` / `crane manifest` before pinning it, even when a Renovate PR
    supplies it — a wrong digest is an `ImagePullBackOff`.
-4. **Decide.** Proceed without asking only when all hold: the notes are found and
-   read, they contain nothing breaking that applies to this repo, no relevant open
-   upstream issues, and no CRD or value key changes affecting this repo. A major bump
-   is fine on the same terms — the version number alone is not a reason to ask; a
-   major whose notes you have fully read and that changes nothing this repo uses is
-   applied like any other. Otherwise, or whenever you are not sure (no changelog
-   found, ambiguous notes, multi-version jump you could not fully read, doubt from
-   issues), **ask**:
-   comment on the dependency's Renovate PR (section 5) and move on to the next
-   dependency. Do not apply.
+4. **Decide.** The default is to apply. Your job is to land upgrades, including the
+   ones that need work; asking is the exception for changes you cannot carry out
+   from the repo. Sort the research outcome into exactly one of:
+   - **Clean** — nothing breaking applies to this repo → apply (section 4).
+   - **Breaking, migratable** — a breaking change applies and the migration can be
+     expressed in the repo: renamed or restructured values, a new required value
+     with a documented or obvious setting, a changed port/path/flag that consumers
+     reference, CRDs that must apply before the release (`dependsOn`), a new env
+     var, a changed container user with a documented `securityContext`, an app
+     that runs its own schema migration on start → write the migration, check it
+     with a `helm template` / `flux build` diff against the current render, and
+     apply upgrade and migration together in one commit (section 4). The commit
+     body lists each breaking change and the edit that handles it.
+   - **Blocked** — ask (section 5) only when at least one of these holds, and name
+     it in the comment:
+     1. The migration needs something you cannot do: a new secret or SOPS value, a
+        manual cluster step (`kubectl`, a one-off migration command, Talos config),
+        or a change outside the GitOps repo.
+     2. A one-way on-disk or data format change in a datastore or storage layer
+        (PostgreSQL major, CNPG, Ceph/Rook, OpenEBS, Valkey persistence format) —
+        a revert would not bring the data back.
+     3. A confirmed upstream regression — an open issue with reproductions or
+        maintainer acknowledgement — hitting a feature this repo uses, with no
+        workaround you can apply.
+     4. A feature this repo relies on is removed with no replacement.
+     5. A breaking change in a component whose failure would cut your own revert
+        path: Flux, the CNI, CoreDNS, or the storage Flux depends on. Clean patch
+        and minor bumps of these are applied normally.
+
+   These are **not** reasons to ask; resolve them yourself:
+   - A major version number. Read its notes like any other release.
+   - No changelog (digest-only bumps, patch tags without notes). Compare the image
+     config (`crane config`: entrypoint, user, env, exposed ports, labels) and the
+     commit range on the source repo; if nothing changes what this repo relies on,
+     apply and state the verification limit.
+   - A long multi-version jump. Read every release; length is not doubt.
+   - Open issues that mention the version but describe a setup, feature or platform
+     this repo does not use.
+   - A large render diff you have read and understood.
+   - A gap in the health gate (section 4 step 5).
+   - Uncertainty you have not tried to resolve. Resolve it: read the upgrade guide,
+     the values schema, the chart templates, the source diff between the tags. Ask
+     only if it is still unresolved *and* matches a blocked criterion.
+
+   Every ask carries the migration diff you would apply once the blocker is cleared,
+   so an operator `/update` is enough to land it.
 5. **Verifiability.** Some dependencies have no continuously running workload to gate
-   on — images used only by Jobs, CronJobs, bootstrap or backup paths, or components
-   with no service and no consumer. This does not make them skippable, and it does
-   not make them auto-appliable either. Decide deliberately:
-   - If the blast radius of a bad version is bounded and deferred (for example a
-     backup or restore image, where breakage surfaces at disaster-recovery time
-     rather than at rollout), **ask**. State plainly in the PR comment that the
-     health gate cannot cover it and what verification you did instead.
-   - Otherwise apply with the strongest verification available — repo validator,
-     registry manifest resolution, `flux build` render, entrypoint/`--version` check
-     against the image config, and the status of the most recent existing Job run —
-     and state the verification limit explicitly in both the commit body and the
-     report line. Never let a weaker check masquerade as a passed health gate.
+   on — images used only by Jobs, CronJobs, bootstrap or backup paths. That is not a
+   reason to ask. Apply with the strongest verification available — repo validator,
+   registry manifest resolution, `flux build` render, entrypoint/`--version` check
+   against the image config, and the status of the most recent existing Job run —
+   and state the verification limit explicitly in both the commit body and the
+   report line. Never let a weaker check masquerade as a passed health gate. Backup
+   and restore images are the exception only when their notes change the backup
+   format or the restore procedure; that is blocked criterion 2.
 
 ## 4. Apply one upgrade
 
 1. Fresh `git checkout main && git pull --ff-only`. Edit exactly the files for this
-   one dependency — every pin site found in the sweep, re-verified now with
+   one dependency and its migration — every pin site found in the sweep, re-verified now with
    `grep -rn '<name without registry prefix>' --include='*.yaml' --include='*.yml'
    --include='*.json5' .`. Two similar Renovate PR titles are not proof of a
    duplicate. Keep the repo's formatting and any renovate comment in sync. If the pin
@@ -290,8 +352,8 @@ Skip rules, checked in this order; log which rule fired:
    `flux build kustomization <ks> --path <dir> --kustomization-file <file> --dry-run`
    for the affected Kustomization, and `yq` to reparse the edited file.
 3. Commit: `chore(deps): update <name> to <target>` with a body containing the
-   changelog link, a one-line risk read, any verification limit from section 3 step
-   5, and the trailer `Co-authored-by: openhands <openhands@all-hands.dev>`. Push to
+   changelog link, the research findings block from section 3 step 3, a one-line
+   risk read, any verification limit from section 3 step 5, and the trailer `Co-authored-by: openhands <openhands@all-hands.dev>`. Push to
    `main`. If the push is rejected, pull --rebase once and retry; if it fails again,
    stop the run and report.
 4. Reconcile through the Flux Receiver (you cannot patch cluster objects):
@@ -344,25 +406,33 @@ Skip rules, checked in this order; log which rule fired:
      Do not create pods to test from, do not disable auth. If nothing is reachable
      from here, say so explicitly in the report instead of claiming the check passed.
      Record what you checked and the result in the report line (section 6).
-   - **Gate blind spots.** State in the report line what the gate could not cover. If
-     the plausible failure mode is invisible to a rollout — memory growth under real
-     use, a slow leak, a path only exercised by an admin UI or a scheduled job — the
-     correct action is not to apply and hope: it is to ask (section 5) *before*
-     applying, and say exactly why the gate would have gone green anyway.
-6. **On failure**: read logs and events, then decide once:
-   - The cause is clear and fixable in the repo (renamed value, new required value,
-     CRD Kustomization must apply before the release (dependsOn), image needs a new env,
-     PVC/permissions change with a documented fix) → apply the fix as a second commit
-     `fix(<name>): <what>`, push, reconcile, rerun the health gate once.
-   - Otherwise, or if the fix attempt also fails → **revert**: `git revert --no-edit`
-     of the upgrade (and fix) commit(s), push, reconcile, and confirm the health gate
-     passes on the reverted state. Then comment on the Renovate PR (section 5) with
-     the failure evidence. Never leave a broken component in place. If a rollback
-     itself needs a manual step (schema migration, PVC), say so in the comment and
-     stop the run.
-   - One fix attempt per dependency, then revert. Do not iterate on a fix
-     indefinitely; a reverted dependency plus a good PR comment is a complete
-     outcome, and the rest of the work list still needs you.
+   - **Gate blind spots.** State in the report line what the gate could not cover (a
+     path only exercised by an admin UI or a scheduled job, behaviour under real
+     load). A blind spot is recorded, not a reason to hold the upgrade back.
+6. **On failure**: fix it. A failed gate is a debugging task, not an exit.
+   1. Capture evidence: pod logs (current and `--previous`), events, HelmRelease and
+      Kustomization conditions, and the render diff of your commit.
+   2. If the component is down or serving errors and the cause is not obvious
+      within a few minutes, `git revert --no-edit` right away, push, reconcile and
+      confirm the gate passes on the reverted state, so the service is back while
+      you debug. Otherwise fix forward from the broken state.
+   3. Diagnose from the evidence: match the error against the release notes and
+      upgrade guide, the chart's values schema and templates, the source code at
+      the target tag, and upstream issues searched by the exact error message.
+   4. Commit the fix — together with the upgrade again if you reverted — as
+      `fix(<name>): <what>` with the error and its cause in the body, push,
+      reconcile and rerun the full health gate.
+   5. Up to 3 attempts per dependency. Each attempt targets a cause diagnosed from
+      evidence; never repeat a fix that already failed.
+   6. Stop early and revert when the fix needs something on the blocked list in
+      section 3 step 4 (secret, manual cluster step, data rollback).
+
+   If every attempt fails: make sure the reverted state is on `main` and healthy,
+   then comment on the Renovate PR (section 5) with the error, the diagnosis, each
+   attempt and why it failed, and the fix you believe is needed. Record
+   `reverted:#N`. Never leave a broken component in place. If a rollback itself
+   needs a manual step (schema migration, PVC), say so in the comment and stop the
+   run.
 7. Only after the gate passes move to the next dependency. Do not stop because one
    dependency was hard — carry on until the work list is empty.
 
@@ -378,13 +448,14 @@ changes, label, edit, rebase or merge the PR. Body, concise, in this order:
 - What: class, file(s) and pin-site count, current → target, release date,
   changelog link(s). If the PR does not cover every pin site found in the sweep,
   list the missing ones — merging the PR as-is would be a partial bump.
-- Why I did not apply it: the concrete breaking changes / open upstream issues /
-  uncertainty / verification gap, each with a link, and how it maps to this repo's
-  usage. Where a health gate would not have caught the failure, say so explicitly.
+- The research findings block from section 3 step 3.
+- Why I did not apply it: the blocked criterion from section 3 step 4 (or the failed
+  fix attempts from section 4 step 6), each point with a link, and how it maps to
+  this repo's usage.
 - Noteworthy new features that could benefit this repo (only if genuinely relevant).
 - Risk read: low / medium / high and one sentence why.
-- Suggested action, and, if a migration or mitigation is needed, the exact diff you
-  would apply.
+- What you need from the operator to unblock it, and the exact migration diff you
+  would apply afterwards.
 - Closing line: reply with `/update` (applied on the next run, PR closed with the
   commit link), `/skip` (never this target) or `/defer` (asked again in RECHECK_DAYS days).
   Merging the PR is also a valid decision.
@@ -489,8 +560,10 @@ in the report and leave the rules to the operator.
 - Never merge, approve or edit pull requests; the only PR actions are the ask comment
   from section 5 and closing a superseded Renovate PR with a comment.
 - Never open a GitHub issue, create a label, or post outside the Renovate PRs.
-- Never edit files unrelated to the dependency being bumped (the only exception is
-  the Renovate group rule from section 4 step 1); never touch secrets, SOPS-encrypted
+- Never edit files unrelated to the dependency being bumped, its migration or its
+  fix. Allowed: its pin sites, its app directory and `ks.yaml`, CRD Kustomizations,
+  consumers referencing something the upgrade renamed, and the Renovate group rule
+  from section 4 step 1. Never touch secrets, SOPS-encrypted
   files, docs, runbooks, or anything under a path the repo's `AGENTS.md` marks as
   hands-off.
 - Never `kubectl apply`, `patch`, `annotate`, `delete`, `edit`, `exec` or `scale` on the cluster. Cluster

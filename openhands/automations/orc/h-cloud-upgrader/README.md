@@ -27,12 +27,20 @@ automation never opens issues.
 3. **Research**: release notes for every version between current and target from the
    source repo (found via chart metadata / OCI labels / Renovate `depName`), open
    upstream issues about the target, web search (cluster-local SearXNG) as fallback.
-   Findings are compared with how the repo actually uses the dependency.
-4. **Decide**: clean notes, no relevant issues, no CRD/value changes (majors included) →
-   apply. Anything else, or any doubt → comment `h-cloud upgrader: <name> <cur> -> <new>`
-   on the Renovate PR with a summary, links, risk read and suggested action, then
-   continue. A dependency Renovate has no PR for is still researched and applied when
-   clean; an ask for it is reported as `asked:no-pr` with the Renovate config gap.
+   Every breaking change and issue gets a relevance verdict backed by evidence (repo
+   grep, render with this repo's values, live CRD objects, reporter's setup vs ours).
+   The linked findings go into the commit body, the PR-close comment and any ask.
+4. **Decide**: the default is apply. Clean → apply. A relevant breaking change the
+   repo can absorb (renamed values, new required value, `dependsOn` for CRDs, new
+   env, changed ports its consumers reference) → apply with the migration in the same
+   commit. Ask — comment `h-cloud upgrader: <name> <cur> -> <new>` on the Renovate PR
+   with the findings and the migration diff — only when the change needs a secret or
+   a manual cluster step, is a one-way datastore/storage format change, hits a
+   confirmed upstream regression in a used feature, removes a used feature, or breaks
+   Flux/CNI/CoreDNS (the revert path). Major versions, missing changelogs, long
+   jumps, irrelevant issues and health-gate blind spots are not reasons to ask. A
+   dependency Renovate has no PR for is still researched and applied; an ask for it
+   is reported as `asked:no-pr` with the Renovate config gap.
 5. **Apply**: edit only that dependency's pins, validate with the repo's validator
    (or `flux build ... --dry-run`), commit `chore(deps): update <name> to <target>`,
    push to `main`, `flux reconcile` source → kustomization → helmrelease.
@@ -43,9 +51,12 @@ automation never opens issues.
    scrape, PromQL `up`, a consumer of an infra component still working) via the
    Service DNS name or `*.h-cloud.lan` HTTPRoute, and a log diff for new
    error/panic lines. Polled up to `HEALTH_TIMEOUT_MINUTES`.
-7. **On failure**: one fix-forward attempt if the cause is clear (renamed value, new
-   required value, CRD ordering), otherwise `git revert`, push, reconcile, confirm the
-   gate passes on the reverted state, comment on the Renovate PR with the evidence.
+7. **On failure**: debug and fix. Capture logs/events, revert first if the service
+   is down and the cause is not obvious, diagnose against the upgrade guide, chart
+   schema, source and upstream issues, then re-apply with a `fix(<name>)` commit and
+   rerun the gate. Up to 3 evidence-driven attempts; then leave `main` reverted and
+   healthy and comment on the Renovate PR with the diagnosis, attempts and the fix
+   believed necessary.
 
 Superseded Renovate PRs are closed with a comment naming the commit. There is no run
 deadline: every inventory row must end with a terminal disposition (`applied`,
@@ -56,7 +67,7 @@ newer upstream version, whatever its disposition — giving current, newest and 
 versions, the disposition, the concrete reason it was not upgraded (embargo expiry
 time, the deciding PR, the breaking change, the gate failure) and the verification
 performed or the gate's blind spot. Risk and
-"major" are reasons to ask, never to skip silently. `MAX_UPGRADES_PER_RUN` (`0` =
+"major" are reasons to migrate and verify, never to skip silently. `MAX_UPGRADES_PER_RUN` (`0` =
 unlimited, the default) is a testing knob that caps how many dependencies reach the bump
 step. The automation `timeout` (12 h) is the platform's hard stop, not a pacing target.
 
@@ -86,7 +97,7 @@ step. The automation `timeout` (12 h) is the platform's hard stop, not a pacing 
   Talos credentials or cluster writes are needed for setup.
 - Tools: `bootstrap/setup.py` runs before the agent on every scheduled/manual run.
   `bootstrap/tools.lock.json` pins kubectl, gh, Mike Farah yq v4, crane, flux, Helm,
-  jq, just and Flate (v0.6.1, matching the GitOps repo's Mise and CI pins).
+  jq, just and Flate (v0.6.5, matching the GitOps repo's Mise and CI pins).
   Download and executable SHA-256 values are checked before execution; the source
   of each official checksum is recorded in the lock. No runtime `latest` lookup.
   Cache location: `~/.openhands/toolchains/h-cloud-upgrader/<lock-sha256>/bin`.

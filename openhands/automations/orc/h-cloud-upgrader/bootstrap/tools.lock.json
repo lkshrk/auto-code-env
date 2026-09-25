@@ -55,16 +55,16 @@
     },
     {
       "name": "flate",
-      "version": "v0.6.1",
-      "url": "https://github.com/home-operations/flate/releases/download/v0.6.1/flate_0.6.1_linux_amd64.tar.gz",
-      "sha256": "25de65dd4f4478575768b4c30d6bad4cbb7a75a7a38be5a3cd776ae065fd6631",
-      "checksum_source": "https://api.github.com/repos/home-operations/flate/releases/tags/v0.6.1",
+      "version": "v0.6.5",
+      "url": "https://github.com/home-operations/flate/releases/download/v0.6.5/flate_0.6.5_linux_amd64.tar.gz",
+      "sha256": "37eb0cd91a6752340754375743aa616c263cd8367ce594abd42ee955e1ec0099",
+      "checksum_source": "https://api.github.com/repos/home-operations/flate/releases/tags/v0.6.5",
       "member": "flate",
       "version_args": [
         "--version"
       ],
-      "version_match": "0.6.1",
-      "binary_sha256": "143f5e0032825a3c49f8ee92d5cd215cd0f10d8db6fd190edfde8cedb71f21b6"
+      "version_match": "0.6.5",
+      "binary_sha256": "ff42cf05f33978bc761fff814e834dbd286a411b6b1a66e27329923799c828f1"
     },
     {
       "name": "just",

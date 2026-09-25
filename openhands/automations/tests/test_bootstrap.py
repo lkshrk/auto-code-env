@@ -157,7 +157,7 @@ class BootstrapTests(unittest.TestCase):
                 self.assertRegex(tool[field], r"^[0-9a-f]{64}$")
         self.assertEqual(len(names), len(set(names)))
         flate = next(t for t in lock["tools"] if t["name"] == "flate")
-        self.assertEqual(flate["version"], "v0.6.1")
+        self.assertEqual(flate["version"], "v0.6.5")
 
 
 if __name__ == "__main__":
