@@ -64,7 +64,14 @@
         "--version"
       ],
       "version_match": "0.6.5",
-      "binary_sha256": "ff42cf05f33978bc761fff814e834dbd286a411b6b1a66e27329923799c828f1"
+      "binary_sha256": "ff42cf05f33978bc761fff814e834dbd286a411b6b1a66e27329923799c828f1",
+      "follow": {
+        "repo": "lkshrk/h-cloud",
+        "path": ".mise.toml",
+        "pattern": "\"github:home-operations/flate\"\\s*=\\s*\"(v[0-9][0-9.]*)\"",
+        "release_api": "https://api.github.com/repos/home-operations/flate/releases/tags/{version}",
+        "asset": "flate_{bare}_linux_amd64.tar.gz"
+      }
     },
     {
       "name": "just",

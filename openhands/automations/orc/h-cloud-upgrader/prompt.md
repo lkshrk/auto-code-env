@@ -26,6 +26,18 @@ PR comment or PR close comment.
   record its absolute path before entering the GitOps clone. Do not assume that an
   arbitrary `python3` has the same packages. A JSON5 parser is optional, but do not
   parse Renovate JSON5 as JSON or strip comments with regexes.
+- **No interactive prompts, no unbounded commands.** A command that waits for input
+  or hangs silently kills the whole run. In the same shell as the PATH export:
+  `export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1
+  GIT_CONFIG_KEY_0=credential.https://github.com.helper
+  GIT_CONFIG_VALUE_0='!gh auth git-credential'` — git then authenticates through
+  `gh` with `GH_TOKEN` and fails instead of prompting. Wrap every command that
+  touches the network or can run long in `timeout`: `timeout 900` for the
+  validator, `timeout 300` for `git`, `gh`, `crane`, `helm`, `flux` and `curl`, and
+  pass `--request-timeout=60s` to `kubectl`. Run anything expected to take minutes
+  in the background writing to a log file, then poll the log, so the shell never
+  sits silent. Exit status 124 is a timeout: retry once, then treat it as a failure
+  of that step and say so in the report.
 - **Access pre-flight.** This pod has read-only cluster access. Before touching the
   repo, verify all of:
   `kubectl auth can-i list kustomizations.kustomize.toolkit.fluxcd.io -n flux-system`,
@@ -39,9 +51,8 @@ PR comment or PR close comment.
 - Clone `GITOPS_REPO` into a scratch directory under the workspace:
   `gh repo clone GITOPS_REPO <dir> -- --depth=200`. Set `git config user.name
   "agent-npa"` and `git config user.email "agent-npa@users.noreply.github.com"` in that
-  clone. Push over `https://x-access-token:$GITHUB_TOKEN@github.com/GITOPS_REPO.git`
-  via `git -c credential.helper=` and `GIT_ASKPASS`, or `gh auth setup-git` — never
-  echo the URL.
+  clone. Fetch and push over the plain `https://github.com/GITOPS_REPO.git` remote;
+  the credential helper above supplies the token. Never put the token in a URL.
 - Read `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `justfile`/`Makefile`,
   `renovate.json*`, `.github/` and `.taskfiles/` in the repo first. Honor the repo's
   task runner and wrappers for validation if present (`just flux validate`,
@@ -50,8 +61,9 @@ PR comment or PR close comment.
 
 - **Repository validation pre-flight, before any edit or push.** Compare `flate
   --version` with the Flate pins in `.mise.toml` and `.github/workflows/flate.yaml`.
-  A mismatch blocks validation; ask for the bootstrap lock to be updated, do not
-  silently use a newer validator. For this repo, the supported direct entry point
+  Setup already installs the version `.mise.toml` pins, so a mismatch means setup or
+  the repo's own pins are inconsistent: report it as a bootstrap failure and stop
+  immediately, before discovery. Do not use another validator. For this repo, the supported direct entry point
   is `bash scripts/flate-test.sh --path ./kubernetes/flux/cluster
   --allow-missing-secrets --no-progress`. It is the script used by `just flux
   validate` and CI, including the repository's exact known-failure exclusions.

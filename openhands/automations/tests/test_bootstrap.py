@@ -99,6 +99,45 @@ class BootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "regular file"):
             installer.install_tool(self.tool, self.destination)
 
+    def follow(self, pin, assets):
+        responses = {
+            "https://api.github.com/repos/o/gitops/contents/.mise.toml": f'"tool" = "{pin}"\n',
+            "https://api.github.com/repos/o/tool/releases/tags/v1.2.4": {"assets": assets},
+        }
+        original = installer.github
+        installer.github = lambda url, raw=False: responses[url]
+        self.addCleanup(setattr, installer, "github", original)
+        return self.tool | {"version": "v1.2.3", "follow": {
+            "repo": "o/gitops", "path": ".mise.toml", "pattern": '"tool" = "(v[0-9.]+)"',
+            "release_api": "https://api.github.com/repos/o/tool/releases/tags/{version}",
+            "asset": "tool_{bare}.tar.gz"}}
+
+    def test_follow_keeps_lock_when_pin_matches(self):
+        tool = self.follow("v1.2.3", [])
+        self.assertIs(installer.resolve(tool), tool)
+
+    def test_follow_installs_repo_pin_by_published_digest(self):
+        binary = b"#!/bin/sh\nprintf 'fixture 1.2.4\\n'\n"
+        release = self.root / "new.tar.gz"
+        release.write_bytes(archive({"bin/tool": binary}))
+        tool = installer.resolve(self.follow("v1.2.4", [{
+            "name": "tool_1.2.4.tar.gz", "browser_download_url": release.as_uri(),
+            "digest": "sha256:" + sha(release.read_bytes())}]))
+        installer.install_tool(tool, self.destination)
+        self.assertEqual((self.destination / "tool").read_bytes(), binary)
+        release.unlink()
+        installer.install_tool(tool, self.destination)
+        (self.destination / "tool").write_bytes(b"corrupt")
+        with self.assertRaises(OSError):
+            installer.install_tool(tool, self.destination)
+
+    def test_follow_rejects_missing_pin_or_digest(self):
+        with self.assertRaisesRegex(ValueError, "no pin"):
+            installer.resolve(self.follow("latest", []))
+        with self.assertRaisesRegex(ValueError, "published sha256"):
+            installer.resolve(self.follow("v1.2.4", [{"name": "tool_1.2.4.tar.gz",
+                                                     "browser_download_url": "x", "digest": None}]))
+
     def test_setup_failure_prevents_sdk_setup(self):
         setup_dir = self.root / "bootstrap"
         setup_dir.mkdir()
@@ -158,6 +197,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         flate = next(t for t in lock["tools"] if t["name"] == "flate")
         self.assertEqual(flate["version"], "v0.6.5")
+        self.assertEqual(flate["follow"]["repo"], "lkshrk/h-cloud")
 
 
 if __name__ == "__main__":

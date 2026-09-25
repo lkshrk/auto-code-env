@@ -100,6 +100,11 @@ step. The automation `timeout` (12 h) is the platform's hard stop, not a pacing 
   jq, just and Flate (v0.6.5, matching the GitOps repo's Mise and CI pins).
   Download and executable SHA-256 values are checked before execution; the source
   of each official checksum is recorded in the lock. No runtime `latest` lookup.
+  Flate follows the GitOps repo: setup reads its pin from `lkshrk/h-cloud`
+  `.mise.toml` (via the GitHub token) and, when it differs from the lock, installs
+  that release verified against GitHub's published asset digest and logs that the
+  lock needs updating. If the pin cannot be read or has no published digest, setup
+  fails before the agent starts.
   Cache location: `~/.openhands/toolchains/h-cloud-upgrader/<lock-sha256>/bin`.
   Matching binaries are reused after hash and version checks; replacements are
   atomically installed under a file lock. Existing `~/.openhands/bin` is untouched.
