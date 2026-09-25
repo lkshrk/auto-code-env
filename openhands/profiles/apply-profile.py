@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 
 SECTIONS = ("llm", "agent", "secrets", "skills", "git_sync", "mcp_servers", "retired_secrets")
+CONTEXT_KEYS = ("system_message_suffix", "user_message_suffix", "load_user_skills", "load_project_skills")
 MERGED_OBJECTS = ("llm", "agent", "git_sync")
 MERGED_MAPS = ("secrets", "mcp_servers")
 ACP_SERVERS = ("claude-code", "codex", "gemini-cli", "custom")
@@ -67,12 +68,16 @@ def validate_llm(llm):
 
 
 def validate_agent(agent):
-    object_keys("agent", agent, ("kind", "acp_server", "acp_command", "acp_model", "system_message_suffix"))
+    object_keys("agent", agent, ("kind", "acp_server", "acp_command", "acp_model") + CONTEXT_KEYS)
     kind = agent.get("kind")
     if kind is not None and kind not in AGENT_KINDS:
         fail("agent.kind must be one of %s" % ", ".join(AGENT_KINDS))
-    if "system_message_suffix" in agent:
-        as_text("agent.system_message_suffix", agent["system_message_suffix"])
+    for key in ("system_message_suffix", "user_message_suffix"):
+        if key in agent:
+            as_text("agent.%s" % key, agent[key])
+    for key in ("load_user_skills", "load_project_skills"):
+        if key in agent and not isinstance(agent[key], bool):
+            fail("agent.%s must be a boolean" % key)
     if "acp_server" in agent and agent["acp_server"] not in ACP_SERVERS:
         fail("agent.acp_server must be one of %s" % ", ".join(ACP_SERVERS))
     if "acp_command" in agent:
@@ -377,11 +382,11 @@ def apply_agent_settings(api, profile, secret, settings):
     for key in ("acp_server", "acp_command", "acp_model"):
         if key in agent and settings.get(key) != agent[key]:
             diff[key] = agent[key]
-    suffix = agent.get("system_message_suffix")
-    if suffix is not None and agent.get("kind", settings.get("agent_kind")) == "openhands":
+    if agent.get("kind", settings.get("agent_kind")) == "openhands":
         context = settings.get("agent_context") or {}
-        if context.get("system_message_suffix") != suffix:
-            diff["agent_context"] = {"system_message_suffix": suffix}
+        context_diff = {key: agent[key] for key in CONTEXT_KEYS if key in agent and context.get(key) != agent[key]}
+        if context_diff:
+            diff["agent_context"] = context_diff
     if not diff:
         print("settings unchanged")
         return

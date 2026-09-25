@@ -73,7 +73,7 @@ run() {
 cat > /tmp/common.json <<'EOF'
 {
   "llm": {"model": "common/model", "base_url": "https://common.example/v1"},
-  "agent": {"system_message_suffix": "No trailers."},
+  "agent": {"system_message_suffix": "No trailers.", "user_message_suffix": "Tools first.", "load_project_skills": true},
   "secrets": {
     "ANTHROPIC_API_KEY": {"item": "77777777-7777-7777-7777-777777777777"},
     "CODER_SESSION_TOKEN": {"item": "99999999-9999-9999-9999-999999999999"},
@@ -152,7 +152,7 @@ agent = state['agent_settings']
 assert agent['llm']['model'] == 'openai/gpt-5.6-sol', agent
 assert agent['llm']['base_url'] == 'https://api.ai.h-cloud.lan/v1', agent
 assert agent['llm']['api_key'] == 'sk-llm-FIXTUREKEY111111111111', agent
-assert agent['agent_context'] == {'system_message_suffix': 'No trailers.'}, agent
+assert agent['agent_context'] == {'system_message_suffix': 'No trailers.', 'user_message_suffix': 'Tools first.', 'load_project_skills': True}, agent
 profiles = state['agent_profiles']
 assert profiles['default'] == {
     'agent_kind': 'openhands',

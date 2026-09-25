@@ -16,7 +16,12 @@ for skill in profile.get("skills", []):
     if skill["source"].endswith("/auto-code-env.git"):
         assert os.path.isfile(os.path.join(sys.argv[2], repo_path, "SKILL.md")), skill
 assert set(profile) == {"agent", "secrets", "skills", "mcp_servers", "retired_secrets"}, sorted(profile)
-assert set(profile["agent"]) == {"system_message_suffix"}, sorted(profile["agent"])
+assert set(profile["agent"]) == {"system_message_suffix", "user_message_suffix", "load_user_skills", "load_project_skills"}, sorted(profile["agent"])
+rules = open(os.path.join(sys.argv[2], "openhands/profiles/AGENTS.md")).read().strip()
+assert profile["agent"]["system_message_suffix"] == rules, "common.json agent.system_message_suffix must equal openhands/profiles/AGENTS.md"
+assert "litellm-tools_coder-coder_workspace_bash" in profile["agent"]["user_message_suffix"], profile["agent"]["user_message_suffix"]
+assert profile["agent"]["load_project_skills"] is True and profile["agent"]["load_user_skills"] is True, profile["agent"]
+assert "github" not in profile["mcp_servers"] and profile["mcp_servers"]["linear"] is None, profile["mcp_servers"]
 assert profile["retired_secrets"] == ["CODER_SESSION_TOKEN"], profile["retired_secrets"]
 assert re.fullmatch(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
