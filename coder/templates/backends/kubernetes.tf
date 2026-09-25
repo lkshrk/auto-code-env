@@ -39,6 +39,19 @@ data "coder_parameter" "disk_size" {
   }
 }
 
+data "coder_parameter" "dind_disk" {
+  name         = "dind_disk"
+  display_name = "Docker Disk (GiB)"
+  description  = "Size of the DinD sidecar's /var/lib/docker. A separate Ceph volume that is created on start and deleted on stop, so Docker hitting it full fails a build instead of filling the node."
+  type         = "number"
+  default      = "40"
+  mutable      = true
+  validation {
+    min = 10
+    max = 200
+  }
+}
+
 data "coder_parameter" "location" {
   name         = "location"
   display_name = "Location"
@@ -63,6 +76,20 @@ data "coder_workspace_preset" "desktop" {
 }
 
 locals {
+  # docker volume prune is separate: "until" is not accepted together with --volumes.
+  dind_entrypoint    = <<-SCRIPT
+    mkdir -p /etc/docker
+    cat > /etc/docker/daemon.json <<'JSON'
+    {"builder":{"gc":{"enabled":true,"defaultKeepStorage":"10GB"}},"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}
+    JSON
+    (
+      while sleep 21600; do
+        docker -H unix:///var/run/docker.sock system prune -f --filter until=48h
+        docker -H unix:///var/run/docker.sock volume prune -f
+      done
+    ) &
+    exec dockerd-entrypoint.sh
+  SCRIPT
   desktop            = data.coder_parameter.location.value == "desktop"
   home_storage_class = local.desktop ? "openebs-hostpath" : "ceph-block"
   node_selector      = local.desktop ? { dedicated = "towerr" } : {}
@@ -108,6 +135,26 @@ resource "kubernetes_persistent_volume_claim_v1" "home" {
     resources {
       requests = {
         storage = "${max(30, tonumber(data.coder_parameter.disk_size.value))}Gi"
+      }
+    }
+  }
+}
+
+# Lives only while the workspace runs: stop destroys it with the pod.
+resource "kubernetes_persistent_volume_claim_v1" "dind" {
+  count = local.enable_dind ? data.coder_workspace.me.start_count : 0
+
+  metadata {
+    name      = "${local.workspace_k8s_name}-dind"
+    namespace = "coder"
+  }
+  wait_until_bound = false
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = "ceph-block"
+    resources {
+      requests = {
+        storage = "${data.coder_parameter.dind_disk.value}Gi"
       }
     }
   }
@@ -261,8 +308,9 @@ resource "kubernetes_pod_v1" "workspace" {
       for_each = local.enable_dind ? [1] : []
       content {
         name              = "dind"
-        image             = "docker:29-dind"
+        image             = "docker:27-dind"
         image_pull_policy = "IfNotPresent"
+        command           = ["sh", "-c", local.dind_entrypoint]
 
         security_context {
           privileged  = true
@@ -336,8 +384,8 @@ resource "kubernetes_pod_v1" "workspace" {
       for_each = local.enable_dind ? [1] : []
       content {
         name = "dind-storage"
-        empty_dir {
-          size_limit = "50Gi"
+        persistent_volume_claim {
+          claim_name = kubernetes_persistent_volume_claim_v1.dind[0].metadata[0].name
         }
       }
     }

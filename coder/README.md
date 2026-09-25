@@ -62,6 +62,16 @@ taint. The `dev` template's `location` parameter decides the rest:
 Cluster Secrets, the service-account token and the kubeconfig are identical
 either way.
 
+## Docker in workspaces
+
+`enable_dind` adds a `docker:27-dind` sidecar (28+ crashes the Talos kernel on
+inner container start; Renovate is held below 28). Its `/var/lib/docker` is a
+`ceph-block` volume of `dind_disk` GiB (default 40) that exists only while the
+workspace runs, so a full Docker disk fails a build and never the node. The
+daemon keeps at most 10 GB of build cache, rotates container logs at 3 x 10 MB,
+and every 6 hours prunes stopped containers and images older than 48 hours plus
+unused anonymous volumes. The image cache is cold after every stop.
+
 ## Claude Code language servers
 
 When `claude` is among the agent clients, startup writes

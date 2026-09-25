@@ -6,6 +6,11 @@
   },
   "packageRules": [
     {
+      "description": "docker:28+ dind (runc 1.5) crashes the Talos kernel on inner container start; stay on 27",
+      "matchDepNames": ["docker"],
+      "allowedVersions": "<28",
+    },
+    {
       "matchManagers": ["git-submodules"],
       "matchPackageNames": ["https://github.com/OpenHands/OpenHands.git"],
       "versioning": "semver",
