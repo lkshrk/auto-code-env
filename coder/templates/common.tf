@@ -450,7 +450,7 @@ resource "coder_agent" "main" {
 module "git-clone" {
   for_each = local.repos_set
   source   = "registry.coder.com/coder/git-clone/coder"
-  version  = "2.0.3"
+  version  = "2.0.5"
   agent_id = coder_agent.main.id
   url      = each.value
 
