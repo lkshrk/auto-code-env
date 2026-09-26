@@ -76,18 +76,14 @@ data "coder_workspace_preset" "desktop" {
 }
 
 locals {
-  # docker volume prune is separate: "until" is not accepted together with --volumes.
   dind_entrypoint    = <<-SCRIPT
     mkdir -p /etc/docker
     cat > /etc/docker/daemon.json <<'JSON'
     {"builder":{"gc":{"enabled":true,"defaultKeepStorage":"10GB"}},"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}
     JSON
-    (
-      while sleep 21600; do
-        docker -H unix:///var/run/docker.sock system prune -f --filter until=48h
-        docker -H unix:///var/run/docker.sock volume prune -f
-      done
-    ) &
+    printf '%s' '${base64gzip(file("${path.module}/shared/dind-cleanup.sh"))}' | base64 -d | gunzip > /usr/local/bin/dind-cleanup
+    chmod 0755 /usr/local/bin/dind-cleanup
+    dind-cleanup &
     exec dockerd-entrypoint.sh
   SCRIPT
   desktop            = data.coder_parameter.location.value == "desktop"

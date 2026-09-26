@@ -66,6 +66,7 @@ jobs:
           bash coder/templates/tests/wow-sync.sh
           bash coder/templates/tests/github-identity.sh
           bash coder/templates/tests/wow-setup.sh
+          bash coder/templates/tests/dind-cleanup.sh
           bash coder/templates/tests/claude-lsp.sh
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests -p 'test_*.py'
 

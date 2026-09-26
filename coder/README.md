@@ -89,9 +89,13 @@ everything stays on the agent account.
 inner container start; Renovate is held below 28). Its `/var/lib/docker` is a
 `ceph-block` volume of `dind_disk` GiB (default 40) that exists only while the
 workspace runs, so a full Docker disk fails a build and never the node. The
-daemon keeps at most 10 GB of build cache, rotates container logs at 3 x 10 MB,
-and every 6 hours prunes stopped containers and images older than 48 hours plus
-unused anonymous volumes. The image cache is cold after every stop.
+daemon keeps at most 10 GB of build cache and rotates container logs at 3 x 10
+MB. `dind-cleanup` (`shared/dind-cleanup.sh`) runs every 5 minutes: it always
+removes anonymous volumes no container references (test containers leave one
+per run; one workspace gathered 30 GB of them in an hour), from 75% used also
+stopped containers, dangling images and build cache above 5 GB, and from 90%
+every unused image. It logs to the sidecar (`kubectl logs <pod> -c dind`)
+whenever it frees space or escalates. The image cache is cold after every stop.
 
 ## Claude Code language servers
 
@@ -260,6 +264,7 @@ bash coder/templates/tests/packaging.sh
 bash coder/templates/tests/selection.sh
 bash coder/templates/tests/prepare-dotfiles.sh
 bash coder/templates/tests/wow-sync.sh
+bash coder/templates/tests/dind-cleanup.sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s coder/templates/tests -p 'test_*.py'
 
 packages=$(mktemp -d)
