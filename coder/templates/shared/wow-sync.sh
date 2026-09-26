@@ -219,7 +219,11 @@ sync_addon() {
   # and it verifies size and modtime of everything it writes.
   # shellcheck disable=SC2086
   rclone sync "$stage" "$dest" "${SYNC_FLAGS[@]}" $dry || { log "sync of $name -> $dest failed"; return 1; }
-  log "synced $name -> $dest"
+  if [ -n "$dry" ]; then
+    log "dry run, nothing written: would sync $name -> $dest"
+  else
+    log "synced $name -> $dest"
+  fi
 }
 
 # Installs the in-game switch addon. Its Interface version follows the synced

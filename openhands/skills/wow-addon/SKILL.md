@@ -27,8 +27,8 @@ The game (retail) runs on the Windows desktop (towerr). You work in the Coder wo
 3. `wow-check ~/<repo>/<AddonDir>` and fix every finding in code you touched. Do not sync while it reports new problems in your changes.
 4. Check references (section below) and pick what to sync.
 5. `wow-sync --dry-run <paths>`, read the plan and warnings.
-6. `wow-sync <paths>`.
-7. Tell the user exactly what went out (`<Name>-Dev` or real name) and ask them to `/reload` and try the change.
+6. `wow-sync <paths>`, from the same checkout you edited.
+7. Verify: `rclone lsl wow:/<InstalledName>/` must list every changed file with the local size (`wc -c`) and modification time. Only then say "synced". Tell the user exactly what went out (`<Name>-Dev` or real name) and ask them to `/reload` and try the change.
 8. After they did, run `wow-errors` again and read the addon's state with `wow-sv`. Fix and repeat from step 3.
 9. Only call it fixed when `wow-errors` is clean for the addon and the user confirms the behaviour in game.
 
@@ -111,8 +111,11 @@ Rules:
 
 - Always pass explicit paths. Without paths `wow-sync` syncs every repository in `CODER_REPO_DIRS`, including ones built for other game versions (for example the WotLK/Ascension `AutoGossip-WOTLK-Ascension`), which must never reach the retail folder.
 - `wow-sync` is the only way into the AddOns folder. No direct `rclone` copies, no other transfer.
+- "Sync" always means a `wow-sync` run that wrote to `wow:`. Other directories in the workspace (`~/EUI-wotlk`, `~/wt/*`, any second checkout) are source trees, never the game; copying files between them is not a sync and must never be reported as one. The game is always reachable through `wow-sync`; never tell the user you cannot reach it.
+- A `--dry-run` writes nothing. Never report a dry run as a sync.
 - Keep the default suffix `Dev`. Never set `WOW_DEV_SUFFIX` to anything else and never pass `--any-suffix`: a second dev copy of the same addon (`-Dev` and `-1234`) is a second addon hooking the same frames. `wow-sync` refuses other suffixes.
 - Never sync with an empty suffix (under the real name, overwriting the user's released addon) unless the user asks for it or the reference check below requires it, and then only after the user says yes.
+- A child addon (a module of a suite that its core finds by folder name, e.g. `EllesmereUICooldownManager` under `EllesmereUI`) goes out under its real name: `WOW_DEV_SUFFIX= wow-sync --addon <Name> ~/<repo>`. Once the user agreed to the real name for an addon, keep using it for every sync of that addon in the conversation; never switch between `-Dev` and the real name silently.
 - Prefer a one-shot sync after each change over `--watch`; if the user wants `--watch`, run it as a background job and stop it when done.
 
 ## Addons that reference each other
