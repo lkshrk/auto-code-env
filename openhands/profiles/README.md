@@ -121,7 +121,7 @@ Every section is optional. Unknown sections and unknown keys are refused.
 | `acp_command` | string or array of strings | executable and arguments |
 | `acp_model` | string or null | model the ACP backend should use |
 | `system_message_suffix` | string | text appended to the OpenHands system prompt; also written to every stored `openhands` agent profile, ignored for `acp`. In `common.json` this is the content of `AGENTS.md` next to it; a test keeps the two equal, so edit `AGENTS.md` and run `python3 openhands/profiles/render-agents.py` |
-| `user_message_suffix` | string | text appended to every user message; the place for the few rules the agent must never lose |
+| `user_message_suffix` | string | text appended to every user message; keep it short and marked as not part of the request, or a one-word message reads as only the reminder |
 | `load_user_skills` | bool | load always-active and keyword skills from `~/.openhands/skills/` |
 | `load_project_skills` | bool | load `AGENTS.md` and `.openhands/skills/` from the conversation's repository |
 

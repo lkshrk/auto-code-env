@@ -20,6 +20,9 @@ assert set(profile["agent"]) == {"system_message_suffix", "user_message_suffix",
 rules = open(os.path.join(sys.argv[2], "openhands/profiles/AGENTS.md")).read().strip()
 assert profile["agent"]["system_message_suffix"] == rules, "common.json agent.system_message_suffix must equal openhands/profiles/AGENTS.md"
 assert "litellm-tools_coder-coder_workspace_bash" in profile["agent"]["user_message_suffix"], profile["agent"]["user_message_suffix"]
+# A long suffix drowns short user messages; the agent then answers the reminder instead.
+suffix = profile["agent"]["user_message_suffix"]
+assert len(suffix) <= 400 and "not part of the user's request" in suffix, suffix
 assert profile["agent"]["load_project_skills"] is True and profile["agent"]["load_user_skills"] is True, profile["agent"]
 assert profile["mcp_servers"]["github"] is None and profile["mcp_servers"]["linear"] is None, profile["mcp_servers"]
 assert profile["retired_secrets"] == ["CODER_SESSION_TOKEN"], profile["retired_secrets"]
