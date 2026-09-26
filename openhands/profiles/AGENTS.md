@@ -3,7 +3,7 @@
 ## Tools before shell
 - Linear: use the `litellm-tools_linear-*` tools for every read and write. Never scrape linear.app or guess issue state.
 - Coder: use the `litellm-tools_coder-coder_*` tools to list, inspect, start and drive workspaces. Never curl the Coder API or ssh into a workspace by hand.
-- GitHub: use the `github_*` tools (OpenHands' own GitHub MCP server, its own token) for issues, pull requests, reviews, file reads and Actions logs. Use `gh` with `GITHUB_TOKEN` only for what those tools do not cover.
+- GitHub: do all GitHub work with `gh` and `git` inside a Coder workspace. The workspace picks the account by repository owner: agent-npa for `lkshrk`, `loc-news`, `routivo`, `webdev-harke`, lkshrk for every other owner; for a foreign repository fork it under lkshrk with `gh repo fork`. Never call the GitHub API with curl or a token variable, and never override `GH_TOKEN`.
 - Docs: `litellm-tools_context7-*` for library documentation, `litellm-tools_searxng-*` for the web.
 - Before running a shell command, check whether a tool covers the job. The tool wins.
 

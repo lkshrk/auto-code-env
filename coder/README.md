@@ -64,10 +64,10 @@ either way.
 
 ## GitHub identity in workspaces
 
-Workspaces hold two GitHub tokens from `coder-workspace-secrets`: `GH_TOKEN`
-for the agent account (agent-npa, also exported as `GITHUB_TOKEN` and
-`GITHUB_PERSONAL_ACCESS_TOKEN`) and `GH_TOKEN_PERSONAL` for the personal
-account (lkshrk, classic PAT with `public_repo`). `github-identity` installs a
+Workspaces hold exactly two GitHub tokens from `coder-workspace-secrets`:
+`GH_TOKEN` for the agent account (agent-npa) and `GH_TOKEN_PERSONAL` for the
+personal account (lkshrk, classic PAT with `public_repo`). No other GitHub
+token variable is exported. `github-identity` installs a
 `gh` shim and a git credential helper that pick the token by repository owner:
 `lkshrk`, `loc-news`, `routivo` and `webdev-harke` use the agent account,
 every other owner the personal one. A checkout with an `upstream` remote is

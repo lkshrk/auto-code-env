@@ -245,17 +245,14 @@ resource "kubernetes_pod_v1" "workspace" {
           }
         }
       }
-      # Agent account under three names (gh, generic tools, github-mcp-server); github-identity picks per owner.
-      dynamic "env" {
-        for_each = ["GH_TOKEN", "GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"]
-        content {
-          name = env.value
-          value_from {
-            secret_key_ref {
-              name     = "coder-workspace-secrets"
-              key      = "GH_TOKEN"
-              optional = true
-            }
+      # Only github-identity (gh shim, git credential helper) is meant to read these two.
+      env {
+        name = "GH_TOKEN"
+        value_from {
+          secret_key_ref {
+            name     = "coder-workspace-secrets"
+            key      = "GH_TOKEN"
+            optional = true
           }
         }
       }

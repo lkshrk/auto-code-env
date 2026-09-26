@@ -21,7 +21,7 @@ rules = open(os.path.join(sys.argv[2], "openhands/profiles/AGENTS.md")).read().s
 assert profile["agent"]["system_message_suffix"] == rules, "common.json agent.system_message_suffix must equal openhands/profiles/AGENTS.md"
 assert "litellm-tools_coder-coder_workspace_bash" in profile["agent"]["user_message_suffix"], profile["agent"]["user_message_suffix"]
 assert profile["agent"]["load_project_skills"] is True and profile["agent"]["load_user_skills"] is True, profile["agent"]
-assert "github" not in profile["mcp_servers"] and profile["mcp_servers"]["linear"] is None, profile["mcp_servers"]
+assert profile["mcp_servers"]["github"] is None and profile["mcp_servers"]["linear"] is None, profile["mcp_servers"]
 assert profile["retired_secrets"] == ["CODER_SESSION_TOKEN"], profile["retired_secrets"]
 assert re.fullmatch(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
