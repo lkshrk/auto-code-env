@@ -271,6 +271,9 @@ locals {
     printf '%s' '${base64encode(file("${path.module}/shared/install-stacks.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/install-stacks.py"
     python3 "$HOME/.local/state/coder-environment/install-stacks.py"
 
+    printf '%s' '${base64encode(file("${path.module}/shared/github-identity.sh"))}' | base64 --decode > "$HOME/.local/state/coder-environment/github-identity.sh"
+    bash "$HOME/.local/state/coder-environment/github-identity.sh" install
+
     if [ "$WOW_DEV" = 1 ]; then
       sudo apt-get update -qq
       sudo apt-get install -y --no-install-recommends inotify-tools unzip >/dev/null

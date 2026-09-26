@@ -245,9 +245,7 @@ resource "kubernetes_pod_v1" "workspace" {
           }
         }
       }
-      # One GitHub PAT, three env names: gh CLI reads GH_TOKEN, generic tools
-      # read GITHUB_TOKEN, github-mcp-server reads GITHUB_PERSONAL_ACCESS_TOKEN.
-      # Git clones stay on Coder's per-user SSH key; this is for API access.
+      # Agent account under three names (gh, generic tools, github-mcp-server); github-identity picks per owner.
       dynamic "env" {
         for_each = ["GH_TOKEN", "GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"]
         content {
@@ -258,6 +256,16 @@ resource "kubernetes_pod_v1" "workspace" {
               key      = "GH_TOKEN"
               optional = true
             }
+          }
+        }
+      }
+      env {
+        name = "GH_TOKEN_PERSONAL"
+        value_from {
+          secret_key_ref {
+            name     = "coder-workspace-secrets"
+            key      = "GH_TOKEN_PERSONAL"
+            optional = true
           }
         }
       }

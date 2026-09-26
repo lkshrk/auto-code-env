@@ -62,6 +62,22 @@ taint. The `dev` template's `location` parameter decides the rest:
 Cluster Secrets, the service-account token and the kubeconfig are identical
 either way.
 
+## GitHub identity in workspaces
+
+Workspaces hold two GitHub tokens from `coder-workspace-secrets`: `GH_TOKEN`
+for the agent account (agent-npa, also exported as `GITHUB_TOKEN` and
+`GITHUB_PERSONAL_ACCESS_TOKEN`) and `GH_TOKEN_PERSONAL` for the personal
+account (lkshrk, classic PAT with `public_repo`). `github-identity` installs a
+`gh` shim and a git credential helper that pick the token by repository owner:
+`lkshrk`, `loc-news`, `routivo` and `webdev-harke` use the agent account,
+every other owner the personal one. A checkout with an `upstream` remote is
+judged by that remote, so a fork of a foreign repository under `lkshrk` also
+uses the personal account. SSH remotes are rewritten to HTTPS so pushes follow
+the same rule; commits are authored as the agent by default, and as lkshrk in
+checkouts where the personal identity was used. `github-identity whoami
+OWNER/REPO` prints which account applies. Without `GH_TOKEN_PERSONAL`
+everything stays on the agent account.
+
 ## Docker in workspaces
 
 `enable_dind` adds a `docker:27-dind` sidecar (28+ crashes the Talos kernel on

@@ -103,6 +103,7 @@
   },
   "BASE": [
     "git",
+    "gh",
     "curl",
     "ca-certificates",
     "jq",
