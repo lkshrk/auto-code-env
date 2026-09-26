@@ -77,7 +77,7 @@ mkdir -p "$ADDONS/Bystander" "$ADDONS/Alpha"
 printf 'keep\n' > "$ADDONS/Bystander/Bystander.toc"
 printf 'release\n' > "$ADDONS/Alpha/Alpha.toc"
 
-bash "$SYNC_SCRIPT"
+bash "$SYNC_SCRIPT" --dev
 
 # Dev variant lands beside the release with renamed .toc and suffixed variables.
 [[ -f "$ADDONS/Alpha-Dev/Alpha-Dev.toc" ]]
@@ -138,29 +138,23 @@ lua=$(command -v lua5.1 || command -v lua || true)
 # Deletions and edits propagate on the next pass; neighbours still survive.
 rm "$REPO_A/drop-me.lua"
 printf 'AlphaDB = 2\n' > "$REPO_A/Modules/init.lua"
-bash "$SYNC_SCRIPT"
+bash "$SYNC_SCRIPT" --dev
 
 [[ ! -e "$ADDONS/Alpha-Dev/drop-me.lua" ]]
 [[ "$(<"$ADDONS/Alpha-Dev/Modules/init.lua")" == "AlphaDBDev = 2" ]]
 [[ "$(<"$ADDONS/Bystander/Bystander.toc")" == keep ]]
 [[ "$(<"$ADDONS/Alpha/Alpha.toc")" == release ]]
 
-# An empty suffix syncs under the real name and overwrites the release.
-WOW_DEV_SUFFIX="" CODER_REPO_DIRS="my-addon-repo" bash "$SYNC_SCRIPT"
-[[ -f "$ADDONS/Alpha/Alpha.toc" ]]
-grep -q '^## SavedVariables: AlphaDB, AlphaErrors$' "$ADDONS/Alpha/Alpha.toc"
-[[ -f "$ADDONS/Alpha-Dev/Alpha-Dev.toc" ]]
-
 # --addon narrows the run; the suite core alone warns about its released modules.
 rm -rf "$ADDONS/Suite-Dev" "$ADDONS/SuiteBags-Dev"
 printf 'if folder == "Suite" then end\n' > "$REPO_D/SuiteBags/SuiteBags.lua"
-bash "$SYNC_SCRIPT" --addon Suite "$REPO_D" > "$TEST_ROOT/only.log" 2>&1
+bash "$SYNC_SCRIPT" --dev --addon Suite "$REPO_D" > "$TEST_ROOT/only.log" 2>&1
 [[ -f "$ADDONS/Suite-Dev/Suite-Dev.toc" ]]
 [[ ! -e "$ADDONS/SuiteBags-Dev" ]]
 [[ ! -e "$ADDONS/Suite-Dev/SuiteBags" ]]
 grep -q 'warning: Suite goes out as Suite-Dev while 1 nested addon' "$TEST_ROOT/only.log"
 # A module synced on its own keeps pointing at the released core.
-bash "$SYNC_SCRIPT" "$REPO_D/SuiteBags"
+bash "$SYNC_SCRIPT" --dev "$REPO_D/SuiteBags"
 grep -q '^## Dependencies: Suite$' "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc"
 grep -qF 'if folder == "SuiteBags-Dev"' "$ADDONS/SuiteBags-Dev/SuiteBags.lua" || true
 grep -qF 'if folder == "Suite" then' "$ADDONS/SuiteBags-Dev/SuiteBags.lua"
@@ -171,15 +165,15 @@ git -C "$REPO_D" init -q
 git -C "$REPO_D" -c user.name=t -c user.email=t@t add -A
 git -C "$REPO_D" -c user.name=t -c user.email=t@t commit -q -m base
 rm -rf "$ADDONS/Suite-Dev" "$ADDONS/SuiteBags-Dev"
-bash "$SYNC_SCRIPT" --changed "$REPO_D" > "$TEST_ROOT/changed.log" 2>&1
+bash "$SYNC_SCRIPT" --dev --changed "$REPO_D" > "$TEST_ROOT/changed.log" 2>&1
 grep -q 'nothing selected to sync' "$TEST_ROOT/changed.log"
 [[ ! -e "$ADDONS/Suite-Dev" ]]
 printf 'edit\n' >> "$REPO_D/SuiteBags/SuiteBags.lua"
-bash "$SYNC_SCRIPT" --changed "$REPO_D"
+bash "$SYNC_SCRIPT" --dev --changed "$REPO_D"
 [[ -f "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc" ]]
 [[ ! -e "$ADDONS/Suite-Dev" ]]
 printf 'edit\n' >> "$REPO_D/Suite.lua"
-bash "$SYNC_SCRIPT" --changed "$REPO_D"
+bash "$SYNC_SCRIPT" --dev --changed "$REPO_D"
 [[ -f "$ADDONS/Suite-Dev/Suite-Dev.toc" ]]
 
 # --off flips the switch addon to release mode and syncs nothing else.
@@ -191,14 +185,14 @@ grep -q '^## Interface: 110200$' "$ADDONS/WowSync/WowSync.toc"
 
 # --dry-run writes nothing.
 printf 'dry\n' > "$REPO_A/Modules/init.lua"
-bash "$SYNC_SCRIPT" --dry-run
+bash "$SYNC_SCRIPT" --dev --dry-run
 [[ "$(<"$ADDONS/Alpha-Dev/Modules/init.lua")" == "AlphaDBDev = 2" ]]
 
 # A destination that is not this addon is never emptied, even under the dev name.
 rm -rf "$ADDONS/Beta-Dev"
 mkdir -p "$ADDONS/Beta-Dev"
 printf 'mine\n' > "$ADDONS/Beta-Dev/precious.txt"
-if CODER_REPO_DIRS="bundle" bash "$SYNC_SCRIPT" > "$TEST_ROOT/foreign.log" 2>&1; then
+if CODER_REPO_DIRS="bundle" bash "$SYNC_SCRIPT" --dev > "$TEST_ROOT/foreign.log" 2>&1; then
   printf 'FAIL: sync into a foreign directory exited 0\n' >&2
   exit 1
 fi
@@ -211,7 +205,7 @@ rm -rf "$ADDONS/Beta-Dev"
 mkdir -p "$ADDONS/Beta-Dev"
 chmod 0555 "$ADDONS/Beta-Dev"
 printf 'changed\n' > "$REPO_B/Beta/new.lua"
-if CODER_REPO_DIRS="bundle" bash "$SYNC_SCRIPT" > "$TEST_ROOT/fail.log" 2>&1; then
+if CODER_REPO_DIRS="bundle" bash "$SYNC_SCRIPT" --dev > "$TEST_ROOT/fail.log" 2>&1; then
   chmod 0755 "$ADDONS/Beta-Dev"
   printf 'FAIL: sync into a read-only addon directory exited 0\n' >&2
   exit 1
@@ -223,6 +217,56 @@ if grep -q 'synced Beta' "$TEST_ROOT/fail.log"; then
 fi
 grep -q 'sync of Beta .* failed' "$TEST_ROOT/fail.log"
 rm "$REPO_B/Beta/new.lua"
+
+# Without --dev an addon goes out under its real name. A release copy (no
+# X-WowSync-Synced mark) is only replaced with --replace-release, after it and
+# its SavedVariables are saved.
+SV_DIR="$TEST_ROOT/sv"
+mkdir -p "$SV_DIR"
+printf 'AlphaDB = { real = true }\n' > "$SV_DIR/Alpha.lua"
+printf 'OtherDB = {}\n' > "$SV_DIR/Other.lua"
+export RCLONE_CONFIG_WOWSV_TYPE=alias RCLONE_CONFIG_WOWSV_REMOTE="$SV_DIR"
+BACKUP="$HOME/.local/share/wow/backup/Alpha"
+if CODER_REPO_DIRS="my-addon-repo" bash "$SYNC_SCRIPT" > "$TEST_ROOT/release.log" 2>&1; then
+  printf 'FAIL: a release copy was overwritten without --replace-release\n' >&2
+  exit 1
+fi
+grep -q 'refusing to sync Alpha: the game has a release copy' "$TEST_ROOT/release.log"
+[[ "$(<"$ADDONS/Alpha/Alpha.toc")" == release ]]
+CODER_REPO_DIRS="my-addon-repo" bash "$SYNC_SCRIPT" --replace-release --dry-run > "$TEST_ROOT/release-dry.log" 2>&1
+grep -q 'would save the release copy of Alpha' "$TEST_ROOT/release-dry.log"
+! grep -q 'wow-sync: synced' "$TEST_ROOT/release-dry.log"
+[[ "$(<"$ADDONS/Alpha/Alpha.toc")" == release ]]
+[[ ! -e "$BACKUP" ]]
+CODER_REPO_DIRS="my-addon-repo" bash "$SYNC_SCRIPT" --replace-release > "$TEST_ROOT/replace.log" 2>&1
+[[ "$(<"$BACKUP/release/Alpha.toc")" == release ]]
+grep -q 'real = true' "$BACKUP/SavedVariables/Alpha.lua"
+[[ ! -e "$BACKUP/SavedVariables/Other.lua" ]]
+grep -q '^## X-WowSync-Synced: ' "$ADDONS/Alpha/Alpha.toc"
+grep -q '^## SavedVariables: AlphaDB, AlphaErrors$' "$ADDONS/Alpha/Alpha.toc"
+! grep -q '^## LoadOnDemand' "$ADDONS/Alpha/Alpha.toc"
+[[ "$(<"$ADDONS/Alpha/Modules/init.lua")" == dry ]]
+# The old dev copy goes, so two copies never load together.
+[[ ! -e "$ADDONS/Alpha-Dev" ]]
+grep -q 'removed the old dev copy Alpha-Dev' "$TEST_ROOT/replace.log"
+# Once marked, later syncs need no flag and keep the first backup.
+printf 'AlphaDB = 3\n' > "$REPO_A/Modules/init.lua"
+CODER_REPO_DIRS="my-addon-repo" bash "$SYNC_SCRIPT"
+[[ "$(<"$ADDONS/Alpha/Modules/init.lua")" == "AlphaDB = 3" ]]
+[ "$(grep -c '^## X-WowSync-Synced' "$ADDONS/Alpha/Alpha.toc")" = 1 ]
+[[ "$(<"$BACKUP/release/Alpha.toc")" == release ]]
+# --restore puts the saved release back.
+bash "$SYNC_SCRIPT" --restore Alpha
+[[ "$(<"$ADDONS/Alpha/Alpha.toc")" == release ]]
+[[ ! -e "$ADDONS/Alpha/Modules" ]]
+if bash "$SYNC_SCRIPT" --restore Nope > /dev/null 2>&1; then
+  printf 'FAIL: restore without a saved release exited 0\n' >&2
+  exit 1
+fi
+# A new addon with no copy in the game needs no flag.
+CODER_REPO_DIRS="crlf" bash "$SYNC_SCRIPT"
+grep -q '^## X-WowSync-Synced: .*'$'\r''$' "$ADDONS/Gamma/Gamma.toc"
+grep -q '^## SavedVariables: GammaDB'$'\r''$' "$ADDONS/Gamma/Gamma.toc"
 
 # Guard rails.
 if CODER_REPO_DIRS="my-addon-repo" WOW_ADDONS_PATH='' bash "$SYNC_SCRIPT" > /dev/null 2>&1; then
@@ -245,7 +289,7 @@ if WOW_ADDONS_PATH="$TEST_ROOT/no-such-dir/AddOns" bash "$SYNC_SCRIPT" > /dev/nu
   exit 1
 fi
 
-if WOW_DEV_SUFFIX_CONFIGURED=Dev WOW_DEV_SUFFIX=2154 bash "$SYNC_SCRIPT" > "$TEST_ROOT/suffix.log" 2>&1; then
+if WOW_DEV_SUFFIX_CONFIGURED=Dev WOW_DEV_SUFFIX=2154 bash "$SYNC_SCRIPT" --dev > "$TEST_ROOT/suffix.log" 2>&1; then
   printf 'FAIL: a suffix other than the configured one was accepted\n' >&2
   exit 1
 fi
@@ -257,4 +301,4 @@ if RCLONE_CONFIG_WOW_KEY_FILE="$TEST_ROOT/no-key" bash "$SYNC_SCRIPT" > /dev/nul
   exit 1
 fi
 
-printf 'PASS: dev variants staged and pushed over rclone, deletions propagated, release untouched\n'
+printf 'PASS: real-name installs guard and save releases; dev variants staged and pushed over rclone, deletions propagated\n'

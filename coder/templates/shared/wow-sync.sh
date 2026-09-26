@@ -6,6 +6,8 @@ set -euo pipefail
 : "${WOW_DEV_SUFFIX=Dev}"
 : "${WOW_REMOTE:=wow}"
 : "${WOW_SWITCH_ADDON:=WowSync}"
+: "${WOW_BACKUP_DIR:=$HOME/.local/share/wow/backup}"
+: "${WOW_SV_REMOTE:=wowsv}"
 export RCLONE_CONFIG=/dev/null
 
 readonly STAGE_EXCLUDES=(
@@ -28,7 +30,8 @@ readonly SYNC_FLAGS=(
 
 usage() {
   cat <<'USAGE'
-Usage: wow-sync [--watch] [--dry-run] [--addon NAME]... [--changed] [path...]
+Usage: wow-sync [--dev] [--replace-release] [--watch] [--dry-run] [--addon NAME]... [--changed] [path...]
+       wow-sync --restore NAME
        wow-sync --off
 
 Pushes addons found under the given paths (repositories or single addon
@@ -39,8 +42,14 @@ An addon is any directory holding a .toc file, except embedded libraries under
 Libs/; the addon name comes from the .toc, not from the directory, so a
 repository may be named anything.
 
-With WOW_DEV_SUFFIX set (default "Dev"), each addon is installed as
-<Name>-<suffix>: the .toc is renamed, its Title is marked, and every
+By default each addon is installed under its real name, replacing the copy in
+the game. Its .toc gains "## X-WowSync-Synced". A copy without that line is a
+release (WowUp, CurseForge, hand install): wow-sync refuses to overwrite it
+unless --replace-release is given, and then first saves it, with the addon's
+account SavedVariables, under WOW_BACKUP_DIR/<Name>. --restore NAME puts the
+saved release back. A leftover <Name>-<WOW_DEV_SUFFIX> dev copy is removed.
+
+With --dev, each addon is installed as <Name>-<WOW_DEV_SUFFIX> (default "Dev"): the .toc is renamed, its Title is marked, and every
 SavedVariables name gains the suffix in the .toc and in the Lua sources. The
 dev copy then runs beside the released addon and cannot touch its settings.
 Addons synced together form a set: dependency lines, Interface\AddOns\<Name>
@@ -62,12 +71,17 @@ refused unless --any-suffix is given.
 The remote is configured entirely through RCLONE_CONFIG_WOW_* environment
 variables, which Coder user secrets provide; wow-sync never reads a config file.
 
+  --dev         install <Name>-<WOW_DEV_SUFFIX> dev copies beside the release
+  --replace-release
+                allow overwriting a release copy (saved to WOW_BACKUP_DIR first)
+  --restore NAME
+                put the saved release copy of NAME back
   --addon NAME  sync only this addon of those found (repeatable)
   --changed     sync only addons with uncommitted changes or commits ahead of
                 their git upstream
   --watch       resync on every change instead of exiting after one pass
   --dry-run     show what rclone would change without writing to the game
-  --off         switch the game back to the released addons at next login
+  --off         switch the game back to the released addons at next login (--dev)
   --any-suffix  allow a WOW_DEV_SUFFIX that differs from the workspace setting
 USAGE
 }
@@ -195,9 +209,12 @@ sync_addon() {
   esac
 
   target=$name
-  [ -n "$WOW_DEV_SUFFIX" ] && target="$name-$WOW_DEV_SUFFIX"
+  [ -n "$SUFFIX" ] && target="$name-$SUFFIX"
   dest="$WOW_REMOTE:${WOW_ADDONS_PATH%/}/$target"
   check_dest "$name" "$target" "$dest" || return 1
+  if [ -z "$SUFFIX" ]; then
+    guard_release "$name" "$dest" "$dry" || return 1
+  fi
 
   stage=$(mktemp -d -t wow-sync.XXXXXX)
   # shellcheck disable=SC2064
@@ -211,8 +228,10 @@ sync_addon() {
   done
 
   rclone copy "$src" "$stage" "${STAGE_EXCLUDES[@]}" "${nested[@]+"${nested[@]}"}" || { log "staging $name failed"; return 1; }
-  if [ -n "$WOW_DEV_SUFFIX" ]; then
-    apply_dev_suffix "$stage" "$name" "$WOW_DEV_SUFFIX" "$@" || { log "dev rewrite of $name failed"; return 1; }
+  if [ -n "$SUFFIX" ]; then
+    apply_dev_suffix "$stage" "$name" "$SUFFIX" "$@" || { log "dev rewrite of $name failed"; return 1; }
+  else
+    mark_synced_tocs "$stage" "$name"
   fi
 
   # rclone sync only ever deletes inside $dest, which is one addon directory,
@@ -223,7 +242,79 @@ sync_addon() {
     log "dry run, nothing written: would sync $name -> $dest"
   else
     log "synced $name -> $dest"
+    [ -z "$SUFFIX" ] && remove_dev_copy "$name"
   fi
+  return 0
+}
+
+# Marks real-name installs so a later sync can tell them from a release.
+mark_synced_tocs() {
+  local stage=$1 name=$2 toc
+  while IFS= read -r toc; do
+    WS_STAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ) perl -pi -e '
+      if (/^## X-WowSync-Synced:/i) { $_ = ""; next }
+      if (!$done && /^(\xef\xbb\xbf)?## /) {
+        my ($eol) = /(\r?\n)\z/; $eol //= "\n";
+        $_ .= "$eol" unless /\n\z/;
+        $_ .= "## X-WowSync-Synced: $ENV{WS_STAMP}$eol";
+        $done = 1;
+      }' "$toc"
+  done < <(find "$stage" -maxdepth 1 -type f -name "$name*.toc")
+}
+
+# A remote copy without the wow-sync mark is the user's release; overwriting it
+# needs --replace-release and saves it plus its SavedVariables first.
+guard_release() {
+  local name=$1 dest=$2 dry=$3 tocs toc backup
+  tocs=$(rclone lsf "$dest" --max-depth 1 --files-only --include "$name*.toc" 2>/dev/null) || return 0
+  [ -n "$tocs" ] || return 0
+  while IFS= read -r toc; do
+    rclone cat "$dest/$toc" 2>/dev/null | grep -qi '^## X-WowSync-Synced:' && return 0
+  done <<<"$tocs"
+
+  if [ "$REPLACE_RELEASE" -eq 0 ]; then
+    log "refusing to sync $name: the game has a release copy of $name. Ask the user, then rerun with --replace-release (the release is saved to $WOW_BACKUP_DIR/$name first), or use --dev for a -${WOW_DEV_SUFFIX:-Dev} copy beside it"
+    return 1
+  fi
+  if [ -n "$dry" ]; then
+    log "dry run: would save the release copy of $name to $WOW_BACKUP_DIR/$name and replace it"
+    return 0
+  fi
+
+  backup="$WOW_BACKUP_DIR/$name"
+  mkdir -p "$backup"
+  rclone sync "$dest" "$backup/release" "${SYNC_FLAGS[@]}" || { log "saving the release copy of $name failed; nothing replaced"; return 1; }
+  if rclone lsf "$WOW_SV_REMOTE:" --max-depth 1 >/dev/null 2>&1; then
+    rclone copy "$WOW_SV_REMOTE:" "$backup/SavedVariables" --max-depth 1 --include "$name.lua" --include "$name.lua.bak" "${SYNC_FLAGS[@]}" \
+      || log "warning: could not save the SavedVariables of $name"
+  else
+    log "warning: $WOW_SV_REMOTE: not reachable; SavedVariables of $name not saved"
+  fi
+  log "saved the release copy of $name to $backup"
+}
+
+remove_dev_copy() {
+  local name=$1 dev
+  [ -n "$WOW_DEV_SUFFIX" ] || return 0
+  dev="$WOW_REMOTE:${WOW_ADDONS_PATH%/}/$name-$WOW_DEV_SUFFIX"
+  rclone lsf "$dev" --max-depth 1 --files-only --include "$name-$WOW_DEV_SUFFIX*.toc" 2>/dev/null | grep -q . || return 0
+  if rclone purge "$dev" 2>/dev/null; then
+    log "removed the old dev copy $name-$WOW_DEV_SUFFIX; if the AddOn list shows $name disabled (WowSync turned the release off), enable it"
+  else
+    log "warning: could not remove the old dev copy $name-$WOW_DEV_SUFFIX; disable it in the AddOn list"
+  fi
+}
+
+restore_release() {
+  local name=$1 dry=$2 backup dest
+  backup="$WOW_BACKUP_DIR/$name/release"
+  [ -d "$backup" ] || { log "no saved release copy of $name in $backup"; return 1; }
+  dest="$WOW_REMOTE:${WOW_ADDONS_PATH%/}/$name"
+  # shellcheck disable=SC2086
+  rclone sync "$backup" "$dest" "${SYNC_FLAGS[@]}" $dry || { log "restoring $name failed"; return 1; }
+  log "restored the release copy of $name -> $dest"
+  [ -d "$WOW_BACKUP_DIR/$name/SavedVariables" ] && log "its SavedVariables from before the first replace are in $WOW_BACKUP_DIR/$name/SavedVariables; the game share is read-only, so copying them back is manual"
+  return 0
 }
 
 # Installs the in-game switch addon. Its Interface version follows the synced
@@ -499,19 +590,19 @@ sync_all() {
 
   for i in "${!names[@]}"; do
     [ "${pick[$i]}" -eq 1 ] || continue
-    if [ -n "$WOW_DEV_SUFFIX" ]; then
+    if [ -n "$SUFFIX" ]; then
       count=0
       for j in "${!srcs[@]}"; do
         [ "${pick[$j]}" -eq 0 ] && case "${srcs[$j]}" in "${srcs[$i]}"/*) count=$((count + 1)) ;; esac
       done
-      [ "$count" -gt 0 ] && log "warning: ${names[$i]} goes out as ${names[$i]}-$WOW_DEV_SUFFIX while $count nested addon(s) stay on the released ${names[$i]}; sync them together or set WOW_DEV_SUFFIX=''"
+      [ "$count" -gt 0 ] && log "warning: ${names[$i]} goes out as ${names[$i]}-$SUFFIX while $count nested addon(s) stay on the released ${names[$i]}; sync them together or drop --dev"
     fi
     sync_addon "${names[$i]}" "${srcs[$i]}" "$dry" "${members[@]}" || status=1
   done
 
-  if [ -n "$WOW_DEV_SUFFIX" ]; then
+  if [ -n "$SUFFIX" ]; then
     local devs=() member
-    for member in "${members[@]}"; do devs+=("$member-$WOW_DEV_SUFFIX"); done
+    for member in "${members[@]}"; do devs+=("$member-$SUFFIX"); done
     install_switch_addon dev "${WOW_INTERFACE:-$(max_interface "${tocs[@]+"${tocs[@]}"}")}" "$dry" "${devs[@]}" || status=1
   fi
   return "$status"
@@ -547,11 +638,26 @@ watch_repos() {
 
 ONLY_ADDONS=()
 CHANGED_ONLY=0
+SUFFIX=""
+REPLACE_RELEASE=0
 
 main() {
-  local watch=0 dry="" off=0 any_suffix=0
+  local watch=0 dry="" off=0 any_suffix=0 dev=0 restore=""
   while [ $# -gt 0 ]; do
     case "$1" in
+      --dev)
+        dev=1
+        shift
+        ;;
+      --replace-release)
+        REPLACE_RELEASE=1
+        shift
+        ;;
+      --restore)
+        [ $# -ge 2 ] || { usage >&2; return 2; }
+        restore=$2
+        shift 2
+        ;;
       --watch)
         watch=1
         shift
@@ -593,8 +699,13 @@ main() {
     esac
   done
 
+  if [ "$dev" -eq 1 ]; then
+    [ -n "$WOW_DEV_SUFFIX" ] || { log "--dev needs a non-empty WOW_DEV_SUFFIX"; return 2; }
+    SUFFIX=$WOW_DEV_SUFFIX
+  fi
+
   local configured=${WOW_DEV_SUFFIX_CONFIGURED:-}
-  if [ "$any_suffix" -eq 0 ] && [ -n "$configured" ] && [ -n "$WOW_DEV_SUFFIX" ] && [ "$WOW_DEV_SUFFIX" != "$configured" ]; then
+  if [ "$dev" -eq 1 ] && [ "$any_suffix" -eq 0 ] && [ -n "$configured" ] && [ -n "$WOW_DEV_SUFFIX" ] && [ "$WOW_DEV_SUFFIX" != "$configured" ]; then
     log "refusing suffix '$WOW_DEV_SUFFIX': this workspace uses '$configured'; a second dev copy of an addon conflicts with the first (--any-suffix overrides)"
     return 2
   fi
@@ -612,6 +723,11 @@ main() {
 
   if [ "$WOW_ADDONS_PATH" != "/" ] && [ "${WOW_ADDONS_PATH##*/}" != "AddOns" ]; then
     log "warning: $WOW_ADDONS_PATH is not named AddOns; check the remote path"
+  fi
+
+  if [ -n "$restore" ]; then
+    restore_release "$restore" "$dry"
+    return
   fi
 
   if [ "$off" -eq 1 ]; then

@@ -25,12 +25,11 @@ The game (retail) runs on the Windows desktop (towerr). You work in the Coder wo
 1. Before the first edit, run `wow-errors` to see what the game already reports for this addon.
 2. Edit in the checkout under `~/<repo>`. Look up every game API you call or change with `wow-api` first.
 3. `wow-check ~/<repo>/<AddonDir>` and fix every finding in code you touched. Do not sync while it reports new problems in your changes.
-4. Check references (section below) and pick what to sync.
-5. `wow-sync --dry-run <paths>`, read the plan and warnings.
-6. `wow-sync <paths>`, from the same checkout you edited.
-7. Verify: `rclone lsl wow:/<InstalledName>/` must list every changed file with the local size (`wc -c`) and modification time. Only then say "synced". Tell the user exactly what went out (`<Name>-Dev` or real name) and ask them to `/reload` and try the change.
-8. After they did, run `wow-errors` again and read the addon's state with `wow-sv`. Fix and repeat from step 3.
-9. Only call it fixed when `wow-errors` is clean for the addon and the user confirms the behaviour in game.
+4. `wow-sync --dry-run --addon <Name> ~/<repo>`, read the plan and warnings.
+5. `wow-sync --addon <Name> ~/<repo>`, from the same checkout you edited (first time for an installed addon: see below).
+6. Verify: `rclone lsl wow:/<Name>/` must list every changed file with the local size (`wc -c`) and modification time. Only then say "synced". Tell the user which addons went out and ask them to `/reload` and try the change.
+7. After they did, run `wow-errors` again and read the addon's state with `wow-sv`. Fix and repeat from step 3.
+8. Only call it fixed when `wow-errors` is clean for the addon and the user confirms the behaviour in game.
 
 ## Tooling in the workspace
 
@@ -38,7 +37,7 @@ The game (retail) runs on the Windows desktop (towerr). You work in the Coder wo
 |---|---|
 | `wow-check [paths]` | `.toc` and XML lint (missing files, old `## Interface`), luacheck against every real WoW global, lua-language-server with the WoW annotations (deprecated or wrong API use, wrong argument counts, unknown fields). `--fast` skips the language server, `--pedantic` adds unused-variable noise. Exit code 1 means errors; warnings print but exit 0, so read the output. A `deprecated` finding names the call; look up its replacement with `wow-api`. |
 | `wow-errors` | Lua errors the game caught (BugGrabber) in the current game session, with message, stack and count. `--all` for older sessions, `--match <addon>` to filter, `--locals` for the local variables, `--json`. |
-| `wow-sv list` / `wow-sv show <Addon> [--key a.b.c]` | Reads SavedVariables from the game as JSON, e.g. `wow-sv show MyAddon-Dev --key MyAddonDBDev.profiles`. Read-only. The game writes them at `/reload`, logout or exit, not live. |
+| `wow-sv list` / `wow-sv show <Addon> [--key a.b.c]` | Reads SavedVariables from the game as JSON, e.g. `wow-sv show MyAddon --key MyAddonDB.profiles`. Read-only. The game writes them at `/reload`, logout or exit, not live. |
 | `wow-api <name>` | Signature, return values and restrictions of a function or event from Blizzard's generated API docs. Partial names match; `--kind event`. No hit means the function does not exist in this game version. |
 | `wow-sync` | Pushes addons to the game (see below). `wow-sync --help` lists every option. |
 | `wow-luarc [dir]` | Writes `.luarc.json` for editor use of lua-language-server. |
@@ -86,7 +85,7 @@ Some combat log features have no replacement on purpose. Say so to the user inst
 
 Start with `wow-errors`. When it is clean but something is wrong, walk the matching list:
 
-- **Addon does nothing:** is it loaded and not "out of date" (`## Interface` 120100)? Are all `.toc` files present with exact case (`wow-check`)? Does the `ADDON_LOADED` handler compare against the name from `local addonName = ...` rather than a literal, which breaks under `-Dev`? Did it rely on `COMBAT_LOG_EVENT_UNFILTERED`?
+- **Addon does nothing:** is it loaded and not "out of date" (`## Interface` 120100)? Are all `.toc` files present with exact case (`wow-check`)? Does the `ADDON_LOADED` handler compare against the name from `local addonName = ...` rather than a literal, which breaks under `--dev`? Did it rely on `COMBAT_LOG_EVENT_UNFILTERED`?
 - **Nil data:** spell or item not cached yet (`C_Spell.RequestLoadSpellData` + `SPELL_DATA_LOAD_RESULT`, `C_Item.RequestLoadItemDataByID` + `ITEM_DATA_LOAD_RESULT`); SavedVariables read before `ADDON_LOADED`; unit does not exist. Zero or blank only in instances usually means secret values.
 - **Blocked action or taint ("AddOn tried to call the protected function"):** no `SetScript` on Blizzard frames, use `HookScript` or `hooksecurefunc`; no `SetAttribute`, `SetPoint`, `Show`/`Hide` on secure frames while `InCombatLockdown()`, queue until `PLAYER_REGEN_ENABLED`; check `frame:IsForbidden()` before touching nameplates. For a trace, ask the user to run `/console taintLog 1`, reproduce, `/reload` and paste `Logs\taint.log`.
 - **Frame not visible:** shown and parent visible (`IsVisible`), non-zero size, anchored (`ClearAllPoints` before re-anchoring), alpha, strata. The user can inspect with `/fstack`.
@@ -95,53 +94,30 @@ Start with `wow-errors`. When it is clean but something is wrong, walk the match
 
 ## Getting code into the game
 
-Every addon is installed as `<Name>-Dev` beside the released copy by default: the `.toc` is renamed, the title gets `[DEV]`, and every SavedVariables name gets the suffix, so the dev copy never touches the user's real settings.
+`wow-sync` installs each addon under its real name, replacing the copy in the game. That is the default; use it.
 
 | Goal | Command |
 |---|---|
-| One addon or one module | `wow-sync ~/<repo>/<AddonDir>` |
-| Everything in a repository | `wow-sync ~/<repo>` |
+| One addon or one module | `wow-sync --addon <Name> ~/<repo>` |
 | Only what changed in git | `wow-sync --changed ~/<repo>` |
-| Keep syncing on every save | `wow-sync --watch --changed ~/<repo>` (background job) |
-| Only one named addon | `wow-sync --addon <Name> ~/<repo>` |
 | Preview without writing | add `--dry-run` |
-| Switch the game back to the released addons | `wow-sync --off` |
+| Put the user's original release back | `wow-sync --restore <Name>` |
+
+**The first sync of an addon the user has installed from elsewhere (WowUp, CurseForge) stops** with `refusing to sync <Name>: the game has a release copy`. Then ask the user once: "Replace your installed <Name> with the workspace version? The original is saved and `wow-sync --restore <Name>` brings it back." On yes, rerun the same command with `--replace-release`. `wow-sync` saves the release and its SavedVariables to `~/.local/share/wow/backup/<Name>/` first, marks its own copy, and never asks again for that addon until a WowUp update replaces it. Never pass `--replace-release` without that yes in this conversation. An addon with no copy in the game needs no flag.
 
 Rules:
 
-- Always pass explicit paths. Without paths `wow-sync` syncs every repository in `CODER_REPO_DIRS`, including ones built for other game versions (for example the WotLK/Ascension `AutoGossip-WOTLK-Ascension`), which must never reach the retail folder.
-- `wow-sync` is the only way into the AddOns folder. No direct `rclone` copies, no other transfer.
-- "Sync" always means a `wow-sync` run that wrote to `wow:`. Other directories in the workspace (`~/EUI-wotlk`, `~/wt/*`, any second checkout) are source trees, never the game; copying files between them is not a sync and must never be reported as one. The game is always reachable through `wow-sync`; never tell the user you cannot reach it.
-- A `--dry-run` writes nothing. Never report a dry run as a sync.
-- Keep the default suffix `Dev`. Never set `WOW_DEV_SUFFIX` to anything else and never pass `--any-suffix`: a second dev copy of the same addon (`-Dev` and `-1234`) is a second addon hooking the same frames. `wow-sync` refuses other suffixes.
-- Never sync with an empty suffix (under the real name, overwriting the user's released addon) unless the user asks for it or the reference check below requires it, and then only after the user says yes.
-- A child addon (a module of a suite that its core finds by folder name, e.g. `EllesmereUICooldownManager` under `EllesmereUI`) goes out under its real name: `WOW_DEV_SUFFIX= wow-sync --addon <Name> ~/<repo>`. Once the user agreed to the real name for an addon, keep using it for every sync of that addon in the conversation; never switch between `-Dev` and the real name silently.
-- Prefer a one-shot sync after each change over `--watch`; if the user wants `--watch`, run it as a background job and stop it when done.
-
-## Addons that reference each other
-
-A `-Dev` copy lives under a different folder name, and WoW finds addons only by folder name. Any reference by name breaks when one side is renamed and the other is not. Which side references which differs per addon, so check it for the addon you changed, in both directions, before syncing.
-
-1. **What the changed addon references:** its `.toc` lines `## Dependencies`, `## RequiredDeps`, `## OptionalDeps`, `## LoadWith`, `## LoadManagers`, and in its Lua and XML: `C_AddOns.IsAddOnLoaded(...)`, `C_AddOns.LoadAddOn(...)`, `C_AddOns.EnableAddOn(...)`, `C_AddOns.GetAddOnMetadata(...)`, `Interface\AddOns\<Name>\` paths, and string comparisons against folder names.
-2. **What references the changed addon:** the same patterns in every other addon of the repository that name it:
-   ```sh
-   grep -rnE --include='*.toc' --include='*.lua' --include='*.xml' '<ChangedName>([^A-Za-z0-9_]|$)' ~/<repo> | grep -v '/Libs/'
-   ```
-   Ask the user whether an addon outside the repository (installed separately in the game) depends on it; you cannot see those.
-3. **Decide the set for one `wow-sync` run:**
-   - Every addon that references a changed addon by name, or is referenced by name from one, and is itself changed or must see the dev behaviour: sync it in the same run. `wow-sync` rewrites dependency lines, `AddOns\<Name>\` paths and string literals that are exactly the name of another addon of the same run to the `-Dev` names.
-   - A referenced addon that is unchanged and whose released version is fine stays out of the run. The `-Dev` copies keep pointing at its real name.
-   - If an addon that cannot be synced (released, outside the repository) must find the changed one by name, a `-Dev` copy is invisible to it. Then install the changed addon under its real name, overwriting the released one: `WOW_DEV_SUFFIX= wow-sync --addon <Name> ~/<repo>`. That replaces the user's installed version; say so and get a yes first.
-4. **Names built at runtime** (`"Core" .. module`, `name:match("^Core(.+)$")`, lookups by prefix) are not rewritten. If the code builds names, the `-Dev` rename cannot work for those addons; use the real name, with the user's consent.
-5. Before the real run, run `wow-sync --dry-run` with the same arguments and read its warnings. Afterwards tell the user which addons went out as `-Dev` and which references stayed on released copies.
+- "Sync" means a `wow-sync` run that wrote to `wow:`. Nothing else: not a `cp` into another directory (`~/EUI-wotlk`, `~/wt/*` and any second checkout are source trees, never the game), not a `--dry-run`, not a direct `rclone`. The game is always reachable through `wow-sync`; never tell the user you cannot reach it.
+- Always pass explicit paths, and `--addon` unless you use `--changed`. Without paths `wow-sync` syncs every repository in `CODER_REPO_DIRS`, including ones for other game versions (the WotLK/Ascension `AutoGossip-WOTLK-Ascension`, `~/EUI-wotlk`), which must never reach the retail folder.
+- Sync from the checkout you edited.
+- After the sync, check `rclone lsl wow:/<Name>/` lists every changed file with its local size (`wc -c`). Only then tell the user it is synced, naming the addon.
+- A WowUp update of the addon overwrites the synced copy. If the user reports the fix gone, sync again.
+- Do not use `--dev`, `--off` or `--any-suffix` unless the user asks for a dev copy beside the release. `--dev` installs `<Name>-Dev` with renamed SavedVariables and needs the helper addon WowSync; it is for bigger rewrites only.
 
 ## In the game
 
-Dev copies are `LoadOnDemand`, so the game never starts one on its own. The helper addon `WowSync` loads them. At the first login after a sync it switches only the addons of that sync: disables their releases for all characters, enables the dev copies, and reloads once if a release was active. After that it never changes enable states: a dev copy the user turned off in the AddOn list stays off, and a dev copy whose release is also enabled is not loaded (reported, nothing switched). A dev copy and its release never run in the same session, because two copies hooking the same frames freeze the game at login. To bring a dev copy back after the user turned it off, sync it again or ask the user to run `/wowsync dev`. In chat: `/wowsync status`, `/wowsync dev`, `/wowsync release`. What the helper did at the last login (loaded, blocked by an enabled release, failed with reason) is in `wow-sv show WowSync --key WowSyncDB.last`; read it when the user says a dev copy did not show up.
-
-Because the helper loads dev copies during its own startup, an addon that expects to load before others or checks `IsAddOnLoaded` of a released sibling at file load may behave differently as a dev copy; say so when that is a possible cause.
-
 - After every sync the user has to `/reload` (or relog) for the new files to load.
+- If the AddOn list shows a synced addon disabled, an earlier `--dev` sync turned its release off; ask the user to enable it.
 - An addon whose `## Interface` is older than the game build is hidden unless "Load out of date AddOns" is ticked; keep `## Interface` current (retail 12.1 = `120100`).
 - Lua errors reach you through `wow-errors` once the user reloaded or logged out, because the game writes BugGrabber's data only then. Ask the user to `/reload` after reproducing, not to paste errors.
 

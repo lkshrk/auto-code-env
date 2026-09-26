@@ -152,8 +152,8 @@ adds what the generic Lua tools lack, knowledge of the game:
   Blizzard's generated API docs.
 
 Development stays on the home volume. `wow-sync` finds every addon in the
-cloned repositories by its `.toc`, stages a copy locally, rewrites it into the
-dev variant, and runs `rclone sync` into `<wow_addons_path>/<Name>-<suffix>`.
+cloned repositories by its `.toc`, stages a copy locally, and runs
+`rclone sync` into `<wow_addons_path>/<Name>`, replacing the installed addon.
 rclone writes each file once, retries, and verifies size and modification time,
 so the stage-then-verify dance a hand-written copy needs is built in.
 `wow-sync --watch` repeats that on every change; `--dry-run` shows the plan.
@@ -163,13 +163,22 @@ inside a repository, `--addon NAME` narrows a run to named addons, and
 committed ahead of the upstream branch), so the module being edited is the
 only thing that moves.
 
-`wow_dev_suffix` (default `Dev`) is what makes this safe to run beside the
-released addon: `Alpha` is installed as `Alpha-Dev` with `Alpha-Dev.toc`, its
+The installed copy's `.toc` gets `## X-WowSync-Synced: <time>`. A copy without
+it is a release from WowUp, CurseForge or a hand install, and `wow-sync` refuses
+to overwrite it unless `--replace-release` is given; then it first saves the
+release to `~/.local/share/wow/backup/<Name>/release` and the addon's account
+SavedVariables (from `wowsv:`) next to it. `wow-sync --restore <Name>` puts the
+saved release back; the SavedVariables share is read-only, so restoring
+settings is manual. A WowUp update drops the mark, so the next sync asks again.
+A leftover `<Name>-<suffix>` dev copy is removed on a real-name sync so two
+copies never load together.
+
+`--dev` installs dev copies beside the release instead, for bigger rewrites.
+`wow_dev_suffix` (default `Dev`) is the suffix it uses: `Alpha` is installed as `Alpha-Dev` with `Alpha-Dev.toc`, its
 Title marked `[DEV]`, and every `SavedVariables` name suffixed in the `.toc` and
 in the Lua sources (`AlphaDB` becomes `AlphaDBDev`; `Libs/` is left alone). The
 two copies toggle independently in the addon list and never share settings,
-which live under `WTF/`, not `Interface/AddOns`. An empty suffix syncs under the
-real name and overwrites the release.
+which live under `WTF/`, not `Interface/AddOns`.
 
 Addons synced in one run form a set, so a suite such as BigWigs or EllesmereUI
 keeps working as a whole: `## Dependencies: Alpha` becomes `Alpha-Dev`,
@@ -187,7 +196,7 @@ the released core.
 Dev copies are written with `## LoadOnDemand: 1` and `## X-WowSync-Release:
 <Name>`, so the game never starts one on its own: a dev copy and its release
 loaded together both hook the same frames, and addons such as EllesmereUI then
-freeze the client at login. Every dev sync also installs `WowSync`, a small
+freeze the client at login. Every `--dev` sync also installs `WowSync`, a small
 helper addon. At the first login after a sync it switches the addons of that
 sync (the list is in its `Mode.lua`): disables their releases for all
 characters, enables the dev copies, and reloads once if a release was active.
