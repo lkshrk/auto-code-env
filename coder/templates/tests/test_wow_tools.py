@@ -202,6 +202,13 @@ class WowToolsTest(unittest.TestCase):
         rng = {"start": {"line": 1, "character": 14}, "end": {"line": 1, "character": 26}}
         self.assertEqual(self.mod.range_text(lines, rng), "GetSpellInfo")
         self.assertEqual(self.mod.range_text(lines, {"start": {"line": 0}, "end": {"line": 1}}), "")
+        colon = {"start": {"line": 1, "character": 26}, "end": {"line": 1, "character": 27}}
+        self.assertEqual(self.mod.range_text(lines, colon), "")
+
+    def test_luals_report_without_findings(self):
+        self.assertEqual(self.mod.luals_report("[]"), {})
+        self.assertEqual(self.mod.luals_report(""), {})
+        self.assertEqual(self.mod.luals_report('{"file:///a.lua": []}'), {"file:///a.lua": []})
 
     def test_repo_globals_include_savedvariables_g_assignments_and_frames(self):
         repo = self.tmp / "repo2"

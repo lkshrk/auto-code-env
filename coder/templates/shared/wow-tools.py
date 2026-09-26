@@ -549,7 +549,7 @@ def run_luals(addon, problems, notes, pedantic):
                 return
             notes.append(f"lua-language-server failed: {(res.stderr or res.stdout).strip()[-300:]}")
             return
-        for uri, diags in json.loads(report.read_text()).items():
+        for uri, diags in luals_report(report.read_text()).items():
             path = Path(unquote(uri.replace("file://", "")))
             if any(p.lower() == "libs" for p in path.parts):
                 continue
@@ -568,13 +568,19 @@ def run_luals(addon, problems, notes, pedantic):
                 problems.append((sev, path, line, f"luals {d.get('code')}: {msg}"))
 
 
+# lua-language-server writes [] instead of {} when nothing was found.
+def luals_report(text):
+    data = json.loads(text) if text.strip() else {}
+    return data if isinstance(data, dict) else {}
+
+
 def range_text(lines, rng):
     start, end = rng.get("start", {}), rng.get("end", {})
     row = start.get("line")
     if row is None or row != end.get("line") or row >= len(lines):
         return ""
     text = lines[row][start.get("character", 0):end.get("character", 0)].strip()
-    return text if 0 < len(text) <= 80 else ""
+    return text if 0 < len(text) <= 80 and re.search(r"\w", text) else ""
 
 
 def cmd_check(args):
