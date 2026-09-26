@@ -50,9 +50,11 @@ its references keep pointing at the released rest of the suite. Nested addon
 directories and hidden files are never copied into a parent addon.
 
 Dev copies are marked LoadOnDemand, so the game never starts one beside its
-released addon. Every dev sync also installs the helper addon WowSync: it
-disables each released addon that has a dev copy (for all characters), reloads
-once if the release was active, and then loads the dev copies itself. In game,
+released addon. Every dev sync also installs the helper addon WowSync. At the
+first login after a sync it switches the addons of that sync: disables their
+releases (for all characters), enables the dev copies, and reloads once if a
+release was active. On every login it loads the dev copies that are enabled
+and whose release is not; enable states set by hand in the AddOn list stay. In game,
 /wowsync release|dev|status flips between the two; the last result is in the
 WowSyncDB SavedVariable. A suffix other than WOW_DEV_SUFFIX_CONFIGURED is
 refused unless --any-suffix is given.
@@ -222,8 +224,12 @@ sync_addon() {
 
 # Installs the in-game switch addon. Its Interface version follows the synced
 # addons, else the copy already on the remote, so the game never hides it.
+# install_switch_addon <mode> <interface> <dry> <dev name>... ; the named dev
+# copies are switched once at the next login, every other enable state is left alone.
 install_switch_addon() {
-  local mode=$1 interface=$2 dry=$3 dest stage
+  local mode=$1 interface=$2 dry=$3 dest stage dev list=""
+  shift 3
+  for dev in "$@"; do list+="\"$dev\", "; done
   dest="$WOW_REMOTE:${WOW_ADDONS_PATH%/}/$WOW_SWITCH_ADDON"
   [ -n "$dry" ] && return 0
   check_dest "$WOW_SWITCH_ADDON" "$WOW_SWITCH_ADDON" "$dest" || return 1
@@ -248,7 +254,7 @@ install_switch_addon() {
 Mode.lua
 $WOW_SWITCH_ADDON.lua
 TOC
-  printf 'WowSyncMode = "%s"\nWowSyncStamp = "%s"\n' "$mode" "$(date +%s)" > "$stage/Mode.lua"
+  printf 'WowSyncMode = "%s"\nWowSyncStamp = "%s"\nWowSyncAddons = { %s}\n' "$mode" "$(date +%s)" "$list" > "$stage/Mode.lua"
   cat > "$stage/$WOW_SWITCH_ADDON.lua" <<'LUA'
 local ADDON = ...
 local SUFFIX = "-@SUFFIX@"
@@ -262,49 +268,66 @@ end
 
 -- Copies from older syncs carry no X-WowSync-Release and are found by suffix.
 local function devCopies()
-  local list, seen = {}, {}
+  local list = {}
   for i = 1, C_AddOns.GetNumAddOns() do
     local name = C_AddOns.GetAddOnInfo(i)
     local rel = meta(name, "X-WowSync-Release")
-    local legacy = not rel and name:sub(-#SUFFIX) == SUFFIX
-    if rel or legacy then
-      rel = rel or name:sub(1, -#SUFFIX - 1)
-      list[#list + 1] = { dev = name, rel = rel, autoload = meta(name, "X-WowSync-Load") == "1", legacy = legacy, duplicate = seen[rel] or false }
-      seen[rel] = true
+    if rel or name:sub(-#SUFFIX) == SUFFIX then
+      list[#list + 1] = { dev = name, rel = rel or name:sub(1, -#SUFFIX - 1), autoload = meta(name, "X-WowSync-Load") == "1" }
     end
   end
   return list
 end
 
-local function relActive(rel)
-  if not C_AddOns.DoesAddOnExist(rel) then return false end
-  if C_AddOns.IsAddOnLoaded(rel) then return true end
-  return C_AddOns.GetAddOnEnableState(rel, UnitName("player")) ~= Enum.AddOnEnableState.None
+local function enabledHere(name)
+  return C_AddOns.GetAddOnEnableState(name, UnitName("player")) ~= Enum.AddOnEnableState.None
 end
 
--- Never loads a dev copy while its release is loaded or enabled; that session reloads first.
-local function apply(mode)
-  local report = { mode = mode, time = time(), loaded = {}, waiting = {}, failed = {} }
-  local reload, toLoad = false, {}
-  for _, c in ipairs(devCopies()) do
-    local hasRel = C_AddOns.DoesAddOnExist(c.rel)
-    if mode == "dev" and not c.duplicate then
-      local active = relActive(c.rel)
-      if hasRel then C_AddOns.DisableAddOn(c.rel) end
-      C_AddOns.EnableAddOn(c.dev)
-      if active then
-        reload = true
-        report.waiting[#report.waiting + 1] = c.dev
-      elseif c.autoload and not C_AddOns.IsAddOnLoaded(c.dev) then
-        toLoad[#toLoad + 1] = c.dev
+local function relActive(rel)
+  if not C_AddOns.DoesAddOnExist(rel) then return false end
+  return C_AddOns.IsAddOnLoaded(rel) or enabledHere(rel)
+end
+
+-- Changes enable states, so it runs only for a fresh sync (limited to its addons) or /wowsync.
+local function switch(mode, only)
+  local reload = false
+  local copies = devCopies()
+  for _, c in ipairs(copies) do
+    if not only or only[c.dev] then
+      local hasRel = C_AddOns.DoesAddOnExist(c.rel)
+      if mode == "dev" then
+        if relActive(c.rel) then reload = true end
+        if hasRel then C_AddOns.DisableAddOn(c.rel) end
+        for _, other in ipairs(copies) do
+          if other.rel == c.rel and other.dev ~= c.dev then C_AddOns.DisableAddOn(other.dev) end
+        end
+        C_AddOns.EnableAddOn(c.dev)
+      else
+        if C_AddOns.IsAddOnLoaded(c.dev) then reload = true end
+        C_AddOns.DisableAddOn(c.dev)
+        if hasRel and not enabledHere(c.rel) then
+          C_AddOns.EnableAddOn(c.rel)
+          reload = true
+        end
       end
-    else
-      if c.duplicate then report.failed[c.dev] = "second dev copy of " .. c.rel .. ", disabled" end
-      if C_AddOns.IsAddOnLoaded(c.dev) then reload = true end
-      C_AddOns.DisableAddOn(c.dev)
-      if mode ~= "dev" and hasRel and not relActive(c.rel) then
-        C_AddOns.EnableAddOn(c.rel)
-        reload = true
+    end
+  end
+  return reload
+end
+
+-- Loads the dev copies that are enabled, never one whose release is loaded or enabled.
+local function loadEnabled()
+  local report = { time = time(), loaded = {}, blocked = {}, failed = {} }
+  local toLoad, taken = {}, {}
+  for _, c in ipairs(devCopies()) do
+    if c.autoload and enabledHere(c.dev) and not C_AddOns.IsAddOnLoaded(c.dev) then
+      if relActive(c.rel) then
+        report.blocked[c.dev] = c.rel .. " is loaded or enabled"
+      elseif taken[c.rel] then
+        report.blocked[c.dev] = taken[c.rel] .. " already replaces " .. c.rel
+      else
+        taken[c.rel] = c.dev
+        toLoad[#toLoad + 1] = c.dev
       end
     end
   end
@@ -325,7 +348,6 @@ local function apply(mode)
     toLoad = retry
   end
   WowSyncDB.last = report
-  return reload, report
 end
 
 local function say(fmt, ...)
@@ -335,12 +357,14 @@ end
 local function status()
   local names = {}
   for _, c in ipairs(devCopies()) do
-    names[#names + 1] = c.dev .. (C_AddOns.IsAddOnLoaded(c.dev) and " (loaded)" or "")
+    local state = C_AddOns.IsAddOnLoaded(c.dev) and "loaded" or enabledHere(c.dev) and "enabled" or "off"
+    names[#names + 1] = ("%s (%s)"):format(c.dev, state)
   end
-  say("mode %s, %d dev copies: %s", WowSyncDB.mode, #names, table.concat(names, ", "))
+  say("%d dev copies: %s", #names, table.concat(names, ", "))
   local last = WowSyncDB.last
   if last then
-    for dev, reason in pairs(last.failed) do say("%s not loaded: %s", dev, reason) end
+    for dev, why in pairs(last.blocked) do say("%s not loaded: %s; disable one of them", dev, why) end
+    for dev, reason in pairs(last.failed) do say("%s failed to load: %s", dev, reason) end
   end
 end
 
@@ -359,10 +383,13 @@ SlashCmdList.WOWSYNC = function(msg)
   msg = (msg or ""):lower():match("^%s*(%S*)")
   if msg == "dev" or msg == "release" then
     WowSyncDB.mode = msg
-    if apply(msg) then reloadNow("switched to " .. msg) else status() end
-  else
-    status()
+    if switch(msg) then
+      reloadNow("switched to " .. msg)
+      return
+    end
+    loadEnabled()
   end
+  status()
 end
 
 local f = CreateFrame("Frame")
@@ -376,11 +403,17 @@ f:SetScript("OnEvent", function(self, event, name)
     if WowSyncDB.stamp ~= WowSyncStamp then
       WowSyncDB.stamp = WowSyncStamp
       WowSyncDB.mode = WowSyncMode
+      local only
+      if WowSyncAddons and #WowSyncAddons > 0 then
+        only = {}
+        for _, dev in ipairs(WowSyncAddons) do only[dev] = true end
+      end
+      reloadPending = switch(WowSyncMode, only)
     end
-    reloadPending = apply(WowSyncDB.mode or WowSyncMode)
+    loadEnabled()
   else
     status()
-    if reloadPending then reloadNow("released copies disabled for " .. WowSyncDB.mode .. " mode") end
+    if reloadPending then reloadNow("new sync switched addons to " .. WowSyncDB.mode) end
   end
 end)
 LUA
@@ -473,7 +506,9 @@ sync_all() {
   done
 
   if [ -n "$WOW_DEV_SUFFIX" ]; then
-    install_switch_addon dev "${WOW_INTERFACE:-$(max_interface "${tocs[@]+"${tocs[@]}"}")}" "$dry" || status=1
+    local devs=() member
+    for member in "${members[@]}"; do devs+=("$member-$WOW_DEV_SUFFIX"); done
+    install_switch_addon dev "${WOW_INTERFACE:-$(max_interface "${tocs[@]+"${tocs[@]}"}")}" "$dry" "${devs[@]}" || status=1
   fi
   return "$status"
 }

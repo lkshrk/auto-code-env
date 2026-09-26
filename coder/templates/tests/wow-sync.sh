@@ -127,6 +127,7 @@ grep -qF 'Interface/AddOns/Suite-Dev/media/x.tga' "$ADDONS/SuiteBags-Dev/SuiteBa
 # The switch addon is installed in dev mode with the newest Interface of the set.
 grep -q '^## Interface: 110200$' "$ADDONS/WowSync/WowSync.toc"
 grep -q '^WowSyncMode = "dev"$' "$ADDONS/WowSync/Mode.lua"
+grep -qF '"Suite-Dev"' "$ADDONS/WowSync/Mode.lua"
 grep -q '^local SUFFIX = "-Dev"$' "$ADDONS/WowSync/WowSync.lua"
 lua=$(command -v lua5.1 || command -v lua || true)
 [ -n "$lua" ] || { printf 'FAIL: lua5.1 is needed for the WowSync helper test\n' >&2; exit 1; }

@@ -184,10 +184,13 @@ Dev copies are written with `## LoadOnDemand: 1` and `## X-WowSync-Release:
 <Name>`, so the game never starts one on its own: a dev copy and its release
 loaded together both hook the same frames, and addons such as EllesmereUI then
 freeze the client at login. Every dev sync also installs `WowSync`, a small
-helper addon. When a release with a dev copy is still enabled, it disables the
-release for all characters and reloads once without loading the dev copy; on
-the next load it loads the dev copies itself, in dependency order, and records
-the result in `WowSyncDB.last`. `/wowsync release` and `/wowsync dev` flip
+helper addon. At the first login after a sync it switches the addons of that
+sync (the list is in its `Mode.lua`): disables their releases for all
+characters, enables the dev copies, and reloads once if a release was active.
+On every login it loads the dev copies that are enabled and whose release is
+not, in dependency order, and records the result in `WowSyncDB.last`. It never
+changes enable states otherwise, so a dev copy turned off in the AddOn list
+stays off until the next sync of it or `/wowsync dev`. `/wowsync release` and `/wowsync dev` flip
 between the two in game, `/wowsync` prints the state, `wow-sync --off` flips to
 release at the next login. `wow-sync` refuses a `WOW_DEV_SUFFIX` that differs
 from the workspace parameter (`WOW_DEV_SUFFIX_CONFIGURED`) unless

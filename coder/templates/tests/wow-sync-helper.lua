@@ -53,11 +53,15 @@ CreateFrame = function()
 end
 
 -- A new session: the client loads every enabled, not load-on-demand addon before WowSync runs.
-local function session()
+local stamp = 0
+local function session(sync)
   clock = clock + 120
   reloads, log = 0, {}
   for _, a in ipairs(addons) do a.loaded = a.enabled and not a.lod end
-  dofile(modePath)
+  if sync then
+    stamp = stamp + 1
+    WowSyncMode, WowSyncStamp, WowSyncAddons = sync.mode or "dev", tostring(stamp), sync.addons
+  end
   loadfile(helperPath)("WowSync")
   frame.handler(frame, "ADDON_LOADED", "WowSync")
   frame.handler(frame, "PLAYER_LOGIN")
@@ -76,43 +80,72 @@ local function dev(name, release, deps)
   return { name = name, lod = true, enabled = false, deps = deps, meta = { ["X-WowSync-Release"] = release, ["X-WowSync-Load"] = "1" } }
 end
 
+-- The generated Mode.lua names the dev copies of its sync.
+WowSyncAddons = nil
+dofile(modePath)
+check(type(WowSyncAddons) == "table" and #WowSyncAddons > 0, "Mode.lua lists the synced dev copies")
+
 world({
   dev("SuiteBags-Dev", "SuiteBags", { "Suite-Dev" }),
   dev("Suite-Dev", "Suite"),
+  dev("Mine-Dev", "Mine"),
   { name = "Suite", enabled = true },
   { name = "SuiteBags", enabled = true },
+  { name = "Mine", enabled = true },
   { name = "Other", enabled = true },
 })
 WowSyncDB = nil
+local synced = { addons = { "SuiteBags-Dev", "Suite-Dev" } }
+local function session_same() return session(nil) end
 
-check(session() == 1, "first login with the release active reloads")
+check(session(synced) == 1, "first login after a sync with the release active reloads")
 check(not byName["Suite-Dev"].loaded and not byName["SuiteBags-Dev"].loaded, "dev copies never load beside the release")
-check(not byName.Suite.enabled and not byName.SuiteBags.enabled, "releases are disabled")
-check(byName.Other.enabled, "unrelated addons stay enabled")
+check(not byName.Suite.enabled and not byName.SuiteBags.enabled, "releases of the synced addons are disabled")
+check(byName.Mine.enabled and not byName["Mine-Dev"].enabled, "addons outside the sync keep their state")
 
-check(session() == 0, "second login needs no reload")
+check(session_same() == 0, "second login needs no reload")
 check(byName["Suite-Dev"].loaded and byName["SuiteBags-Dev"].loaded, "dev copies load, dependents after their dependency")
-check(not byName.Suite.loaded, "release stays unloaded in dev mode")
-check(next(WowSyncDB.last.failed) == nil, "no load failures are reported")
+
+-- The user turns a dev copy off and the release back on in the AddOn list.
+byName["SuiteBags-Dev"].enabled, byName.SuiteBags.enabled = false, true
+for _ = 1, 3 do check(session_same() == 0, "a later login does not reload") end
+check(not byName["SuiteBags-Dev"].enabled and not byName["SuiteBags-Dev"].loaded, "a dev copy disabled by hand stays disabled")
+check(byName.SuiteBags.enabled and byName.SuiteBags.loaded, "a release enabled by hand stays enabled")
+check(byName["Suite-Dev"].loaded, "the other dev copy keeps loading")
+
+-- Both enabled by hand: nothing is switched, the dev copy just does not load.
+byName["Mine-Dev"].enabled = true
+check(session_same() == 0, "a conflict does not reload")
+check(byName.Mine.loaded and not byName["Mine-Dev"].loaded and byName["Mine-Dev"].enabled, "dev copy is blocked, states untouched")
+check(WowSyncDB.last.blocked["Mine-Dev"] ~= nil, "the blocked copy is reported")
+
+-- A new sync of one addon switches only that addon.
+byName["Mine-Dev"].enabled = false
+check(session({ addons = { "Mine-Dev" } }) == 1, "a new sync of an active release reloads")
+check(byName["Mine-Dev"].enabled and not byName.Mine.enabled, "the synced addon is switched")
+check(not byName["SuiteBags-Dev"].enabled and byName.SuiteBags.enabled, "earlier manual choices survive a new sync")
 
 SlashCmdList.WOWSYNC("release")
-check(reloads == 1, "/wowsync release reloads")
-check(byName.Suite.enabled and not byName["Suite-Dev"].enabled, "/wowsync release swaps enable states")
-check(session() == 0 and byName.Suite.loaded and not byName["Suite-Dev"].loaded, "release mode loads only the release")
+check(not byName["Suite-Dev"].enabled and not byName["Mine-Dev"].enabled, "/wowsync release disables every dev copy")
+check(byName.Suite.enabled and byName.Mine.enabled, "/wowsync release enables every release")
+check(session_same() == 0 and byName.Suite.loaded and not byName["Suite-Dev"].loaded, "release mode loads only releases")
 
 world({
-  { name = "Old-Dev", enabled = true },
+  { name = "Old-Dev", enabled = false },
   { name = "Old", enabled = true },
   dev("Foo-Dev", "Foo"),
   dev("Foo-2154", "Foo"),
   { name = "Foo", enabled = false },
 })
 WowSyncDB = nil
-check(session() == 1, "a legacy dev copy with an active release reloads")
-check(not byName.Old.enabled and byName["Old-Dev"].enabled, "legacy copies still switch by suffix")
-check(byName["Foo-Dev"].loaded and not byName["Foo-2154"].loaded and not byName["Foo-2154"].enabled, "only the first dev copy of a release loads")
-check(WowSyncDB.last.failed["Foo-2154"] ~= nil, "the second copy is reported")
+session({ addons = { "Foo-2154" } })
+check(byName["Foo-2154"].enabled and not byName["Foo-Dev"].enabled, "switching a copy disables other copies of the same release")
+SlashCmdList.WOWSYNC("dev")
+check(not byName.Old.enabled and byName["Old-Dev"].enabled, "/wowsync dev also switches suffix-only copies")
+byName["Foo-Dev"].enabled = true
+session_same()
+check((byName["Foo-Dev"].loaded and 1 or 0) + (byName["Foo-2154"].loaded and 1 or 0) == 1, "only one dev copy of a release loads")
 
 if failures > 0 then os.exit(1) end
 print = io.write
-print("PASS: WowSync never runs a dev copy beside its release\n")
+print("PASS: WowSync respects manual enable states and never runs a dev copy beside its release\n")
