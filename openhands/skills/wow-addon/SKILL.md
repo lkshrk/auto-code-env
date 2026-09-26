@@ -51,11 +51,47 @@ The game (retail) runs on the Windows desktop (towerr). You work in the Coder wo
 
 The game is retail 12.1. Training data and most online examples are older; many of them no longer work.
 
-- Deprecated global functions from 11.x are removed. Use the namespaced ones, for example `C_Spell.GetSpellInfo` (returns a table), `C_Spell.GetSpellCooldown`, `C_Spell.GetSpellTexture`, `C_SpellBook.GetNumSpellBookSkillLines`, `C_SpellBook.GetSpellBookSkillLineInfo`, `C_SpellBook.GetSpellBookItemName`, `C_ActionBar.HasAction`, `C_AddOns.IsAddOnLoaded`, `C_AddOns.GetAddOnMetadata`.
+- Deprecated global functions from 11.x are removed. Use the namespaced ones, for example `C_Spell.GetSpellInfo` (returns a table), `C_Spell.GetSpellCooldown`, `C_Spell.GetSpellTexture`, `C_SpellBook.GetNumSpellBookSkillLines`, `C_SpellBook.GetSpellBookSkillLineInfo`, `C_SpellBook.GetSpellBookItemName`, `C_SpellBook.IsSpellKnown`, `C_ActionBar.HasAction`, `C_AddOns.IsAddOnLoaded`, `C_AddOns.GetAddOnMetadata`, `GetMouseFoci` (returns a table).
 - `COMBAT_LOG_EVENT_UNFILTERED` and `COMBAT_LOG_EVENT` are gone; registering them raises an error. There is no combat log parsing any more.
 - Combat data (`UnitHealth`, `UnitName`, auras, casts, cooldowns and similar) is often a **secret value** in addon code. Addon code may store secrets, pass them to Lua functions and to the few C APIs that accept them (for example `StatusBar:SetValue`, `FontString:SetText`), and concatenate or `string.format` them. Comparing, boolean tests on secret booleans, arithmetic, `#`, using them as table keys and indexing them raise an immediate Lua error. A widget that received a secret returns secrets from its getters afterwards (`GetText`). Check with `issecretvalue(v)` and `canaccessvalue(v)`; `C_Secrets.*` and `C_RestrictedActions.IsAddOnRestrictionActive` tell when restrictions apply, the event `ADDON_RESTRICTION_STATE_CHANGED` when they change.
 - `wow-api` shows `SecretArguments`/`SecretReturns` notes per function; read them before using a value in logic.
 - Never assume an API from memory. If `wow-api` does not know it and `grep -rn` in `~/.local/share/wow/wow-ui-source` finds nothing, it does not exist.
+
+### Patterns that work with secret values
+
+Show combat data through widgets and curve or duration objects instead of computing with it:
+
+| Need | Use |
+|---|---|
+| Health bar or percent | `UnitHealthPercent(unit, usePredicted, curve)` into `StatusBar:SetValue`; heal prediction via `CreateUnitHealPredictionCalculator()` |
+| Cooldown swipe | `C_Spell.GetSpellCooldownDuration(spellID)` into `Cooldown:SetCooldownFromDurationObject(duration)`; no `start + duration - GetTime()` |
+| Colour or alpha from a value | `C_CurveUtil.CreateColorCurve()` / `C_CurveUtil.CreateCurve()`; `Region:SetAlphaFromBoolean(value, ifTrue, ifFalse)`, `SetVertexColorFromBoolean` |
+| Table that may hold secrets | `issecrettable(t)`, `hasanysecretvalues(t)`, `scrubsecretvalues(t)` (secrets become nil) |
+| Is a restriction active | `C_Secrets.HasSecretRestrictions()`, `C_RestrictedActions.IsAddOnRestrictionActive(Enum.AddOnRestrictionType.X)`, `C_CombatLog.IsCombatLogRestricted()`; per spell `C_Secrets.ShouldSpellCooldownBeSecret`, `C_Secrets.GetSpellAuraSecrecy` |
+| Addon messages | `C_ChatInfo.SendAddonMessage` fails in instance lockdown; check `C_ChatInfo.InChatMessagingLockdown()` and its `SendAddonMessageResult`, queue and send after `ENCOUNTER_END` |
+
+### Replacing combat log parsing
+
+| Old combat log use | Now |
+|---|---|
+| Damage and healing meters | `C_DamageMeter` (`IsDamageMeterAvailable`, `GetAvailableCombatSessions`, `GetCombatSessionFromID`) |
+| Health changes, deaths | `UNIT_HEALTH` + `UnitHealthPercent`; `UnitIsDeadOrGhost(unit)` on that event |
+| Auras applied or removed, dispels | `UNIT_AURA(unit, updateInfo)` + `C_UnitAuras.GetAuraDataByAuraInstanceID` or `AuraUtil.ForEachAura` |
+| Casts, interrupts | `frame:RegisterUnitEvent("UNIT_SPELLCAST_START", unit)`, `UNIT_SPELLCAST_SUCCEEDED`, `UNIT_SPELLCAST_INTERRUPTED` (payload has `interruptedBy`) |
+| Boss abilities | `C_EncounterTimeline` (Blizzard's boss timeline) plus `ENCOUNTER_START`/`ENCOUNTER_END` |
+
+Some combat log features have no replacement on purpose. Say so to the user instead of inventing a workaround.
+
+## Debugging checklist
+
+Start with `wow-errors`. When it is clean but something is wrong, walk the matching list:
+
+- **Addon does nothing:** is it loaded and not "out of date" (`## Interface` 120100)? Are all `.toc` files present with exact case (`wow-check`)? Does the `ADDON_LOADED` handler compare against the name from `local addonName = ...` rather than a literal, which breaks under `-Dev`? Did it rely on `COMBAT_LOG_EVENT_UNFILTERED`?
+- **Nil data:** spell or item not cached yet (`C_Spell.RequestLoadSpellData` + `SPELL_DATA_LOAD_RESULT`, `C_Item.RequestLoadItemDataByID` + `ITEM_DATA_LOAD_RESULT`); SavedVariables read before `ADDON_LOADED`; unit does not exist. Zero or blank only in instances usually means secret values.
+- **Blocked action or taint ("AddOn tried to call the protected function"):** no `SetScript` on Blizzard frames, use `HookScript` or `hooksecurefunc`; no `SetAttribute`, `SetPoint`, `Show`/`Hide` on secure frames while `InCombatLockdown()`, queue until `PLAYER_REGEN_ENABLED`; check `frame:IsForbidden()` before touching nameplates. For a trace, ask the user to run `/console taintLog 1`, reproduce, `/reload` and paste `Logs\taint.log`.
+- **Frame not visible:** shown and parent visible (`IsVisible`), non-zero size, anchored (`ClearAllPoints` before re-anchoring), alpha, strata. The user can inspect with `/fstack`.
+- **Settings not saved:** variable listed in `## SavedVariables`, global not local, defaults merged into the existing table instead of replacing it, only plain data stored. Verify with `wow-sv show` after the user's `/reload`.
+- **Load order:** files run in `.toc` order; SavedVariables exist from `ADDON_LOADED`, player data from `PLAYER_LOGIN`.
 
 ## Getting code into the game
 
