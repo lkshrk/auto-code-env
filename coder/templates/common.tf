@@ -221,7 +221,7 @@ locals {
 
     mkdir -p "$HOME/.local/state/coder-environment"
 
-    printf '%s' '${base64encode(file("${path.module}/shared/github-identity.sh"))}' | base64 --decode > "$HOME/.local/state/coder-environment/github-identity.sh"
+    printf '%s' '${base64gzip(file("${path.module}/shared/github-identity.sh"))}' | base64 --decode | gunzip > "$HOME/.local/state/coder-environment/github-identity.sh"
 
     bash "$HOME/.local/state/coder-environment/github-identity.sh" install
 
@@ -267,20 +267,20 @@ locals {
     fi
     mkdir -p "$HOME/.local/state/coder-environment"
     export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.krew/bin:$HOME/.local/share/pnpm:$HOME/.local/share/pnpm/bin:$PATH"
-    printf '%s' '${base64encode(file("${path.module}/shared/dotfiles-contract.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/dotfiles-contract.py"
+    printf '%s' '${base64gzip(file("${path.module}/shared/dotfiles-contract.py"))}' | base64 --decode | gunzip > "$HOME/.local/state/coder-environment/dotfiles-contract.py"
     python3 "$HOME/.local/state/coder-environment/dotfiles-contract.py" "$CODER_DOTFILES_SOURCE_DIR"
-    printf '%s' '${base64encode(file("${path.module}/shared/components.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/components.py"
+    printf '%s' '${base64gzip(file("${path.module}/shared/components.py"))}' | base64 --decode | gunzip > "$HOME/.local/state/coder-environment/components.py"
     python3 "$HOME/.local/state/coder-environment/components.py" validate --report "$HOME/.local/state/coder-environment/readiness.json"
     python3 "$HOME/.local/state/coder-environment/components.py" wait-repositories
 
     # Stack/tool catalog + install: owned by this repository, not dotfiles
     # (see stack-install.py). Runs before dotfiles' own script so `omni` is
     # already on PATH by the time it gets there.
-    printf '%s' '${base64encode(file("${path.module}/shared/catalog.json"))}' | base64 --decode > "$HOME/.local/state/coder-environment/catalog.json"
-    printf '%s' '${base64encode(file("${path.module}/shared/linux-tools.json"))}' | base64 --decode > "$HOME/.local/state/coder-environment/linux-tools.json"
-    printf '%s' '${base64encode(file("${path.module}/shared/coder-neovim.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/coder-neovim.py"
-    printf '%s' '${base64encode(file("${path.module}/shared/stack-install.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/stack-install.py"
-    printf '%s' '${base64encode(file("${path.module}/shared/install-stacks.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/install-stacks.py"
+    printf '%s' '${base64gzip(file("${path.module}/shared/catalog.json"))}' | base64 --decode | gunzip > "$HOME/.local/state/coder-environment/catalog.json"
+    printf '%s' '${base64gzip(file("${path.module}/shared/linux-tools.json"))}' | base64 --decode | gunzip > "$HOME/.local/state/coder-environment/linux-tools.json"
+    printf '%s' '${base64gzip(file("${path.module}/shared/coder-neovim.py"))}' | base64 --decode | gunzip > "$HOME/.local/state/coder-environment/coder-neovim.py"
+    printf '%s' '${base64gzip(file("${path.module}/shared/stack-install.py"))}' | base64 --decode | gunzip > "$HOME/.local/state/coder-environment/stack-install.py"
+    printf '%s' '${base64gzip(file("${path.module}/shared/install-stacks.py"))}' | base64 --decode | gunzip > "$HOME/.local/state/coder-environment/install-stacks.py"
     python3 "$HOME/.local/state/coder-environment/install-stacks.py"
 
     ${local.github_identity_bootstrap}
@@ -296,12 +296,12 @@ locals {
         install -m 0755 "$rclone_tmp"/rclone-*/rclone "$HOME/.local/bin/rclone"
         rm -rf "$rclone_tmp"
       fi
-      printf '%s' '${base64encode(file("${path.module}/shared/wow-sync.sh"))}' | base64 --decode > "$HOME/.local/bin/wow-sync"
-      printf '%s' '${base64encode(file("${path.module}/shared/wow-setup.sh"))}' | base64 --decode > "$HOME/.local/bin/wow-setup"
-      printf '%s' '${base64encode(file("${path.module}/shared/wow-luarc.sh"))}' | base64 --decode > "$HOME/.local/bin/wow-luarc"
+      printf '%s' '${base64gzip(file("${path.module}/shared/wow-sync.sh"))}' | base64 --decode | gunzip > "$HOME/.local/bin/wow-sync"
+      printf '%s' '${base64gzip(file("${path.module}/shared/wow-setup.sh"))}' | base64 --decode | gunzip > "$HOME/.local/bin/wow-setup"
+      printf '%s' '${base64gzip(file("${path.module}/shared/wow-luarc.sh"))}' | base64 --decode | gunzip > "$HOME/.local/bin/wow-luarc"
       chmod 0755 "$HOME/.local/bin/wow-sync" "$HOME/.local/bin/wow-setup" "$HOME/.local/bin/wow-luarc"
       mkdir -p "$HOME/.local/lib"
-      printf '%s' '${base64encode(file("${path.module}/shared/wow-tools.py"))}' | base64 --decode > "$HOME/.local/lib/wow-tools.py"
+      printf '%s' '${base64gzip(file("${path.module}/shared/wow-tools.py"))}' | base64 --decode | gunzip > "$HOME/.local/lib/wow-tools.py"
       chmod 0755 "$HOME/.local/lib/wow-tools.py"
       for tool in wow-errors wow-sv wow-api wow-check; do ln -sfn "$HOME/.local/lib/wow-tools.py" "$HOME/.local/bin/$tool"; done
       "$HOME/.local/bin/wow-setup" || echo "wow-setup failed; rerun it once the network is back" >&2
@@ -310,7 +310,7 @@ locals {
     case ",$CODER_AGENT_CLIENTS," in
       *,claude,*)
         mkdir -p "$HOME/.local/bin"
-        printf '%s' '${base64encode(file("${path.module}/shared/claude-lsp.sh"))}' | base64 --decode > "$HOME/.local/bin/claude-lsp"
+        printf '%s' '${base64gzip(file("${path.module}/shared/claude-lsp.sh"))}' | base64 --decode | gunzip > "$HOME/.local/bin/claude-lsp"
         chmod 0755 "$HOME/.local/bin/claude-lsp"
         "$HOME/.local/bin/claude-lsp" || true
         ;;
