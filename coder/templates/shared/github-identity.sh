@@ -145,7 +145,11 @@ cmd_credential() {
 }
 
 cmd_install() {
-  mkdir -p "$HOME/.local/bin"
+  mkdir -p "$HOME/.local/bin" "$HOME/.local/state"
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$HOME/.local/state/github-identity.lock"
+    flock 9
+  fi
   if [ "$(readlink -f "$0")" != "$(readlink -f "$self")" ]; then
     install -m 0755 "$0" "$self"
   fi

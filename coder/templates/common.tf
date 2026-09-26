@@ -215,6 +215,18 @@ locals {
     chmod 700 "${local.tmpdir}"
   SCRIPT
 
+  # Clones run as separate agent scripts, so the credential helper must exist before the first one.
+
+  github_identity_bootstrap = <<-SCRIPT
+
+    mkdir -p "$HOME/.local/state/coder-environment"
+
+    printf '%s' '${base64encode(file("${path.module}/shared/github-identity.sh"))}' | base64 --decode > "$HOME/.local/state/coder-environment/github-identity.sh"
+
+    bash "$HOME/.local/state/coder-environment/github-identity.sh" install
+
+  SCRIPT
+
   git_ssh_bootstrap = <<-SCRIPT
     set -e
 
@@ -271,8 +283,7 @@ locals {
     printf '%s' '${base64encode(file("${path.module}/shared/install-stacks.py"))}' | base64 --decode > "$HOME/.local/state/coder-environment/install-stacks.py"
     python3 "$HOME/.local/state/coder-environment/install-stacks.py"
 
-    printf '%s' '${base64encode(file("${path.module}/shared/github-identity.sh"))}' | base64 --decode > "$HOME/.local/state/coder-environment/github-identity.sh"
-    bash "$HOME/.local/state/coder-environment/github-identity.sh" install
+    ${local.github_identity_bootstrap}
 
     if [ "$WOW_DEV" = 1 ]; then
       sudo apt-get update -qq
@@ -433,7 +444,7 @@ module "git-clone" {
   # The git-clone module runs as its own agent script, in parallel with the
   # main dotfiles bootstrap. Seed host keys here too so SSH clones do not race
   # the main startup script and fail with "Host key verification failed".
-  pre_clone_script  = "${local.tmpdir_bootstrap}\n${local.git_ssh_bootstrap}"
+  pre_clone_script  = "${local.tmpdir_bootstrap}\n${local.git_ssh_bootstrap}\n${local.github_identity_bootstrap}"
   post_clone_script = <<-SCRIPT
     set -e
     git rev-parse --is-inside-work-tree >/dev/null
