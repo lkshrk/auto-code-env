@@ -75,7 +75,12 @@ judged by that remote, so a fork of a foreign repository under `lkshrk` also
 uses the personal account. SSH remotes are rewritten to HTTPS so pushes follow
 the same rule; commits are authored as the agent by default, and as lkshrk in
 checkouts where the personal identity was used. `github-identity whoami
-OWNER/REPO` prints which account applies. Without `GH_TOKEN_PERSONAL`
+OWNER/REPO` prints which account applies. Commits are signed only in personal
+checkouts, with the Coder git SSH key that is registered on lkshrk; a key
+cannot sit on two GitHub accounts, so agent-npa commits stay unsigned rather
+than showing as Unverified. `github-identity` downloads that key itself, which
+replaces the registry `git-commit-signing` module that forced signing on
+globally. Without `GH_TOKEN_PERSONAL`
 everything stays on the agent account.
 
 ## Docker in workspaces

@@ -427,12 +427,6 @@ resource "coder_agent" "main" {
   }
 }
 
-module "git-commit-signing" {
-  source   = "registry.coder.com/coder/git-commit-signing/coder"
-  version  = "1.0.32"
-  agent_id = coder_agent.main.id
-}
-
 module "git-clone" {
   for_each = local.repos_set
   source   = "registry.coder.com/coder/git-clone/coder"

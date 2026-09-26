@@ -28,7 +28,24 @@ export PATH="$HOME/.local/bin:$TEST_ROOT/bin:$PATH"
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 expect() { [ "$2" = "$3" ] || fail "$1: expected '$3', got '$2'"; }
 
-bash "$IDENTITY" install
+# Fake Coder agent API serving the git SSH key the install downloads for signing.
+mkdir -p "$TEST_ROOT/api/api/v2/workspaceagents/me"
+printf '{"public_key":"ssh-ed25519 AAAAtest coder","private_key":"-----BEGIN OPENSSH PRIVATE KEY-----\\ntest\\n-----END OPENSSH PRIVATE KEY-----\\n"}' \
+  > "$TEST_ROOT/api/api/v2/workspaceagents/me/gitsshkey"
+port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
+python3 -m http.server "$port" --bind 127.0.0.1 --directory "$TEST_ROOT/api" >/dev/null 2>&1 &
+server=$!
+trap 'kill "$server" 2>/dev/null; rm -rf "$TEST_ROOT"' EXIT
+for _ in $(seq 1 50); do curl -fs "http://127.0.0.1:$port/" >/dev/null && break; sleep 0.1; done
+
+CODER_AGENT_URL="http://127.0.0.1:$port/" CODER_AGENT_TOKEN=agent bash "$IDENTITY" install
+key="$HOME/.ssh/git-commit-signing/coder"
+[ -s "$key" ] || fail "signing key was not downloaded"
+expect "signing key mode" "$(stat -c %a "$key" 2>/dev/null || stat -f %Lp "$key")" 600
+expect "public key" "$(cat "$key.pub")" "ssh-ed25519 AAAAtest coder"
+expect "global signing off" "$(git config --global commit.gpgsign)" false
+expect "signing format" "$(git config --global gpg.format)" ssh
+expect "signing key path" "$(git config --global user.signingkey)" "$key"
 [ -x "$HOME/.local/bin/github-identity" ] || fail "install did not place github-identity"
 [ "$(command -v gh)" = "$HOME/.local/bin/gh" ] || fail "gh shim is not first on PATH"
 expect "global author" "$(git config --global user.name)" agent-npa
@@ -48,6 +65,7 @@ git init -q && git remote add origin git@github.com:loc-news/civora.git
 expect "own checkout gh" "$(token pr list)" agent-tok
 expect "own checkout push" "$(cred loc-news/civora.git)" agent-tok
 [ -z "$(git config --local user.name || true)" ] || fail "own checkout got a local author"
+[ -z "$(git config --local commit.gpgsign || true)" ] || fail "own checkout got local signing"
 
 mkdir -p "$TEST_ROOT/fork" && cd "$TEST_ROOT/fork"
 git init -q
@@ -56,6 +74,7 @@ git remote add upstream https://github.com/OpenHands/OpenHands.git
 expect "fork checkout gh" "$(token pr create --fill)" personal-tok
 expect "fork author" "$(git config --local user.name)" lkshrk
 expect "fork author email" "$(git config --local user.email)" 5067446+lkshrk@users.noreply.github.com
+expect "fork signs" "$(git config --local commit.gpgsign)" true
 expect "fork push to own fork" "$(cred lkshrk/OpenHands.git)" personal-tok
 expect "push to foreign upstream" "$(cred OpenHands/OpenHands.git)" personal-tok
 

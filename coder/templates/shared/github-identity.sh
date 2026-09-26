@@ -10,6 +10,7 @@ set -euo pipefail
 : "${GITHUB_PERSONAL_EMAIL:=5067446+lkshrk@users.noreply.github.com}"
 
 self="$HOME/.local/bin/github-identity"
+signing_key="$HOME/.ssh/git-commit-signing/coder"
 
 owner_of() {
   local s=${1%.git}
@@ -63,6 +64,8 @@ set_author() {
   if [ "$who" = personal ]; then
     git -C "$dir" config user.name "$GITHUB_PERSONAL_NAME"
     git -C "$dir" config user.email "$GITHUB_PERSONAL_EMAIL"
+    # The Coder signing key is registered on the personal account only.
+    [ -f "$signing_key" ] && git -C "$dir" config commit.gpgsign true
   fi
 }
 
@@ -149,6 +152,19 @@ cmd_install() {
   printf '#!/bin/sh\nexec "%s" gh "$@"\n' "$self" > "$HOME/.local/bin/gh"
   chmod 0755 "$HOME/.local/bin/gh"
 
+  if [ -n "${CODER_AGENT_URL:-}" ] && [ -n "${CODER_AGENT_TOKEN:-}" ]; then
+    local key_json
+    if key_json=$(curl -fsS --header "Coder-Session-Token: $CODER_AGENT_TOKEN" "${CODER_AGENT_URL%/}/api/v2/workspaceagents/me/gitsshkey"); then
+      mkdir -p "$(dirname "$signing_key")"
+      (umask 077 && printf '%s' "$key_json" | jq -r .private_key > "$signing_key")
+      printf '%s' "$key_json" | jq -r .public_key > "$signing_key.pub"
+    else
+      echo "github-identity: could not download the Coder signing key; personal commits stay unsigned" >&2
+    fi
+  fi
+  git config --global gpg.format ssh
+  git config --global user.signingkey "$signing_key"
+  git config --global commit.gpgsign false
   git config --global user.name "$GITHUB_AGENT_NAME"
   git config --global user.email "$GITHUB_AGENT_EMAIL"
   git config --global --replace-all credential.https://github.com.helper ""
