@@ -38,17 +38,24 @@ Every addon is installed as `<Name>-Dev` beside the released copy by default: th
 | Preview without writing | add `--dry-run` |
 | Switch the game back to the released addons | `wow-sync --off` |
 
-Keep the default suffix `Dev`. Do not invent per-task suffixes such as `WOW_DEV_SUFFIX=1234Test`: the in-game helper knows only the suffix of the last sync, so mixed suffixes break the switch. Never sync with an empty suffix (under the real name, overwriting the user's released addon) unless the user asks for it or the suite rule below requires it.
+Keep the default suffix `Dev`. Do not invent per-task suffixes such as `WOW_DEV_SUFFIX=1234Test`: the in-game helper knows only the suffix of the last sync, so mixed suffixes break the switch. Never sync with an empty suffix (under the real name, overwriting the user's released addon) unless the user asks for it or the reference check below requires it.
 
-## Addon suites: parent and child addons
+## Addons that reference each other
 
-Many addons are several addons that depend on each other by folder name (`## Dependencies: Core` in a module's `.toc`, `C_AddOns.IsAddOnLoaded("CoreBags")`, `Interface\AddOns\Core\media\...`). A `-Dev` copy is a different folder name, so references between them must stay consistent:
+A `-Dev` copy lives under a different folder name, and WoW finds addons only by folder name. Any reference by name breaks when one side is renamed and the other is not. Which side references which differs per addon, so check it for the addon you changed, in both directions, before syncing.
 
-- **Changed only a child module:** sync just that module. Its `-Dev` copy keeps depending on the released parent. Correct as long as the parent is unchanged.
-- **Changed the parent, or parent and children together:** sync the parent and all its children in one run (`wow-sync ~/<repo>`, or several paths in one command). `wow-sync` then rewrites dependency lines, `AddOns\<Name>\` paths and string literals that name another addon of the same run to the `-Dev` names, so the whole suite runs as `-Dev` against itself.
-- **Changed only the parent but the children must stay released:** a `-Dev` parent would never be loaded by the released children. Either sync the children too (previous bullet), or install the parent directly over the released one with `WOW_DEV_SUFFIX= wow-sync --addon <Parent> ~/<repo>`. The latter overwrites the user's released parent; say so and get a yes first. `wow-sync` prints a warning when a parent goes out as `-Dev` while its nested modules stay released.
-
-Names built at runtime (`"Core" .. module`, `name:match("^Core(.+)$")`) are not rewritten. If the code does that, sync the suite under its real name instead, with the user's consent.
+1. **What the changed addon references:** its `.toc` lines `## Dependencies`, `## RequiredDeps`, `## OptionalDeps`, `## LoadWith`, `## LoadManagers`, and in its Lua and XML: `C_AddOns.IsAddOnLoaded(...)`, `C_AddOns.LoadAddOn(...)`, `C_AddOns.EnableAddOn(...)`, `C_AddOns.GetAddOnMetadata(...)`, `Interface\AddOns\<Name>\` paths, and string comparisons against folder names.
+2. **What references the changed addon:** the same patterns in every other addon of the repository that name it:
+   ```sh
+   grep -rnE --include='*.toc' --include='*.lua' --include='*.xml' '<ChangedName>([^A-Za-z0-9_]|$)' ~/<repo> | grep -v '/Libs/'
+   ```
+   Ask the user whether an addon outside the repository (installed separately in the game) depends on it; you cannot see those.
+3. **Decide the set for one `wow-sync` run:**
+   - Every addon that references a changed addon by name, or is referenced by name from one, and is itself changed or must see the dev behaviour: sync it in the same run. `wow-sync` rewrites dependency lines, `AddOns\<Name>\` paths and string literals that are exactly the name of another addon of the same run to the `-Dev` names.
+   - A referenced addon that is unchanged and whose released version is fine stays out of the run. The `-Dev` copies keep pointing at its real name.
+   - If an addon that cannot be synced (released, outside the repository) must find the changed one by name, a `-Dev` copy is invisible to it. Then install the changed addon under its real name, overwriting the released one: `WOW_DEV_SUFFIX= wow-sync --addon <Name> ~/<repo>`. That replaces the user's installed version; say so and get a yes first.
+4. **Names built at runtime** (`"Core" .. module`, `name:match("^Core(.+)$")`, lookups by prefix) are not rewritten. If the code builds names, the `-Dev` rename cannot work for those addons; use the real name, with the user's consent.
+5. Before the real run, run `wow-sync --dry-run` with the same arguments and read its warnings. Afterwards tell the user which addons went out as `-Dev` and which references stayed on released copies.
 
 ## In the game
 
