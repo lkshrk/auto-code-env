@@ -37,7 +37,14 @@ mkdir -p "$UI_SRC/Interface/AddOns/Blizzard_UIParent"
 printf 'UIParent = CreateFrame("Frame", "UIParent")\n' > "$UI_SRC/Interface/AddOns/Blizzard_UIParent/UIParent.lua"
 git -C "$UI_SRC" init -q -b live && git -C "$UI_SRC" add -A && git -C "$UI_SRC" commit -q -m one
 
-export WOW_API_REPO="file://$API_SRC" WOW_UI_SOURCE_REPO="file://$UI_SRC"
+RES_SRC="$TEST_ROOT/resources"
+mkdir -p "$RES_SRC/GlobalStrings"
+printf 'local FrameXML = {\n\t"AccountStoreUtil.AddCurrencyTotalTooltip",\n\t"ChatFrame_AddMessageGroup",\n}\n' > "$RES_SRC/FrameXML.lua"
+printf 'local Frames = {\n\t"FriendsFrame",\n}\n' > "$RES_SRC/Frames.lua"
+printf 'local GlobalAPI = {\n\t"AbandonSkill",\n}\n' > "$RES_SRC/GlobalAPI.lua"
+printf '_G["101_CutsceneName_Ref"] = "x";\nSTANDARD_TEXT_FONT = "Fonts/FRIZQT__.TTF";\n_G["UNKNOWNOBJECT"] = "Unknown";\n' > "$RES_SRC/GlobalStrings/enUS.lua"
+
+export WOW_API_REPO="file://$API_SRC" WOW_UI_SOURCE_REPO="file://$UI_SRC" WOW_RESOURCES_URL="file://$RES_SRC"
 
 bash "$SETUP"
 
@@ -50,6 +57,12 @@ grep -q '^std = "none"$' "$RC"
 grep -q '^  "C_Timer",$' "$RC"
 grep -q '^  "GetTime",$' "$RC"
 grep -q '^  "GameFontNormal",$' "$RC"
+# Blizzard's generated global lists: namespaces, frames, global API, global strings.
+for name in AccountStoreUtil ChatFrame_AddMessageGroup FriendsFrame AbandonSkill STANDARD_TEXT_FONT UNKNOWNOBJECT; do
+  grep -q "^  \"$name\",\$" "$RC" || { printf 'FAIL: %s missing from read_globals\n' "$name" >&2; exit 1; }
+done
+if grep -q '"101_CutsceneName_Ref"' "$RC"; then printf 'FAIL: non-identifier global string leaked\n' >&2; exit 1; fi
+[[ -f "$HOME/.local/share/wow/resources/GlobalStrings/enUS.lua" ]]
 # Method definitions, locals and keywords never become globals.
 for leaked in After hidden local return; do
   if grep -q "\"$leaked\"" "$RC"; then

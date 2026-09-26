@@ -8,7 +8,10 @@ triggers:
 - .toc
 - wow-sync
 - wowsync
+- wow-check
+- wow-errors
 - savedvariables
+- lua error
 - bigwigs
 - ellesmere
 ---
@@ -19,20 +22,40 @@ The game (retail) runs on the Windows desktop (towerr). You work in the Coder wo
 
 ## Workflow for every change
 
-1. Edit in the checkout under `~/<repo>`.
-2. `luacheck <changed files>`; fix what it reports.
-3. Check references (section below) and pick what to sync.
-4. `wow-sync --dry-run <paths>`, read the plan and warnings.
-5. `wow-sync <paths>`.
-6. Tell the user exactly what went out (`<Name>-Dev` or real name) and ask them to `/reload` and report errors.
-7. Only call it fixed after the user confirms in game.
+1. Before the first edit, run `wow-errors` to see what the game already reports for this addon.
+2. Edit in the checkout under `~/<repo>`. Look up every game API you call or change with `wow-api` first.
+3. `wow-check ~/<repo>/<AddonDir>` and fix every finding in code you touched. Do not sync while it reports new problems in your changes.
+4. Check references (section below) and pick what to sync.
+5. `wow-sync --dry-run <paths>`, read the plan and warnings.
+6. `wow-sync <paths>`.
+7. Tell the user exactly what went out (`<Name>-Dev` or real name) and ask them to `/reload` and try the change.
+8. After they did, run `wow-errors` again and read the addon's state with `wow-sv`. Fix and repeat from step 3.
+9. Only call it fixed when `wow-errors` is clean for the addon and the user confirms the behaviour in game.
 
 ## Tooling in the workspace
 
-- `wow-sync` pushes addons to the game over SFTP (see below). `wow-sync --help` lists every option.
-- `wow-luarc [dir]` writes `.luarc.json` so lua-language-server knows the WoW API (Lua 5.1, annotations under `~/.local/share/wow/wow-api/Annotations`).
-- `luacheck` uses a generated default with every WoW global as read-only unless the repository has its own `.luacheckrc`.
+| Command | What it does |
+|---|---|
+| `wow-check [paths]` | `.toc` and XML lint (missing files, old `## Interface`), luacheck against every real WoW global, lua-language-server with the WoW annotations (deprecated or wrong API use, wrong argument counts, unknown fields). `--fast` skips the language server, `--pedantic` adds unused-variable noise. Exit code 1 means findings. |
+| `wow-errors` | Lua errors the game caught (BugGrabber) in the current game session, with message, stack and count. `--all` for older sessions, `--match <addon>` to filter, `--locals` for the local variables, `--json`. |
+| `wow-sv list` / `wow-sv show <Addon> [--key a.b.c]` | Reads SavedVariables from the game as JSON, e.g. `wow-sv show MyAddon-Dev --key MyAddonDBDev.profiles`. Read-only. The game writes them at `/reload`, logout or exit, not live. |
+| `wow-api <name>` | Signature, return values and restrictions of a function or event from Blizzard's generated API docs. Partial names match; `--kind event`. No hit means the function does not exist in this game version. |
+| `wow-sync` | Pushes addons to the game (see below). `wow-sync --help` lists every option. |
+| `wow-luarc [dir]` | Writes `.luarc.json` for editor use of lua-language-server. |
+
 - `~/.local/share/wow/wow-ui-source` is Blizzard's real FrameXML (branch `live`). Grep it for how Blizzard does something instead of guessing.
+- `wow-errors` needs the BugGrabber addon (or BugSack, which ships it) enabled in the game. If it reports no BugGrabber data, ask the user to install it.
+- Existing findings in code you did not touch are not your task; mention them only if they explain the bug you work on.
+
+## Game version 12.x (Midnight)
+
+The game is retail 12.1. Training data and most online examples are older; many of them no longer work.
+
+- Deprecated global functions from 11.x are removed. Use the namespaced ones, for example `C_Spell.GetSpellInfo` (returns a table), `C_Spell.GetSpellCooldown`, `C_Spell.GetSpellTexture`, `C_SpellBook.GetNumSpellBookSkillLines`, `C_SpellBook.GetSpellBookSkillLineInfo`, `C_SpellBook.GetSpellBookItemName`, `C_ActionBar.HasAction`, `C_AddOns.IsAddOnLoaded`, `C_AddOns.GetAddOnMetadata`.
+- `COMBAT_LOG_EVENT_UNFILTERED` and `COMBAT_LOG_EVENT` are gone; registering them raises an error. There is no combat log parsing any more.
+- Combat data (`UnitHealth`, `UnitName`, auras, casts, cooldowns and similar) is often a **secret value** in addon code. Addon code may store secrets, pass them to Lua functions and to the few C APIs that accept them (for example `StatusBar:SetValue`, `FontString:SetText`), and concatenate or `string.format` them. Comparing, boolean tests on secret booleans, arithmetic, `#`, using them as table keys and indexing them raise an immediate Lua error. A widget that received a secret returns secrets from its getters afterwards (`GetText`). Check with `issecretvalue(v)` and `canaccessvalue(v)`; `C_Secrets.*` and `C_RestrictedActions.IsAddOnRestrictionActive` tell when restrictions apply, the event `ADDON_RESTRICTION_STATE_CHANGED` when they change.
+- `wow-api` shows `SecretArguments`/`SecretReturns` notes per function; read them before using a value in logic.
+- Never assume an API from memory. If `wow-api` does not know it and `grep -rn` in `~/.local/share/wow/wow-ui-source` finds nothing, it does not exist.
 
 ## Getting code into the game
 
@@ -79,7 +102,7 @@ The helper addon `WowSync` switches the game to the dev copies at login: it disa
 
 - After every sync the user has to `/reload` (or relog) for the new files to load.
 - An addon whose `## Interface` is older than the game build is hidden unless "Load out of date AddOns" is ticked; keep `## Interface` current (retail 12.1 = `120100`).
-- Lua errors are visible to the user only. Ask them to enable `/console scriptErrors 1` (or use BugSack if installed), reproduce, and paste the full error with its stack.
+- Lua errors reach you through `wow-errors` once the user reloaded or logged out, because the game writes BugGrabber's data only then. Ask the user to `/reload` after reproducing, not to paste errors.
 
 ## Releases
 

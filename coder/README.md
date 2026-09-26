@@ -130,7 +130,9 @@ adds what the generic Lua tools lack, knowledge of the game:
   the game does not have. It keeps an existing file unless `--force`.
 - `~/.config/luacheck/.luacheckrc`: generated from those annotations, every
   API name as a read-only global with `std = "none"`. luacheck uses it only
-  when the repo has no `.luacheckrc` of its own.
+  when the repo has no `.luacheckrc` of its own. `wow-setup` also fetches
+  Ketho's BlizzardInterfaceResources (FrameXML, frame and global string names)
+  into `~/.local/share/wow/resources` and adds those names.
 - `~/.local/share/wow/wow-ui-source`: Gethe's mirror of Blizzard's UI code,
   branch `live`, for grepping how the real FrameXML does something. Both
   checkouts are shallow and fast-forwarded by `wow-setup` on every start.
@@ -138,6 +140,12 @@ adds what the generic Lua tools lack, knowledge of the game:
   no mount: the game directory is an rclone remote named `wow:` that the
   workspace pushes to. A kernel CIFS mount on a desktop that reboots leaves a
   pod stuck in `Terminating`; a failed push just prints an error.
+- Agent tools, one script (`shared/wow-tools.py`) under four names:
+  `wow-check` lints `.toc`/XML, runs luacheck with the FrameXML and repository
+  globals and a headless lua-language-server check with the annotations;
+  `wow-errors` prints BugGrabber's caught Lua errors; `wow-sv` reads
+  SavedVariables as JSON; `wow-api` looks up functions and events in
+  Blizzard's generated API docs.
 
 Development stays on the home volume. `wow-sync` finds every addon in the
 cloned repositories by its `.toc`, stages a copy locally, rewrites it into the
@@ -198,6 +206,11 @@ coder secret create wow-sync-key --file ~/.ssh/wow-sync < ~/.ssh/wow-sync
 server script prints it. Emptying it turns validation off. rclone has no
 hashes over SFTP, so `--checksum` must not be added. Sync with the game closed
 or `/reload` afterwards; the client holds files open while loading.
+
+The same task setup starts a second, read-only server for
+`WTF/Account/<account>/SavedVariables` on port 2023 (`wowsv:` in the
+workspace, same key). `wow-errors` and `wow-sv` read through it; the game
+writes these files only on `/reload`, logout or exit.
 
 ## CI
 

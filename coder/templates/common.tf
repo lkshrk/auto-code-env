@@ -300,6 +300,10 @@ locals {
       printf '%s' '${base64encode(file("${path.module}/shared/wow-setup.sh"))}' | base64 --decode > "$HOME/.local/bin/wow-setup"
       printf '%s' '${base64encode(file("${path.module}/shared/wow-luarc.sh"))}' | base64 --decode > "$HOME/.local/bin/wow-luarc"
       chmod 0755 "$HOME/.local/bin/wow-sync" "$HOME/.local/bin/wow-setup" "$HOME/.local/bin/wow-luarc"
+      mkdir -p "$HOME/.local/lib"
+      printf '%s' '${base64encode(file("${path.module}/shared/wow-tools.py"))}' | base64 --decode > "$HOME/.local/lib/wow-tools.py"
+      chmod 0755 "$HOME/.local/lib/wow-tools.py"
+      for tool in wow-errors wow-sv wow-api wow-check; do ln -sfn "$HOME/.local/lib/wow-tools.py" "$HOME/.local/bin/$tool"; done
       "$HOME/.local/bin/wow-setup" || echo "wow-setup failed; rerun it once the network is back" >&2
     fi
 
@@ -363,36 +367,44 @@ resource "coder_agent" "main" {
   }
 
   env = merge({
-    CODER_OMNI_HOST                    = local.omni_host
-    OMNI_HOSTNAME                      = local.omni_host
-    CODER_OMNI_STACKS                  = join(",", local.selected_stacks)
-    CODER_ENVIRONMENT_MODE             = data.coder_parameter.environment_mode.value
-    CODER_BACKEND                      = local.backend
-    CODER_CONFIGURED_DOTFILES_URL      = data.coder_parameter.dotfiles_url.value
-    CODER_AGENT_CLIENTS                = join(",", jsondecode(data.coder_parameter.agent_clients.value))
-    CODER_AGENT_PLUGINS                = tobool(data.coder_parameter.agent_plugins.value) ? "1" : "0"
-    CODER_ENABLE_OPENHANDS             = tobool(data.coder_parameter.enable_openhands.value) ? "1" : "0"
-    CODER_ENABLE_DIND                  = local.enable_dind ? "1" : "0"
-    CODER_MCP_URL                      = var.mcp_url
-    CODER_REPO_KEYS                    = join(",", [for repo in local.repos_set : sha256(repo)])
-    CODER_REPO_DIRS                    = local.repo_clone_dirs
-    CODER_ENABLE_PLAYWRIGHT            = local.enable_playwright ? "1" : "0"
-    WOW_DEV                            = local.wow_dev ? "1" : "0"
-    WOW_ADDONS_PATH                    = local.wow_addons_path
-    WOW_DEV_SUFFIX                     = local.wow_dev_suffix
-    WOW_RCLONE_VERSION                 = "1.75.1"
-    RCLONE_CONFIG_WOW_TYPE             = local.wow_dev ? "sftp" : ""
-    RCLONE_CONFIG_WOW_HOST             = local.wow_dev ? local.wow_host : ""
-    RCLONE_CONFIG_WOW_PORT             = local.wow_dev ? "2022" : ""
-    RCLONE_CONFIG_WOW_USER             = local.wow_dev ? "wowsync" : ""
-    RCLONE_CONFIG_WOW_KEY_FILE         = local.wow_dev ? "~/.ssh/wow-sync" : ""
-    RCLONE_CONFIG_WOW_SHELL_TYPE       = local.wow_dev ? "none" : ""
-    RCLONE_CONFIG_WOW_HOST_KEYS        = local.wow_dev ? local.wow_host_key : ""
-    RCLONE_CONFIG_WOW_KNOWN_HOSTS_FILE = local.wow_dev && local.wow_host_key == "" ? "none" : ""
-    ECC_GATEGUARD                      = "off"
-    GOCACHE                            = "/tmp/go-build"
-    GOLANGCI_LINT_CACHE                = "/tmp/golangci-lint"
-    OMNI_OTEL_CA_PATH                  = "/etc/ssl/lan/lan-ca.pem"
+    CODER_OMNI_HOST                      = local.omni_host
+    OMNI_HOSTNAME                        = local.omni_host
+    CODER_OMNI_STACKS                    = join(",", local.selected_stacks)
+    CODER_ENVIRONMENT_MODE               = data.coder_parameter.environment_mode.value
+    CODER_BACKEND                        = local.backend
+    CODER_CONFIGURED_DOTFILES_URL        = data.coder_parameter.dotfiles_url.value
+    CODER_AGENT_CLIENTS                  = join(",", jsondecode(data.coder_parameter.agent_clients.value))
+    CODER_AGENT_PLUGINS                  = tobool(data.coder_parameter.agent_plugins.value) ? "1" : "0"
+    CODER_ENABLE_OPENHANDS               = tobool(data.coder_parameter.enable_openhands.value) ? "1" : "0"
+    CODER_ENABLE_DIND                    = local.enable_dind ? "1" : "0"
+    CODER_MCP_URL                        = var.mcp_url
+    CODER_REPO_KEYS                      = join(",", [for repo in local.repos_set : sha256(repo)])
+    CODER_REPO_DIRS                      = local.repo_clone_dirs
+    CODER_ENABLE_PLAYWRIGHT              = local.enable_playwright ? "1" : "0"
+    WOW_DEV                              = local.wow_dev ? "1" : "0"
+    WOW_ADDONS_PATH                      = local.wow_addons_path
+    WOW_DEV_SUFFIX                       = local.wow_dev_suffix
+    WOW_RCLONE_VERSION                   = "1.75.1"
+    RCLONE_CONFIG_WOW_TYPE               = local.wow_dev ? "sftp" : ""
+    RCLONE_CONFIG_WOW_HOST               = local.wow_dev ? local.wow_host : ""
+    RCLONE_CONFIG_WOW_PORT               = local.wow_dev ? "2022" : ""
+    RCLONE_CONFIG_WOW_USER               = local.wow_dev ? "wowsync" : ""
+    RCLONE_CONFIG_WOW_KEY_FILE           = local.wow_dev ? "~/.ssh/wow-sync" : ""
+    RCLONE_CONFIG_WOW_SHELL_TYPE         = local.wow_dev ? "none" : ""
+    RCLONE_CONFIG_WOW_HOST_KEYS          = local.wow_dev ? local.wow_host_key : ""
+    RCLONE_CONFIG_WOW_KNOWN_HOSTS_FILE   = local.wow_dev && local.wow_host_key == "" ? "none" : ""
+    RCLONE_CONFIG_WOWSV_TYPE             = local.wow_dev ? "sftp" : ""
+    RCLONE_CONFIG_WOWSV_HOST             = local.wow_dev ? local.wow_host : ""
+    RCLONE_CONFIG_WOWSV_PORT             = local.wow_dev ? "2023" : ""
+    RCLONE_CONFIG_WOWSV_USER             = local.wow_dev ? "wowsync" : ""
+    RCLONE_CONFIG_WOWSV_KEY_FILE         = local.wow_dev ? "~/.ssh/wow-sync" : ""
+    RCLONE_CONFIG_WOWSV_SHELL_TYPE       = local.wow_dev ? "none" : ""
+    RCLONE_CONFIG_WOWSV_HOST_KEYS        = local.wow_dev ? local.wow_host_key : ""
+    RCLONE_CONFIG_WOWSV_KNOWN_HOSTS_FILE = local.wow_dev && local.wow_host_key == "" ? "none" : ""
+    ECC_GATEGUARD                        = "off"
+    GOCACHE                              = "/tmp/go-build"
+    GOLANGCI_LINT_CACHE                  = "/tmp/golangci-lint"
+    OMNI_OTEL_CA_PATH                    = "/etc/ssl/lan/lan-ca.pem"
 
     TMPDIR = local.tmpdir
     # Pinned to their current defaults so a future upstream default cannot move
