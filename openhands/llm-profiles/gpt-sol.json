@@ -12,7 +12,9 @@
   "aws_session_token": null,
   "base_url": null,
   "caching_prompt": true,
-  "capability_overrides": {},
+  "capability_overrides": {
+    "supports_vision": true
+  },
   "custom_tokenizer": null,
   "disable_stop_word": false,
   "disable_vision": null,

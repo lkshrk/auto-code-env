@@ -42,6 +42,12 @@ tier; a complexity router is named after what it routes across. `standard-auto`
 was called `frontier-auto` until 2026-09-13 and the old name still resolves
 through the gateway's `model_group_alias`.
 
+Every profile sets `capability_overrides.supports_vision: true`. The SDK only
+reads the gateway's model metadata for `litellm_proxy/` models; for `openai/` and
+`anthropic/` it falls back to LiteLLM's own model map, which does not know family
+names, so image input would otherwise be switched off. Every model behind these
+profiles accepts images.
+
 `reasoning_effort` is `high` on every profile, and the backend forces that
 default even when a create request sends null. A caller-sent `reasoning_effort`
 overrides what the gateway's deployment sets, so a router tier that differs from
