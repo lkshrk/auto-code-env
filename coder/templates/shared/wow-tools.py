@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import unquote
 
 WOW_HOME = Path(os.environ.get("WOW_HOME", Path.home() / ".local/share/wow"))
 API_DOCS = WOW_HOME / "wow-ui-source/Interface/AddOns/Blizzard_APIDocumentationGenerated"
@@ -549,15 +550,31 @@ def run_luals(addon, problems, notes, pedantic):
             notes.append(f"lua-language-server failed: {(res.stderr or res.stdout).strip()[-300:]}")
             return
         for uri, diags in json.loads(report.read_text()).items():
-            path = Path(uri.replace("file://", ""))
+            path = Path(unquote(uri.replace("file://", "")))
             if any(p.lower() == "libs" for p in path.parts):
                 continue
+            source = None
             for d in diags:
                 if not pedantic and d.get("code") not in LUALS_DEFAULT:
                     continue
+                if source is None:
+                    source = path.read_text(errors="replace").splitlines() if path.is_file() else []
                 sev = "error" if d.get("severity") == 1 else "warning"
                 line = d.get("range", {}).get("start", {}).get("line", 0) + 1
-                problems.append((sev, path, line, f"luals {d.get('code')}: {d.get('message', '').splitlines()[0]}"))
+                msg = d.get("message", "").splitlines()[0]
+                snippet = range_text(source, d.get("range", {}))
+                if snippet and snippet not in msg:
+                    msg = f"{msg} `{snippet}`"
+                problems.append((sev, path, line, f"luals {d.get('code')}: {msg}"))
+
+
+def range_text(lines, rng):
+    start, end = rng.get("start", {}), rng.get("end", {})
+    row = start.get("line")
+    if row is None or row != end.get("line") or row >= len(lines):
+        return ""
+    text = lines[row][start.get("character", 0):end.get("character", 0)].strip()
+    return text if 0 < len(text) <= 80 else ""
 
 
 def cmd_check(args):

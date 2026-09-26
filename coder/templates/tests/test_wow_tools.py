@@ -197,6 +197,12 @@ class WowToolsTest(unittest.TestCase):
         self.assertNotIn("foo.lua", out.lower().replace("foo.lua:", ""))
         self.assertNotIn("Classic.lua", out)
 
+    def test_range_text_names_the_flagged_call(self):
+        lines = ["local x = 1", "    local n = GetSpellInfo(123)"]
+        rng = {"start": {"line": 1, "character": 14}, "end": {"line": 1, "character": 26}}
+        self.assertEqual(self.mod.range_text(lines, rng), "GetSpellInfo")
+        self.assertEqual(self.mod.range_text(lines, {"start": {"line": 0}, "end": {"line": 1}}), "")
+
     def test_repo_globals_include_savedvariables_g_assignments_and_frames(self):
         repo = self.tmp / "repo2"
         (repo / "A").mkdir(parents=True)

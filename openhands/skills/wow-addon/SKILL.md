@@ -36,7 +36,7 @@ The game (retail) runs on the Windows desktop (towerr). You work in the Coder wo
 
 | Command | What it does |
 |---|---|
-| `wow-check [paths]` | `.toc` and XML lint (missing files, old `## Interface`), luacheck against every real WoW global, lua-language-server with the WoW annotations (deprecated or wrong API use, wrong argument counts, unknown fields). `--fast` skips the language server, `--pedantic` adds unused-variable noise. Exit code 1 means findings. |
+| `wow-check [paths]` | `.toc` and XML lint (missing files, old `## Interface`), luacheck against every real WoW global, lua-language-server with the WoW annotations (deprecated or wrong API use, wrong argument counts, unknown fields). `--fast` skips the language server, `--pedantic` adds unused-variable noise. Exit code 1 means errors; warnings print but exit 0, so read the output. A `deprecated` finding names the call; look up its replacement with `wow-api`. |
 | `wow-errors` | Lua errors the game caught (BugGrabber) in the current game session, with message, stack and count. `--all` for older sessions, `--match <addon>` to filter, `--locals` for the local variables, `--json`. |
 | `wow-sv list` / `wow-sv show <Addon> [--key a.b.c]` | Reads SavedVariables from the game as JSON, e.g. `wow-sv show MyAddon-Dev --key MyAddonDBDev.profiles`. Read-only. The game writes them at `/reload`, logout or exit, not live. |
 | `wow-api <name>` | Signature, return values and restrictions of a function or event from Blizzard's generated API docs. Partial names match; `--kind event`. No hit means the function does not exist in this game version. |
