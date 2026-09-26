@@ -111,7 +111,7 @@ Rules:
 
 - Always pass explicit paths. Without paths `wow-sync` syncs every repository in `CODER_REPO_DIRS`, including ones built for other game versions (for example the WotLK/Ascension `AutoGossip-WOTLK-Ascension`), which must never reach the retail folder.
 - `wow-sync` is the only way into the AddOns folder. No direct `rclone` copies, no other transfer.
-- Keep the default suffix `Dev`. Do not invent per-task suffixes such as `WOW_DEV_SUFFIX=1234Test`: the in-game helper knows only the suffix of the last sync, so mixed suffixes break the switch.
+- Keep the default suffix `Dev`. Never set `WOW_DEV_SUFFIX` to anything else and never pass `--any-suffix`: a second dev copy of the same addon (`-Dev` and `-1234`) is a second addon hooking the same frames. `wow-sync` refuses other suffixes.
 - Never sync with an empty suffix (under the real name, overwriting the user's released addon) unless the user asks for it or the reference check below requires it, and then only after the user says yes.
 - Prefer a one-shot sync after each change over `--watch`; if the user wants `--watch`, run it as a background job and stop it when done.
 
@@ -134,7 +134,9 @@ A `-Dev` copy lives under a different folder name, and WoW finds addons only by 
 
 ## In the game
 
-The helper addon `WowSync` switches the game to the dev copies at login: it disables each released addon that has a `-Dev` copy, enables the copy, and reloads once. In chat: `/wowsync status`, `/wowsync dev`, `/wowsync release`.
+Dev copies are `LoadOnDemand`, so the game never starts one on its own. The helper addon `WowSync` loads them: when a released addon with a dev copy is still enabled, it disables the release for all characters and reloads once without loading the dev copy; on the next load it loads the dev copies. A dev copy and its release never run in the same session, because two copies hooking the same frames freeze the game at login. In chat: `/wowsync status`, `/wowsync dev`, `/wowsync release`. What the helper did at the last login (loaded, waiting for reload, failed with reason) is in `wow-sv show WowSync --key WowSyncDB.last`; read it when the user says a dev copy did not show up.
+
+Because the helper loads dev copies during its own startup, an addon that expects to load before others or checks `IsAddOnLoaded` of a released sibling at file load may behave differently as a dev copy; say so when that is a possible cause.
 
 - After every sync the user has to `/reload` (or relog) for the new files to load.
 - An addon whose `## Interface` is older than the game build is hidden unless "Load out of date AddOns" is ticked; keep `## Interface` current (retail 12.1 = `120100`).

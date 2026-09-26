@@ -180,11 +180,18 @@ is the right thing for a small fix; syncing the core alone while its modules
 stay released prints a warning, since the released modules would still load
 the released core.
 
-Every dev sync also installs `WowSync`, a small helper addon: at login it
-disables each released addon that has a dev copy, enables the copy, and
-reloads once. `/wowsync release` and `/wowsync dev` flip between the two in
-game, `/wowsync` prints the state, `wow-sync --off` flips to release at the
-next login. Its `## Interface` follows the synced addons, so it never counts
+Dev copies are written with `## LoadOnDemand: 1` and `## X-WowSync-Release:
+<Name>`, so the game never starts one on its own: a dev copy and its release
+loaded together both hook the same frames, and addons such as EllesmereUI then
+freeze the client at login. Every dev sync also installs `WowSync`, a small
+helper addon. When a release with a dev copy is still enabled, it disables the
+release for all characters and reloads once without loading the dev copy; on
+the next load it loads the dev copies itself, in dependency order, and records
+the result in `WowSyncDB.last`. `/wowsync release` and `/wowsync dev` flip
+between the two in game, `/wowsync` prints the state, `wow-sync --off` flips to
+release at the next login. `wow-sync` refuses a `WOW_DEV_SUFFIX` that differs
+from the workspace parameter (`WOW_DEV_SUFFIX_CONFIGURED`) unless
+`--any-suffix` is given, since two dev copies of one addon conflict the same way. Its `## Interface` follows the synced addons, so it never counts
 as out of date while they do not.
 
 The transport is SFTP to a small `rclone serve sftp` on the desktop, set up

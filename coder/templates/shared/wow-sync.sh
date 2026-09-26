@@ -49,9 +49,13 @@ copy, so a suite keeps working as a whole. Sync a single module directory and
 its references keep pointing at the released rest of the suite. Nested addon
 directories and hidden files are never copied into a parent addon.
 
-Every dev sync also installs the helper addon WowSync, which at login disables
-each released addon that has a dev copy and enables the copy, then reloads
-once. In game, /wowsync release|dev|status flips between the two.
+Dev copies are marked LoadOnDemand, so the game never starts one beside its
+released addon. Every dev sync also installs the helper addon WowSync: it
+disables each released addon that has a dev copy (for all characters), reloads
+once if the release was active, and then loads the dev copies itself. In game,
+/wowsync release|dev|status flips between the two; the last result is in the
+WowSyncDB SavedVariable. A suffix other than WOW_DEV_SUFFIX_CONFIGURED is
+refused unless --any-suffix is given.
 
 The remote is configured entirely through RCLONE_CONFIG_WOW_* environment
 variables, which Coder user secrets provide; wow-sync never reads a config file.
@@ -62,6 +66,7 @@ variables, which Coder user secrets provide; wow-sync never reads a config file.
   --watch       resync on every change instead of exiting after one pass
   --dry-run     show what rclone would change without writing to the game
   --off         switch the game back to the released addons at next login
+  --any-suffix  allow a WOW_DEV_SUFFIX that differs from the workspace setting
 USAGE
 }
 
@@ -134,6 +139,7 @@ apply_dev_suffix() {
   done
 
   while IFS= read -r toc; do
+    tag_dev_toc "$toc" "$name"
     perl -pi -e "s/^(## Title:[^\\r\\n]*)/\$1 [${suffix^^}]/" "$toc"
     [ -n "$expr" ] && perl -pi -e "if (/^## SavedVariables(PerCharacter)?:/) { $expr }" "$toc"
     [ -n "$dep_expr" ] && perl -pi -e "if (/^## (Dependencies|RequiredDeps|OptionalDeps|LoadWith|LoadManagers|Dep\\d*):/i) { $dep_expr }" "$toc"
@@ -144,6 +150,22 @@ apply_dev_suffix() {
   [ -n "$expr" ] && find "$stage" -type f -name '*.lua' -not -path '*/Libs/*' -exec perl -pi -e "$expr" {} +
   [ -n "$ref_expr" ] && find "$stage" -type f \( -name '*.lua' -o -name '*.xml' \) -not -path '*/Libs/*' -exec perl -pi -e "$ref_expr" {} +
   return 0
+}
+
+# Dev copies are load-on-demand so the game never starts them beside the
+# released addon; WowSync loads them once the release is disabled.
+tag_dev_toc() {
+  local toc=$1 name=$2 autoload=1
+  grep -qiE '^## LoadOnDemand:[[:space:]]*1' "$toc" && autoload=0
+  WS_NAME=$name WS_AUTO=$autoload perl -pi -e '
+    if (/^## (LoadOnDemand|X-WowSync-[A-Za-z]+):/i) { $_ = ""; next }
+    if (!$done && /^(\xef\xbb\xbf)?## /) {
+      my ($eol) = /(\r?\n)\z/; $eol //= "\n";
+      $_ .= "$eol" unless /\n\z/;
+      $_ .= "## LoadOnDemand: 1$eol## X-WowSync-Release: $ENV{WS_NAME}$eol";
+      $_ .= "## X-WowSync-Load: 1$eol" if $ENV{WS_AUTO};
+      $done = 1;
+    }' "$toc"
 }
 
 # A destination that exists but holds no <target>*.toc belongs to something
@@ -228,55 +250,107 @@ $WOW_SWITCH_ADDON.lua
 TOC
   printf 'WowSyncMode = "%s"\nWowSyncStamp = "%s"\n' "$mode" "$(date +%s)" > "$stage/Mode.lua"
   cat > "$stage/$WOW_SWITCH_ADDON.lua" <<'LUA'
+local ADDON = ...
 local SUFFIX = "-@SUFFIX@"
 local RELOAD_GUARD = 60
+local reloadPending = false
 
-local function devAddons()
-  local list = {}
+local function meta(name, key)
+  local v = C_AddOns.GetAddOnMetadata(name, key)
+  if v and v ~= "" then return v end
+end
+
+-- Copies from older syncs carry no X-WowSync-Release and are found by suffix.
+local function devCopies()
+  local list, seen = {}, {}
   for i = 1, C_AddOns.GetNumAddOns() do
     local name = C_AddOns.GetAddOnInfo(i)
-    if name:sub(-#SUFFIX) == SUFFIX then list[#list + 1] = name end
+    local rel = meta(name, "X-WowSync-Release")
+    local legacy = not rel and name:sub(-#SUFFIX) == SUFFIX
+    if rel or legacy then
+      rel = rel or name:sub(1, -#SUFFIX - 1)
+      list[#list + 1] = { dev = name, rel = rel, autoload = meta(name, "X-WowSync-Load") == "1", legacy = legacy, duplicate = seen[rel] or false }
+      seen[rel] = true
+    end
   end
   return list
 end
 
-local function isEnabled(name)
-  return C_AddOns.GetAddOnEnableState(name, UnitName("player")) ~= Enum.AddOnEnableState.None
+local function relActive(rel)
+  if not C_AddOns.DoesAddOnExist(rel) then return false end
+  if C_AddOns.IsAddOnLoaded(rel) then return true end
+  return C_AddOns.GetAddOnEnableState(rel, UnitName("player")) ~= Enum.AddOnEnableState.None
 end
 
-local function setEnabled(name, on)
-  if on then C_AddOns.EnableAddOn(name, UnitName("player")) else C_AddOns.DisableAddOn(name, UnitName("player")) end
-end
-
+-- Never loads a dev copy while its release is loaded or enabled; that session reloads first.
 local function apply(mode)
-  local wantDev, changed = mode == "dev", 0
-  for _, dev in ipairs(devAddons()) do
-    local rel = dev:sub(1, -#SUFFIX - 1)
-    if isEnabled(dev) ~= wantDev then setEnabled(dev, wantDev) changed = changed + 1 end
-    if C_AddOns.DoesAddOnExist(rel) and isEnabled(rel) == wantDev then setEnabled(rel, not wantDev) changed = changed + 1 end
-    local _, _, _, loadable, reason = C_AddOns.GetAddOnInfo(dev)
-    if wantDev and not loadable and reason ~= "DISABLED" then
-      print(("|cff33ff99WowSync|r: %s is not loadable (%s); tick 'Load out of date AddOns' if it is INTERFACE_VERSION"):format(dev, tostring(reason)))
+  local report = { mode = mode, time = time(), loaded = {}, waiting = {}, failed = {} }
+  local reload, toLoad = false, {}
+  for _, c in ipairs(devCopies()) do
+    local hasRel = C_AddOns.DoesAddOnExist(c.rel)
+    if mode == "dev" and not c.duplicate then
+      local active = relActive(c.rel)
+      if hasRel then C_AddOns.DisableAddOn(c.rel) end
+      C_AddOns.EnableAddOn(c.dev)
+      if active then
+        reload = true
+        report.waiting[#report.waiting + 1] = c.dev
+      elseif c.autoload and not C_AddOns.IsAddOnLoaded(c.dev) then
+        toLoad[#toLoad + 1] = c.dev
+      end
+    else
+      if c.duplicate then report.failed[c.dev] = "second dev copy of " .. c.rel .. ", disabled" end
+      if C_AddOns.IsAddOnLoaded(c.dev) then reload = true end
+      C_AddOns.DisableAddOn(c.dev)
+      if mode ~= "dev" and hasRel and not relActive(c.rel) then
+        C_AddOns.EnableAddOn(c.rel)
+        reload = true
+      end
     end
   end
-  return changed
+  -- Repeated passes let suite members load after the dev copies they depend on.
+  while #toLoad > 0 do
+    local retry = {}
+    for _, dev in ipairs(toLoad) do
+      local ok, reason = C_AddOns.LoadAddOn(dev)
+      if ok then
+        report.loaded[#report.loaded + 1] = dev
+        report.failed[dev] = nil
+      else
+        report.failed[dev] = tostring(reason)
+        retry[#retry + 1] = dev
+      end
+    end
+    if #retry == #toLoad then break end
+    toLoad = retry
+  end
+  WowSyncDB.last = report
+  return reload, report
+end
+
+local function say(fmt, ...)
+  print("|cff33ff99WowSync|r: " .. fmt:format(...))
 end
 
 local function status()
-  local list = devAddons()
-  print(("|cff33ff99WowSync|r: mode %s, %d dev copies: %s"):format(WowSyncDB.mode, #list, table.concat(list, ", ")))
+  local names = {}
+  for _, c in ipairs(devCopies()) do
+    names[#names + 1] = c.dev .. (C_AddOns.IsAddOnLoaded(c.dev) and " (loaded)" or "")
+  end
+  say("mode %s, %d dev copies: %s", WowSyncDB.mode, #names, table.concat(names, ", "))
+  local last = WowSyncDB.last
+  if last then
+    for dev, reason in pairs(last.failed) do say("%s not loaded: %s", dev, reason) end
+  end
 end
 
-local function switch(mode, reason)
-  WowSyncDB.mode = mode
-  local changed = apply(mode)
-  if changed == 0 then status() return end
+local function reloadNow(reason)
   if WowSyncDB.lastReload and time() - WowSyncDB.lastReload < RELOAD_GUARD then
-    print(("|cff33ff99WowSync|r: %d addon states changed for %s mode but a reload just happened; /reload by hand"):format(changed, mode))
+    say("%s needs a reload but one just happened; /reload by hand", reason)
     return
   end
   WowSyncDB.lastReload = time()
-  print(("|cff33ff99WowSync|r: %s, switched %d addon states to %s mode, reloading"):format(reason, changed, mode))
+  say("%s, reloading", reason)
   C_Timer.After(1, ReloadUI)
 end
 
@@ -284,21 +358,30 @@ SLASH_WOWSYNC1 = "/wowsync"
 SlashCmdList.WOWSYNC = function(msg)
   msg = (msg or ""):lower():match("^%s*(%S*)")
   if msg == "dev" or msg == "release" then
-    switch(msg, "/wowsync " .. msg)
+    WowSyncDB.mode = msg
+    if apply(msg) then reloadNow("switched to " .. msg) else status() end
   else
     status()
   end
 end
 
 local f = CreateFrame("Frame")
+f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("PLAYER_LOGIN")
-f:SetScript("OnEvent", function()
-  WowSyncDB = WowSyncDB or {}
-  if WowSyncDB.stamp ~= WowSyncStamp then
-    WowSyncDB.stamp = WowSyncStamp
-    WowSyncDB.mode = WowSyncMode
+f:SetScript("OnEvent", function(self, event, name)
+  if event == "ADDON_LOADED" then
+    if name ~= ADDON then return end
+    self:UnregisterEvent("ADDON_LOADED")
+    WowSyncDB = WowSyncDB or {}
+    if WowSyncDB.stamp ~= WowSyncStamp then
+      WowSyncDB.stamp = WowSyncStamp
+      WowSyncDB.mode = WowSyncMode
+    end
+    reloadPending = apply(WowSyncDB.mode or WowSyncMode)
+  else
+    status()
+    if reloadPending then reloadNow("released copies disabled for " .. WowSyncDB.mode .. " mode") end
   end
-  switch(WowSyncDB.mode or WowSyncMode, "login")
 end)
 LUA
   perl -pi -e "s/\@SUFFIX\@/${WOW_DEV_SUFFIX}/" "$stage/$WOW_SWITCH_ADDON.lua"
@@ -427,7 +510,7 @@ ONLY_ADDONS=()
 CHANGED_ONLY=0
 
 main() {
-  local watch=0 dry="" off=0
+  local watch=0 dry="" off=0 any_suffix=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --watch)
@@ -451,6 +534,10 @@ main() {
         off=1
         shift
         ;;
+      --any-suffix)
+        any_suffix=1
+        shift
+        ;;
       -h | --help)
         usage
         return 0
@@ -466,6 +553,12 @@ main() {
       *) break ;;
     esac
   done
+
+  local configured=${WOW_DEV_SUFFIX_CONFIGURED:-}
+  if [ "$any_suffix" -eq 0 ] && [ -n "$configured" ] && [ -n "$WOW_DEV_SUFFIX" ] && [ "$WOW_DEV_SUFFIX" != "$configured" ]; then
+    log "refusing suffix '$WOW_DEV_SUFFIX': this workspace uses '$configured'; a second dev copy of an addon conflicts with the first (--any-suffix overrides)"
+    return 2
+  fi
 
   local key_file=${RCLONE_CONFIG_WOW_KEY_FILE:-}
   if [ -n "$key_file" ] && [ ! -f "${key_file/#\~/$HOME}" ]; then

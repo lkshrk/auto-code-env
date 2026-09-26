@@ -36,7 +36,7 @@ printf 'secret\n' > "$REPO_A/.git/config"
 # A repository nesting a per-flavour addon one level down.
 REPO_B="$HOME/bundle"
 mkdir -p "$REPO_B/Beta"
-printf '## Title: Beta\n' > "$REPO_B/Beta/Beta_Mainline.toc"
+printf '## Title: Beta\n## LoadOnDemand: 1\n' > "$REPO_B/Beta/Beta_Mainline.toc"
 
 # A repository checked out with CRLF line endings and a BOM, as Windows editors produce.
 REPO_C="$HOME/crlf"
@@ -97,7 +97,7 @@ grep -q '^LibStub = LibStub or {}$' "$ADDONS/Alpha-Dev/Libs/LibStub/LibStub.lua"
 [[ ! -e "$ADDONS/my-addon-repo" ]]
 [[ -f "$ADDONS/Beta-Dev/Beta-Dev_Mainline.toc" ]]
 # CRLF endings and the BOM survive; the suffix lands before the CR, never after it.
-printf '\xef\xbb\xbf## Interface: 110200\r\n## Title: Gamma [DEV]\r\n## SavedVariables: GammaDBDev\r\nGamma.lua\r\n' | cmp -s - "$ADDONS/Gamma-Dev/Gamma-Dev.toc"
+printf '\xef\xbb\xbf## Interface: 110200\r\n## LoadOnDemand: 1\r\n## X-WowSync-Release: Gamma\r\n## X-WowSync-Load: 1\r\n## Title: Gamma [DEV]\r\n## SavedVariables: GammaDBDev\r\nGamma.lua\r\n' | cmp -s - "$ADDONS/Gamma-Dev/Gamma-Dev.toc"
 printf 'GammaDBDev = GammaDBDev or {}\r\n' | cmp -s - "$ADDONS/Gamma-Dev/Gamma.lua"
 # A suite: nested addons and hidden directories stay out of the parent, and
 # every reference between members follows the rename.
@@ -107,6 +107,15 @@ printf 'GammaDBDev = GammaDBDev or {}\r\n' | cmp -s - "$ADDONS/Gamma-Dev/Gamma.l
 grep -q '^## IconTexture: Interface\\AddOns\\Suite-Dev\\media\\logo.tga$' "$ADDONS/Suite-Dev/Suite-Dev.toc"
 grep -q '^## SavedVariables: SuiteDBDev$' "$ADDONS/Suite-Dev/Suite-Dev.toc"
 grep -q '^## Dependencies: Suite-Dev$' "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc"
+# Dev copies never autoload; the release name stays unsuffixed for WowSync.
+grep -q '^## LoadOnDemand: 1$' "$ADDONS/Suite-Dev/Suite-Dev.toc"
+grep -q '^## X-WowSync-Release: Suite$' "$ADDONS/Suite-Dev/Suite-Dev.toc"
+grep -q '^## X-WowSync-Load: 1$' "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc"
+grep -q '^## X-WowSync-Release: SuiteBags$' "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc"
+[ "$(grep -c '^## LoadOnDemand' "$ADDONS/Alpha-Dev/Alpha-Dev.toc")" = 1 ]
+# An addon that is load-on-demand upstream stays that way and WowSync leaves loading it to its owner.
+[ "$(grep -c '^## LoadOnDemand' "$ADDONS/Beta-Dev/Beta-Dev_Mainline.toc")" = 1 ]
+! grep -q '^## X-WowSync-Load' "$ADDONS/Beta-Dev/Beta-Dev_Mainline.toc"
 grep -q '^## OptionalDeps: LibStub, SuiteBags-Dev, Other$' "$ADDONS/SuiteBags-Dev/SuiteBags-Dev.toc"
 grep -qF '["Suite-Dev"] = 1, ["SuiteBags-Dev"] = 2, ["Suiteness"] = 3' "$ADDONS/Suite-Dev/Suite.lua"
 grep -qF 'Interface\\AddOns\\Suite-Dev\\media\\f.ttf' "$ADDONS/Suite-Dev/Suite.lua"
@@ -119,6 +128,9 @@ grep -qF 'Interface/AddOns/Suite-Dev/media/x.tga' "$ADDONS/SuiteBags-Dev/SuiteBa
 grep -q '^## Interface: 110200$' "$ADDONS/WowSync/WowSync.toc"
 grep -q '^WowSyncMode = "dev"$' "$ADDONS/WowSync/Mode.lua"
 grep -q '^local SUFFIX = "-Dev"$' "$ADDONS/WowSync/WowSync.lua"
+lua=$(command -v lua5.1 || command -v lua || true)
+[ -n "$lua" ] || { printf 'FAIL: lua5.1 is needed for the WowSync helper test\n' >&2; exit 1; }
+"$lua" "$(dirname "${BASH_SOURCE[0]}")/wow-sync-helper.lua" "$ADDONS/WowSync/WowSync.lua" "$ADDONS/WowSync/Mode.lua"
 [[ "$(<"$ADDONS/Bystander/Bystander.toc")" == keep ]]
 [[ "$(<"$ADDONS/Alpha/Alpha.toc")" == release ]]
 
@@ -231,6 +243,13 @@ if WOW_ADDONS_PATH="$TEST_ROOT/no-such-dir/AddOns" bash "$SYNC_SCRIPT" > /dev/nu
   printf 'FAIL: an unreachable AddOns path was accepted\n' >&2
   exit 1
 fi
+
+if WOW_DEV_SUFFIX_CONFIGURED=Dev WOW_DEV_SUFFIX=2154 bash "$SYNC_SCRIPT" > "$TEST_ROOT/suffix.log" 2>&1; then
+  printf 'FAIL: a suffix other than the configured one was accepted\n' >&2
+  exit 1
+fi
+grep -q "refusing suffix '2154'" "$TEST_ROOT/suffix.log"
+[[ ! -e "$ADDONS/Alpha-2154" ]]
 
 if RCLONE_CONFIG_WOW_KEY_FILE="$TEST_ROOT/no-key" bash "$SYNC_SCRIPT" > /dev/null 2>&1; then
   printf 'FAIL: a missing key file was accepted\n' >&2

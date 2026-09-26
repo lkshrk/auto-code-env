@@ -384,6 +384,7 @@ resource "coder_agent" "main" {
     WOW_DEV                              = local.wow_dev ? "1" : "0"
     WOW_ADDONS_PATH                      = local.wow_addons_path
     WOW_DEV_SUFFIX                       = local.wow_dev_suffix
+    WOW_DEV_SUFFIX_CONFIGURED            = local.wow_dev_suffix
     WOW_RCLONE_VERSION                   = "1.75.1"
     RCLONE_CONFIG_WOW_TYPE               = local.wow_dev ? "sftp" : ""
     RCLONE_CONFIG_WOW_HOST               = local.wow_dev ? local.wow_host : ""
