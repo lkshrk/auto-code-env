@@ -15,7 +15,17 @@ triggers:
 
 # WoW addon development
 
-The game runs on the Windows desktop (towerr). You work in a Coder workspace on the `dev` template with the `wow` preset; it cannot see the game, it can only push files into the game's AddOns folder with `wow-sync`. All commands below run inside that workspace through `litellm-tools_coder-coder_workspace_bash`; anything that may take longer than 20 seconds runs with the background-job pattern.
+The game (retail) runs on the Windows desktop (towerr). You work in the Coder workspace `dev/wow-addons` (template `dev`, preset `wow`). It cannot see the game; its only way into the game's AddOns folder is `wow-sync`. Run every command below inside that workspace through `litellm-tools_coder-coder_workspace_bash`; anything that may take longer than 20 seconds runs with the background-job pattern.
+
+## Workflow for every change
+
+1. Edit in the checkout under `~/<repo>`.
+2. `luacheck <changed files>`; fix what it reports.
+3. Check references (section below) and pick what to sync.
+4. `wow-sync --dry-run <paths>`, read the plan and warnings.
+5. `wow-sync <paths>`.
+6. Tell the user exactly what went out (`<Name>-Dev` or real name) and ask them to `/reload` and report errors.
+7. Only call it fixed after the user confirms in game.
 
 ## Tooling in the workspace
 
@@ -38,7 +48,13 @@ Every addon is installed as `<Name>-Dev` beside the released copy by default: th
 | Preview without writing | add `--dry-run` |
 | Switch the game back to the released addons | `wow-sync --off` |
 
-Keep the default suffix `Dev`. Do not invent per-task suffixes such as `WOW_DEV_SUFFIX=1234Test`: the in-game helper knows only the suffix of the last sync, so mixed suffixes break the switch. Never sync with an empty suffix (under the real name, overwriting the user's released addon) unless the user asks for it or the reference check below requires it.
+Rules:
+
+- Always pass explicit paths. Without paths `wow-sync` syncs every repository in `CODER_REPO_DIRS`, including ones built for other game versions (for example the WotLK/Ascension `AutoGossip-WOTLK-Ascension`), which must never reach the retail folder.
+- `wow-sync` is the only way into the AddOns folder. No direct `rclone` copies, no other transfer.
+- Keep the default suffix `Dev`. Do not invent per-task suffixes such as `WOW_DEV_SUFFIX=1234Test`: the in-game helper knows only the suffix of the last sync, so mixed suffixes break the switch.
+- Never sync with an empty suffix (under the real name, overwriting the user's released addon) unless the user asks for it or the reference check below requires it, and then only after the user says yes.
+- Prefer a one-shot sync after each change over `--watch`; if the user wants `--watch`, run it as a background job and stop it when done.
 
 ## Addons that reference each other
 
@@ -63,7 +79,7 @@ The helper addon `WowSync` switches the game to the dev copies at login: it disa
 
 - After every sync the user has to `/reload` (or relog) for the new files to load.
 - An addon whose `## Interface` is older than the game build is hidden unless "Load out of date AddOns" is ticked; keep `## Interface` current (retail 12.1 = `120100`).
-- Lua errors are visible to the user only (BugSack/BugGrabber if installed). After a sync, ask the user to reload and paste the error text; do not claim a fix works until they confirm.
+- Lua errors are visible to the user only. Ask them to enable `/console scriptErrors 1` (or use BugSack if installed), reproduce, and paste the full error with its stack.
 
 ## Releases
 
