@@ -40,7 +40,7 @@ grep -q 'volumes, 40% -> 35% used' "$TEST_ROOT/out" || fail "freed space is logg
 
 run 80 0
 grep -qx 'system prune -f' "$TEST_ROOT/calls" || fail "at 75% stopped containers, dangling images and cache go"
-grep -qx 'builder prune -f --keep-storage 5GB' "$TEST_ROOT/calls" || fail "at 75% the build cache shrinks"
+grep -qx 'builder prune -f --max-used-space 5GB' "$TEST_ROOT/calls" || fail "at 75% the build cache shrinks"
 ! grep -q 'prune -af' "$TEST_ROOT/calls" || fail "below 90% images in use by nothing are kept"
 
 run 80 10

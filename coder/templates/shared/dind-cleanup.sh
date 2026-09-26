@@ -20,7 +20,7 @@ pass() {
   if [ "$(used)" -ge "$DIND_PRUNE_AT" ]; then
     level=prune
     docker system prune -f >/dev/null
-    docker builder prune -f --keep-storage 5GB >/dev/null
+    docker builder prune -f --max-used-space 5GB >/dev/null
   fi
   if [ "$(used)" -ge "$DIND_PURGE_AT" ]; then
     level=purge
