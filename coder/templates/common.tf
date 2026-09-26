@@ -352,10 +352,6 @@ resource "coder_agent" "main" {
   }
 
   env = merge({
-    GIT_AUTHOR_NAME                    = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_AUTHOR_EMAIL                   = data.coder_workspace_owner.me.email
-    GIT_COMMITTER_NAME                 = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
-    GIT_COMMITTER_EMAIL                = data.coder_workspace_owner.me.email
     CODER_OMNI_HOST                    = local.omni_host
     OMNI_HOSTNAME                      = local.omni_host
     CODER_OMNI_STACKS                  = join(",", local.selected_stacks)

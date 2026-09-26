@@ -38,6 +38,7 @@ server=$!
 trap 'kill "$server" 2>/dev/null; rm -rf "$TEST_ROOT"' EXIT
 for _ in $(seq 1 50); do curl -fs "http://127.0.0.1:$port/" >/dev/null && break; sleep 0.1; done
 
+mkdir -p "$HOME/.ssh/git-commit-signing" && : > "$HOME/.ssh/git-commit-signing/coder" && chmod 660 "$HOME/.ssh/git-commit-signing/coder"
 CODER_AGENT_URL="http://127.0.0.1:$port/" CODER_AGENT_TOKEN=agent bash "$IDENTITY" install
 key="$HOME/.ssh/git-commit-signing/coder"
 [ -s "$key" ] || fail "signing key was not downloaded"

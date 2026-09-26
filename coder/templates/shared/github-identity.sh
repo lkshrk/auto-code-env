@@ -162,6 +162,8 @@ cmd_install() {
       echo "github-identity: could not download the Coder signing key; personal commits stay unsigned" >&2
     fi
   fi
+  # fsGroup on the home volume re-adds group rw at every pod start; ssh rejects such a key.
+  [ -f "$signing_key" ] && chmod 600 "$signing_key"
   git config --global gpg.format ssh
   git config --global user.signingkey "$signing_key"
   git config --global commit.gpgsign false
