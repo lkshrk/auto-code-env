@@ -40,6 +40,9 @@ locals {
       ], [
       for command in ["gh pr merge*", "git push --force*", "git push -f*", "gh repo delete*"] :
       { action = "shell", resource = command, effect = "deny" }
+      ], [
+      # context-mode runs from a pinned build; ctx_upgrade would replace it with whatever npm has.
+      { action = "context-mode_ctx_upgrade", resource = "*", effect = "deny" },
     ])
     experimental = {
       policies = [
