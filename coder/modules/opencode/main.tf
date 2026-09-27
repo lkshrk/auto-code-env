@@ -28,9 +28,18 @@ locals {
       { action = "*", resource = "*", effect = "allow" },
       { action = "external_directory", resource = "*", effect = "allow" },
       ], [
-      # Ticket and project changes stay human-only; the oc-workers key blocks these server-side too.
-      for verb in ["save", "delete", "create", "share", "unshare", "mark", "restore", "retire", "prepare"] :
+      for verb in ["delete", "create", "share", "unshare", "mark", "restore", "retire", "prepare", "save"] :
       { action = "gateway_linear-${verb}_*", resource = "*", effect = "deny" }
+      ], [
+      # The linear-guard plugin allows these for team Forge (XXX); every other team asks.
+      for tool in ["save_issue", "save_comment"] :
+      { action = "gateway_linear-${tool}", resource = "*", effect = "ask" }
+      ], [
+      for command in ["git push*", "gh pr create*", "gh pr ready*", "gh release create*", "kubectl apply*", "kubectl delete*", "kubectl patch*", "kubectl edit*", "kubectl scale*", "kubectl rollout restart*", "flux reconcile*", "flux suspend*", "flux resume*"] :
+      { action = "shell", resource = command, effect = "ask" }
+      ], [
+      for command in ["gh pr merge*", "git push --force*", "git push -f*", "gh repo delete*"] :
+      { action = "shell", resource = command, effect = "deny" }
     ])
     experimental = {
       policies = [

@@ -35,6 +35,7 @@ variable "models" {
   default = {
     fast   = "basic/glm-5.3-flash"
     coding = "claude-sonnet"
+    deep   = "claude-opus"
   }
   nullable = false
 }
@@ -46,9 +47,9 @@ variable "default_model" {
 }
 
 variable "config_repo" {
-  description = "Public git repository whose config_path holds shared agents, commands, skills and AGENTS.md."
+  description = "Public git repository whose config_path holds the agent config: AGENTS.md, skills.json, skills/ and opencode/."
   type        = string
-  default     = "https://github.com/lkshrk/auto-code-env.git"
+  default     = "https://github.com/lkshrk/coding-harness.git"
   nullable    = false
 }
 
@@ -60,7 +61,7 @@ variable "config_ref" {
 
 variable "config_path" {
   type     = string
-  default  = "opencode/config"
+  default  = "agent"
   nullable = false
 }
 

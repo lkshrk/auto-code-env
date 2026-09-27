@@ -21,7 +21,12 @@ class SelectionTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "repo"
         self.root.mkdir()
-        self.env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        # Detached auto-gc/maintenance can still write objects/ while the temp dir is removed.
+        self.env = dict(
+            os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+            GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_0="gc.auto", GIT_CONFIG_VALUE_0="0",
+            GIT_CONFIG_KEY_1="maintenance.auto", GIT_CONFIG_VALUE_1="false",
+        )
         self.git("init", "--quiet", "--initial-branch=main")
         for name in ("alpha", "beta", "backends", "shared", "tests"):
             self.write(f"coder/templates/{name}/main.tf", f"{name}\n")

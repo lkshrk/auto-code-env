@@ -174,14 +174,59 @@ def sync_shared(root, shared):
     else:
         shutil.rmtree(checkout, ignore_errors=True)
         git("clone", "--quiet", "--depth", "1", "--filter=blob:none", "--sparse", "--branch", shared["ref"], shared["repo"], str(checkout))
-        git("sparse-checkout", "set", shared["path"], cwd=checkout)
+    git("sparse-checkout", "set", shared["path"], cwd=checkout)
     return checkout / shared["path"]
 
 
-def link_shared(config, source):
-    for name in ("agents", "commands", "skills", "plugins", "AGENTS.md"):
+def fetch_skill_sources(root, manifest):
+    cache = root / "skills-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    wanted = {}
+    for skill in manifest:
+        key = hashlib.sha256(f"{skill['repo']}@{skill['ref']}".encode()).hexdigest()[:16]
+        wanted.setdefault(key, (skill["repo"], skill["ref"], set()))[2].add(skill["path"])
+    for key, (repo, ref, paths) in wanted.items():
+        target = cache / key
+        if (target / ".complete").exists() and set((target / ".complete").read_text().split()) >= paths:
+            continue
+        shutil.rmtree(target, ignore_errors=True)
+        try:
+            git("clone", "--quiet", "--filter=blob:none", "--no-checkout", repo, str(target))
+            git("sparse-checkout", "set", "--no-cone", *paths, cwd=target)
+            git("checkout", "--quiet", ref, cwd=target)
+            (target / ".complete").write_text("\n".join(sorted(paths)) + "\n")
+        except (subprocess.SubprocessError, OSError) as error:
+            print(f"skill source {repo}@{ref} failed: {error}")
+            shutil.rmtree(target, ignore_errors=True)
+    for stale in cache.iterdir():
+        if stale.name not in wanted:
+            shutil.rmtree(stale, ignore_errors=True)
+    return {skill["name"]: cache / hashlib.sha256(f"{skill['repo']}@{skill['ref']}".encode()).hexdigest()[:16] / skill["path"] for skill in manifest}
+
+
+def resolve_skills(root, source):
+    manifest_file = source / "skills.json"
+    external = fetch_skill_sources(root, json.loads(manifest_file.read_text())["skills"]) if manifest_file.exists() else {}
+    own = {path.name: path for path in (source / "skills").iterdir() if path.is_dir()} if (source / "skills").is_dir() else {}
+    resolved = root / "skills"
+    shutil.rmtree(resolved, ignore_errors=True)
+    resolved.mkdir(parents=True)
+    for name, path in {**external, **own}.items():
+        if path.is_dir():
+            (resolved / name).symlink_to(path)
+    return resolved
+
+
+def link_shared(config, source, skills):
+    targets = {
+        "AGENTS.md": source / "AGENTS.md",
+        "agents": source / "opencode/agents",
+        "commands": source / "opencode/commands",
+        "plugins": source / "opencode/plugins",
+        "skills": skills,
+    }
+    for name, target in targets.items():
         link = config / name
-        target = source / name
         if link.is_symlink():
             link.unlink()
         if target.exists() and not link.exists():
@@ -204,15 +249,17 @@ def main():
     if bin_link.is_symlink() or not bin_link.exists():
         bin_link.unlink(missing_ok=True)
         bin_link.symlink_to(root / "worker.sh")
+    source = root / "shared" / shared["path"]
     try:
         source = sync_shared(root, shared)
-        link_shared(root / "config", source)
         state = "synced"
     except (subprocess.SubprocessError, OSError) as error:
         # A failed sync keeps the last checkout; OpenCode still starts with it.
         state = f"sync failed ({error}), using last checkout"
-        if (root / "shared" / shared["path"]).exists():
-            link_shared(root / "config", root / "shared" / shared["path"])
+    if source.exists():
+        skills = resolve_skills(root, source)
+        link_shared(root / "config", source, skills)
+        state += f", {sum(1 for _ in skills.iterdir())} skills"
     print(f"OpenCode {version} {'installed' if changed else 'ready'}; shared config {state}; {', '.join(tools)}")
 
 

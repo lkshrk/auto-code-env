@@ -22,6 +22,17 @@
       "labels": ["opencode-version"],
     },
     {
+      "description": "rtk tags releases as v<version>; the module pins the bare version",
+      "matchDepNames": ["rtk-ai/rtk"],
+      "extractVersion": "^v(?<version>.+)$",
+    },
+    {
+      "description": "Tools every OpenCode session uses change agent behaviour; review each bump",
+      "matchDepNames": ["rtk-ai/rtk", "context-mode", "codegraphcontext"],
+      "automerge": false,
+      "labels": ["opencode-version"],
+    },
+    {
       "description": "docker:28+ dind (runc 1.5) crashes the Talos kernel on inner container start; stay on 27",
       "matchDepNames": ["docker"],
       "allowedVersions": "<28",
