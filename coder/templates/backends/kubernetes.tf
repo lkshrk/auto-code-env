@@ -252,13 +252,16 @@ resource "kubernetes_pod_v1" "workspace" {
           }
         }
       }
-      env {
-        name = "GH_TOKEN_PERSONAL"
-        value_from {
-          secret_key_ref {
-            name     = "coder-workspace-secrets"
-            key      = "GH_TOKEN_PERSONAL"
-            optional = true
+      dynamic "env" {
+        for_each = local.personal_github_token ? [1] : []
+        content {
+          name = "GH_TOKEN_PERSONAL"
+          value_from {
+            secret_key_ref {
+              name     = "coder-workspace-secrets"
+              key      = "GH_TOKEN_PERSONAL"
+              optional = true
+            }
           }
         }
       }
