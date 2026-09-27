@@ -154,6 +154,7 @@ class SpawnerTest(unittest.TestCase):
         self.assertFalse(Path(clean["directory"]).exists())
         self.assertTrue(Path(dirty["directory"]).exists())
         self.assertFalse(self.spawner.healthy(clean["port"]))
+        self.assertFalse((self.tmp / "state" / "clean.log").exists())
         self.assertIsNone(self.spawner.remove("clean"))
 
     def test_http_api(self):

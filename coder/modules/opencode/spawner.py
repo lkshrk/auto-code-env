@@ -150,6 +150,7 @@ class Spawner:
                 env=self.environ, capture_output=True, text=True, timeout=60,
             )
             path.unlink()
+            (self.state / f"{workspace_id}.log").unlink(missing_ok=True)
             return {"id": workspace_id, "worktree_kept": result.returncode != 0}
 
     def public(self, record):

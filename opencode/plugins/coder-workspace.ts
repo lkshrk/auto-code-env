@@ -12,6 +12,7 @@ type Options = {
   defaultStacks?: string[]
   localSpawner?: string
   workspaceConfig?: string
+  autostopHours?: number
 }
 
 type Info = {
@@ -55,6 +56,7 @@ function settings(options: Options = {}) {
     defaultStacks: options.defaultStacks ?? ["quality"],
     localSpawner: options.localSpawner ?? env.OPENCODE_LOCAL_SPAWNER ?? "",
     workspaceConfig: options.workspaceConfig ?? env.OPENCODE_WORKSPACE_CONFIG ?? "",
+    autostopHours: options.autostopHours ?? 4,
   }
 }
 
@@ -124,6 +126,7 @@ class Coder {
       workspace = await this.api<any>("POST", `/users/me/workspaces`, {
         name: extra.coderWorkspace,
         template_id: template.id,
+        ttl_ms: this.s.autostopHours * 3_600_000,
         rich_parameter_values: [
           { name: "stacks", value: JSON.stringify(extra.stacks) },
           { name: "enable_dind", value: String(extra.dind) },

@@ -32,6 +32,7 @@ agents are defined once.
 | `workspaceConfig` | `OPENCODE_WORKSPACE_CONFIG` | config file sent to workspace servers |
 | `githubToken` | `GITHUB_TOKEN` | optional, for stack detection on private repositories |
 | `template`, `agent` | | default `dev`, `main` |
+| `autostopHours` | | Coder autostop for created workspaces, default 4; activity through the proxy extends it and the next request starts a stopped workspace again |
 | `localSpawner` | `OPENCODE_LOCAL_SPAWNER` | skip Coder and use a spawner on this URL (local testing) |
 
 Local end-to-end check without Coder: run `coder/modules/opencode/spawner.py`
