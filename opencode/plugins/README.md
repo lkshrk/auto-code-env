@@ -1,5 +1,12 @@
 # OpenCode plugins
 
+The control-plane image `ghcr.io/lkshrk/opencode-control-plane` (built from
+[`../image/Dockerfile`](../image/Dockerfile) by
+`.github/workflows/opencode-image.yaml`) is the upstream OpenCode image plus
+`git`, which OpenCode needs to resolve projects, with this plugin at
+`/opt/opencode/plugins/coder-workspace.ts`. It is tagged with the OpenCode
+version and `sha-<commit>`.
+
 ## `coder-workspace.ts`
 
 Workspace type `coder` for an OpenCode control plane (OpenCode 1.18.32,

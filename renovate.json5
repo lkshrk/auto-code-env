@@ -17,7 +17,7 @@
   "packageRules": [
     {
       "description": "OpenCode workspace servers must match the control plane (h-cloud) and the benchmark (coding-harness); bump all three together",
-      "matchDepNames": ["opencode-ai"],
+      "matchDepNames": ["opencode-ai", "ghcr.io/anomalyco/opencode"],
       "automerge": false,
       "labels": ["opencode-version"],
     },

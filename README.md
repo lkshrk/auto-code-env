@@ -13,8 +13,9 @@ Reproducible OpenHands and Coder runtime for Kubernetes.
     `https://coder.h-cloud.io` requires an explicit manual run on `main`. See
     [`coder/README.md`](coder/README.md) for the CI flow, local validation, and
     the cluster contract the templates depend on.
-- [`opencode/`](opencode/) holds the OpenCode control-plane side:
-  `plugins/coder-workspace.ts` is the `coder` workspace type that runs each
+- [`opencode/`](opencode/) holds the OpenCode control-plane side: `image/`
+  builds the control-plane image, and `plugins/coder-workspace.ts` is the
+  `coder` workspace type that runs each
   OpenCode workspace as a git worktree inside a Coder workspace chosen by the
   repository's stacks (see
   [`opencode/plugins/README.md`](opencode/plugins/README.md)).
