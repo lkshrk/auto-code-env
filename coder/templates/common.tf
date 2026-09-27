@@ -141,6 +141,15 @@ data "coder_parameter" "agent_plugins" {
   mutable      = true
 }
 
+data "coder_parameter" "enable_opencode_v2" {
+  name         = "enable_opencode_v2"
+  display_name = "OpenCode"
+  description  = "OpenCode v2 as `opencode`, with shared agents, commands and skills from auto-code-env opencode/config. Always on for agent-owned workspaces."
+  type         = "bool"
+  default      = "true"
+  mutable      = true
+}
+
 data "coder_parameter" "enable_openhands" {
   name         = "enable_openhands"
   display_name = "OpenHands Agent Server"
@@ -205,6 +214,7 @@ locals {
 
   workspace_service_account_name = "coder-workspace"
   personal_github_token          = var.agent_owner == "" || data.coder_workspace_owner.me.name != var.agent_owner
+  opencode_enabled               = !local.personal_github_token || tobool(data.coder_parameter.enable_opencode_v2.value)
   litellm_key                    = local.personal_github_token ? "LITELLM_API" : "LITELLM_API_OC_WORKER"
   workspace_kube_namespace       = "coder"
 
@@ -343,7 +353,7 @@ locals {
 
     python3 "$HOME/.local/state/coder-environment/components.py" check
     ${module.openhands.startup_script}
-    ${module.oc_worker.startup_script}
+    ${module.opencode.startup_script}
     python3 "$HOME/.local/state/coder-environment/components.py" check --report "$HOME/.local/state/coder-environment/readiness.json"
   SCRIPT
 }
@@ -354,9 +364,17 @@ module "openhands" {
   working_directory = length(local.repos_set) == 1 ? "/home/coder/${local.repo_clone_dirs}" : ""
 }
 
-module "oc_worker" {
-  source  = "./modules/oc-worker"
-  enabled = !local.personal_github_token
+module "opencode" {
+  source  = "./modules/opencode"
+  enabled = local.opencode_enabled
+  # The shared workspace key has no basic tier; agent-owned workspaces use the oc-workers key.
+  models = local.personal_github_token ? {
+    fast   = "claude-haiku"
+    coding = "claude-sonnet"
+    } : {
+    fast   = "basic/glm-5.3-flash"
+    coding = "claude-sonnet"
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -389,6 +407,7 @@ resource "coder_agent" "main" {
     CODER_CONFIGURED_DOTFILES_URL        = data.coder_parameter.dotfiles_url.value
     CODER_AGENT_CLIENTS                  = join(",", jsondecode(data.coder_parameter.agent_clients.value))
     CODER_AGENT_PLUGINS                  = tobool(data.coder_parameter.agent_plugins.value) ? "1" : "0"
+    CODER_OPENCODE                       = local.opencode_enabled ? "1" : "0"
     CODER_ENABLE_OPENHANDS               = tobool(data.coder_parameter.enable_openhands.value) ? "1" : "0"
     CODER_ENABLE_DIND                    = local.enable_dind ? "1" : "0"
     CODER_MCP_URL                        = var.mcp_url

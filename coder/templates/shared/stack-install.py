@@ -72,6 +72,7 @@ def contract(env, catalog):
     result = {"stacks": stacks, "clients": clients}
     for name, default, allowed in [
         ("CODER_AGENT_PLUGINS", "0", {"0", "1"}),
+        ("CODER_OPENCODE", "0", {"0", "1"}),
         ("CODER_ENABLE_DIND", "0", {"0", "1"}),
         ("CODER_BACKEND", "kubernetes", {"kubernetes", "docker"}),
     ]:
@@ -132,6 +133,9 @@ def select_group_names(selection, catalog):
         need("bun")
     if any(t in NODE_TOOLS for s in selection["stacks"] for t in catalog["STACK_TOOLS"][s]):
         need("nvm")
+    if selection.get("CODER_OPENCODE") == "1":
+        need("nvm")
+        need("uv")
     names = ["component-base"] + ["runtime-" + r for r in runtimes] + ["stack-" + s for s in selection["stacks"]]
     if "claude" in selection["clients"]:
         names.append("client-claude")

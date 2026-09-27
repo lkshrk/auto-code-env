@@ -44,6 +44,16 @@ class CatalogOwnershipTests(unittest.TestCase):
         selection = {"stacks": ["rust", "iac"], "clients": [], "CODER_AGENT_PLUGINS": "0"}
         self.assertNotIn("runtime-nvm", stack_install.select_group_names(selection, catalog))
 
+    def test_opencode_pulls_the_node_and_uv_runtimes(self):
+        stack_install = load(SHARED / "stack-install.py", "stack_install")
+        catalog = stack_install.load_catalog(CATALOG)
+        selection = {"stacks": ["rust"], "clients": [], "CODER_AGENT_PLUGINS": "0", "CODER_OPENCODE": "1"}
+        names = stack_install.select_group_names(selection, catalog)
+        self.assertIn("runtime-nvm", names)
+        self.assertIn("runtime-uv", names)
+        selection["CODER_OPENCODE"] = "0"
+        self.assertNotIn("runtime-nvm", stack_install.select_group_names(selection, catalog))
+
     def test_every_stack_language_has_a_claude_language_server(self):
         catalog = json.loads(CATALOG.read_text())
         script = (SHARED / "claude-lsp.sh").read_text()

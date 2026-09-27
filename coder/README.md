@@ -97,13 +97,29 @@ stopped containers, dangling images and build cache above 5 GB, and from 90%
 every unused image. It logs to the sidecar (`kubectl logs <pod> -c dind`)
 whenever it frees space or escalates. The image cache is cold after every stop.
 
-## OpenCode v2 worker
+## OpenCode
 
-Workspaces owned by `agent_owner` (`opencode`) get `coder/modules/oc-worker`:
-the pinned `@opencode/cli-linux-x64` binary (sha512 checked against the npm
-registry integrity), a gateway-only config (`gw/<alias>` models via LiteLLM,
-built-in providers denied), an empty models.dev catalog, and
-`~/.opencode-v2/worker.sh`. An orchestrator reaches it with
+`coder/modules/opencode` installs OpenCode v2 when `enable_opencode_v2` is on
+(default) and always for workspaces owned by `agent_owner` (`opencode`):
+
+- the pinned `@opencode/cli-linux-x64` binary, sha512 checked against the npm
+  registry integrity, with `~/.local/bin/opencode` pointing at
+  `~/.opencode-v2/worker.sh`;
+- a gateway-only config: `gw/fast` and `gw/coding` via LiteLLM, with built-in
+  providers denied. Human workspaces map `fast` to `claude-haiku`, because the
+  shared key has no basic tier; agent-owned ones use `basic/glm-5.3-flash` on
+  the `oc-workers` key;
+- an empty models.dev catalog, which keeps `opencode acp` from taking its model
+  list before the config provider loads (anomalyco/opencode#50236);
+- pinned tools in `~/.opencode-v2/tools`: rtk (GitHub release digest
+  checked), context-mode (npm) and CodeGraphContext (`uv tool`), with
+  `CODER_OPENCODE=1` making the stack installer add the nvm and uv runtimes;
+- shared agents, commands, plugins, skills and `AGENTS.md` from
+  [`opencode/config`](../opencode/config/), synced on every start.
+
+TUI, `opencode run` and `opencode acp` share one session store, so
+`opencode -s <id>` continues a session started over ACP, e.g. by an
+orchestrator using
 `coder ssh <workspace> -- sh -c 'cd <repo> && exec $HOME/.opencode-v2/worker.sh acp'`.
 
 Workspaces owned by `agent_owner` never receive `GH_TOKEN_PERSONAL`, so
