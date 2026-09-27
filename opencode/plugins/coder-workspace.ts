@@ -118,7 +118,9 @@ class Coder {
   async ensure(extra: Extra) {
     let workspace = await this.workspace(extra.coderWorkspace)
     if (!workspace) {
-      const template = await this.api<any>("GET", `/organizations/default/templates/${this.s.template}`)
+      const templates = await this.api<any[]>("GET", `/templates?q=${encodeURIComponent(`exact_name:${this.s.template}`)}`)
+      const template = templates.find((t) => t.name === this.s.template)
+      if (!template) throw new Error(`Coder template ${this.s.template} not found`)
       workspace = await this.api<any>("POST", `/users/me/workspaces`, {
         name: extra.coderWorkspace,
         template_id: template.id,
