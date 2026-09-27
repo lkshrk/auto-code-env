@@ -11,3 +11,17 @@ Every Coder workspace with OpenCode syncs this folder on start (sparse checkout 
 Changes reach a workspace on its next start. Edit here, not in the workspace:
 the checkout is reset on every sync. Models are `gw/fast` and `gw/coding`
 (LiteLLM aliases set by the template per workspace owner).
+
+Built in: agents `build` (default), `plan`, `general`, `explore` (read-only) and
+the `/review` and `/init` commands. Added here:
+
+- `review` agent: read-only reviewer on `gw/coding`. Edits are denied; shell
+  runs git/gh reads and test or lint runners, anything else needs approval,
+  and redirects are denied. The model is per session, so pick it when you use
+  the agent directly: `opencode run --agent review -m gw/coding "..."`. As a
+  subagent it runs on its own model.
+- `/ticket <ID>`: implements a Linear ticket on a new branch; no push.
+
+MCP: one server, `gateway`, the LiteLLM MCP gateway (Linear, context7,
+searxng). Linear write tools are denied in the OpenCode config for every
+workspace, and the `oc-workers` key only reaches the read tools server-side.

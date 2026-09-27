@@ -10,10 +10,23 @@ locals {
         models   = { for alias, id in var.models : alias => { modelID = id } }
       }
     }
-    permissions = [
+    mcp = {
+      servers = {
+        gateway = {
+          type    = "remote"
+          url     = var.mcp_url
+          headers = { "x-litellm-api-key" = "{env:LITELLM_API}" }
+        }
+      }
+    }
+    permissions = concat([
       { action = "*", resource = "*", effect = "allow" },
       { action = "external_directory", resource = "*", effect = "allow" },
-    ]
+      ], [
+      # Ticket and project changes stay human-only; the oc-workers key blocks these server-side too.
+      for verb in ["save", "delete", "create", "share", "unshare", "mark", "restore", "retire", "prepare"] :
+      { action = "gateway_linear-${verb}_*", resource = "*", effect = "deny" }
+    ])
     experimental = {
       policies = [
         { action = "provider.use", resource = "*", effect = "deny" },

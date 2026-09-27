@@ -22,6 +22,13 @@ variable "gateway_url" {
   nullable = false
 }
 
+variable "mcp_url" {
+  description = "LiteLLM MCP gateway; tools per key are set in LiteLLM."
+  type        = string
+  default     = "http://litellm-proxy.ai.svc.cluster.local:4000/mcp/"
+  nullable    = false
+}
+
 variable "models" {
   description = "Worker model aliases (gw/<alias>) mapped to LiteLLM model names."
   type        = map(string)
