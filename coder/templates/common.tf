@@ -89,7 +89,7 @@ variable "mcp_url" {
 variable "agent_owner" {
   type        = string
   default     = "opencode"
-  description = "Coder user of the OpenCode control plane; its workspaces never receive the personal GitHub token."
+  description = "Coder user of the OpenCode control plane; its workspaces get the oc-workers LiteLLM key and never the personal GitHub token."
 }
 
 variable "omni_version" {
@@ -214,6 +214,7 @@ locals {
 
   workspace_service_account_name = "coder-workspace"
   personal_github_token          = var.agent_owner == "" || data.coder_workspace_owner.me.name != var.agent_owner
+  litellm_key                    = local.personal_github_token ? "LITELLM_API" : "LITELLM_API_OC_WORKER"
   workspace_kube_namespace       = "coder"
 
   repo_clone_dirs = join(",", [
