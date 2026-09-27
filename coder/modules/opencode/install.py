@@ -72,8 +72,8 @@ def tool_env():
     return env
 
 
-def run(*args, env=None):
-    subprocess.run(list(args), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=900, env=env or tool_env())
+def run(*args, env=None, cwd=None):
+    subprocess.run(list(args), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=900, env=env or tool_env(), cwd=cwd)
 
 
 def install_rtk(tools, version):
@@ -100,9 +100,22 @@ def install_rtk(tools, version):
         target.chmod(0o755)
 
 
-def install_context_mode(tools, version):
+def install_context_mode(tools, source):
     prefix = tools / "context-mode"
-    run("npm", "install", "--silent", "--no-fund", "--no-audit", "--prefix", str(prefix), f"context-mode@{version}")
+    if "#" in source:
+        repo, commit = source.split("#", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            git("clone", "--quiet", "--filter=blob:none", repo, tmp)
+            git("checkout", "--quiet", commit, cwd=tmp)
+            run("npm", "install", "--silent", "--no-fund", "--no-audit", cwd=tmp)
+            run("npm", "run", "-s", "build", cwd=tmp)
+            run("npm", "pack", "--silent", "--pack-destination", tmp, cwd=tmp)
+            package = next(Path(tmp).glob("context-mode-*.tgz"))
+            run("npm", "install", "--silent", "--no-fund", "--no-audit", "--prefix", str(prefix), str(package))
+    else:
+        run("npm", "install", "--silent", "--no-fund", "--no-audit", "--prefix", str(prefix), f"context-mode@{source}")
+    # OpenCode loads a plugin directory through its index; the package itself only exports ./plugin.
+    (prefix / "index.js").write_text('export { default } from "context-mode/plugin"\n')
     link(tools / "bin/context-mode", prefix / "node_modules/.bin/context-mode")
 
 

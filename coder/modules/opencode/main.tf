@@ -17,16 +17,13 @@ locals {
           url     = var.mcp_url
           headers = { "x-litellm-api-key" = "{env:LITELLM_API}" }
         }
-        context-mode = {
-          type    = "local"
-          command = ["sh", "-c", "exec \"$HOME/.opencode-v2/tools/bin/context-mode\""]
-        }
         codegraph = {
           type    = "local"
           command = ["sh", "-c", "exec \"$HOME/.opencode-v2/tools/bin/cgc\" mcp start"]
         }
       }
     }
+    plugins = ["file://{env:HOME}/.opencode-v2/tools/context-mode"]
     permissions = concat([
       { action = "*", resource = "*", effect = "allow" },
       { action = "external_directory", resource = "*", effect = "allow" },
@@ -49,7 +46,7 @@ locals {
     install_py  = base64gzip(file("${path.module}/install.py"))
     tools = base64encode(jsonencode({
       rtk              = var.rtk_version
-      context_mode     = var.context_mode_version
+      context_mode     = var.context_mode_source != "" ? var.context_mode_source : var.context_mode_version
       codegraphcontext = var.codegraphcontext_version
     }))
     shared = base64encode(jsonencode({

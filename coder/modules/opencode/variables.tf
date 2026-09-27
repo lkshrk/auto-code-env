@@ -78,6 +78,13 @@ variable "context_mode_version" {
   nullable = false
 }
 
+variable "context_mode_source" {
+  description = "Git repo#commit to build context-mode from instead of the npm release; empty uses context_mode_version from npm. Pinned to the OpenCode v2 port (mksglu/context-mode#1171) until it is released."
+  type        = string
+  default     = "https://github.com/Scratchydisk/context-mode.git#5bf8ab5e18d83491226b066da8824785de1b9574"
+  nullable    = false
+}
+
 variable "codegraphcontext_version" {
   type = string
   # renovate: datasource=pypi depName=codegraphcontext

@@ -27,10 +27,13 @@ Plugins: `rtk` rewrites shell commands through `rtk rewrite` (shell
 `create.before` hook), because rtk's own OpenCode plugin targets the v1 API
 (rtk-ai/rtk#3898).
 
-MCP: `context-mode` and `codegraph` (CodeGraphContext, embedded FalkorDB) run
-locally from `~/.opencode-v2/tools`. context-mode's hook-based routing is v1-only
-(mksglu/context-mode#1199), so its routing lives in `AGENTS.md`. Code mode is
-built in: MCP tools are called from code through `execute`.
+context-mode runs as a v2 plugin with its hooks (routing enforcement,
+resume snapshots, routing block). Its npm release still ships only the v1
+plugin, so the module builds the v2 port from mksglu/context-mode#1171 at a
+pinned commit (`context_mode_source`); set it to empty once a release
+includes it. `codegraph` (CodeGraphContext, embedded FalkorDB) runs as a local
+MCP server. Code mode is built in: MCP tools are called from code through
+`execute`.
 
 Remote MCP: `gateway`, the LiteLLM MCP gateway (Linear, context7,
 searxng). Linear write tools are denied in the OpenCode config for every
