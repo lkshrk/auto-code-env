@@ -37,3 +37,22 @@ variable "default_model" {
   default  = "fast"
   nullable = false
 }
+
+variable "config_repo" {
+  description = "Public git repository whose config_path holds shared agents, commands, skills and AGENTS.md."
+  type        = string
+  default     = "https://github.com/lkshrk/auto-code-env.git"
+  nullable    = false
+}
+
+variable "config_ref" {
+  type     = string
+  default  = "main"
+  nullable = false
+}
+
+variable "config_path" {
+  type     = string
+  default  = "opencode/config"
+  nullable = false
+}

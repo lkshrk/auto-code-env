@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -64,14 +65,56 @@ def install(root, version):
     return True
 
 
+def git(*args, cwd=None):
+    subprocess.run(["git", *args], cwd=cwd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=120)
+
+
+def sync_shared(root, shared):
+    checkout = root / "shared"
+    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout, capture_output=True, text=True).stdout.strip() if (checkout / ".git").exists() else ""
+    if origin == shared["repo"]:
+        git("fetch", "--quiet", "--depth", "1", "origin", shared["ref"], cwd=checkout)
+        git("reset", "--quiet", "--hard", "FETCH_HEAD", cwd=checkout)
+    else:
+        shutil.rmtree(checkout, ignore_errors=True)
+        git("clone", "--quiet", "--depth", "1", "--filter=blob:none", "--sparse", "--branch", shared["ref"], shared["repo"], str(checkout))
+        git("sparse-checkout", "set", shared["path"], cwd=checkout)
+    return checkout / shared["path"]
+
+
+def link_shared(config, source):
+    for name in ("agents", "commands", "skills", "AGENTS.md"):
+        link = config / name
+        target = source / name
+        if link.is_symlink():
+            link.unlink()
+        if target.exists() and not link.exists():
+            link.symlink_to(target)
+
+
 def main():
     version, config = sys.argv[1], base64.b64decode(sys.argv[2]).decode()
+    shared = json.loads(base64.b64decode(sys.argv[3]))
     root = Path.home() / ".opencode-v2"
     changed = install(root, version)
     write(root / "config/opencode.json", config)
     write(root / "models.json", "{}\n")
     write(root / "worker.sh", WORKER, 0o755)
-    print(f"OpenCode worker {version} {'installed' if changed else 'ready'}")
+    bin_link = Path.home() / ".local/bin/opencode"
+    bin_link.parent.mkdir(parents=True, exist_ok=True)
+    if bin_link.is_symlink() or not bin_link.exists():
+        bin_link.unlink(missing_ok=True)
+        bin_link.symlink_to(root / "worker.sh")
+    try:
+        source = sync_shared(root, shared)
+        link_shared(root / "config", source)
+        state = "synced"
+    except (subprocess.SubprocessError, OSError) as error:
+        # A failed sync keeps the last checkout; OpenCode still starts with it.
+        state = f"sync failed ({error}), using last checkout"
+        if (root / "shared" / shared["path"]).exists():
+            link_shared(root / "config", root / "shared" / shared["path"])
+    print(f"OpenCode {version} {'installed' if changed else 'ready'}; shared config {state}")
 
 
 if __name__ == "__main__":

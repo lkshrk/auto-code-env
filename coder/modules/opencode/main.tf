@@ -26,5 +26,10 @@ locals {
     version     = var.opencode_version
     config_json = base64encode(jsonencode(local.config))
     install_py  = base64gzip(file("${path.module}/install.py"))
+    shared = base64encode(jsonencode({
+      repo = var.config_repo
+      ref  = var.config_ref
+      path = var.config_path
+    }))
   }) : ""
 }
