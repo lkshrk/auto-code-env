@@ -8,3 +8,11 @@
 - Match the surrounding code's style, naming and idioms. Follow the repository's own `AGENTS.md` when it is stricter.
 - Run the repository's checks (tests, linters, formatters) before calling work done, and report what you ran and the result.
 - If you are blocked or the task is ambiguous, say so and stop rather than guessing broadly.
+
+# Tools
+
+- MCP tools are called from code through `execute` (code mode). Batch several calls in one script instead of one call per step.
+- `context-mode`: when output would be large (logs, long command output, big files you only analyze, web pages), use `ctx_execute`, `ctx_batch_execute`, `ctx_execute_file` or `ctx_fetch_and_index` + `ctx_search`, so only the derived answer enters the context. Short outputs and files you are about to edit go through the normal tools.
+- `codegraph` (CodeGraphContext): for structure questions such as callers, callees, dependencies or impact of a change, index the repository once (`add_code_to_graph` on its root) and query the graph instead of grepping across many files.
+- Shell commands are rewritten by rtk for compact output (e.g. `git status` runs as `rtk git status`). When you need the raw output, run `rtk proxy <command>`.
+- `gateway`: Linear (read-only), library docs (context7) and web search (searxng).

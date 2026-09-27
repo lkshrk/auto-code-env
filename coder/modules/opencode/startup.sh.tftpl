@@ -1,1 +1,1 @@
-python3 -I -c "$(printf '%s' '${install_py}' | base64 --decode | gunzip)" '${version}' '${config_json}' '${shared}' || exit 1
+python3 -I -c "$(printf '%s' '${install_py}' | base64 --decode | gunzip)" '${version}' '${config_json}' '${shared}' '${tools}' || exit 1

@@ -63,3 +63,24 @@ variable "config_path" {
   default  = "opencode/config"
   nullable = false
 }
+
+variable "rtk_version" {
+  type = string
+  # renovate: datasource=github-releases depName=rtk-ai/rtk
+  default  = "0.50.0"
+  nullable = false
+}
+
+variable "context_mode_version" {
+  type = string
+  # renovate: datasource=npm depName=context-mode
+  default  = "1.0.169"
+  nullable = false
+}
+
+variable "codegraphcontext_version" {
+  type = string
+  # renovate: datasource=pypi depName=codegraphcontext
+  default  = "0.6.13"
+  nullable = false
+}

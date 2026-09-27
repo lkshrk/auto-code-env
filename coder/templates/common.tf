@@ -214,6 +214,7 @@ locals {
 
   workspace_service_account_name = "coder-workspace"
   personal_github_token          = var.agent_owner == "" || data.coder_workspace_owner.me.name != var.agent_owner
+  opencode_enabled               = !local.personal_github_token || tobool(data.coder_parameter.enable_opencode_v2.value)
   litellm_key                    = local.personal_github_token ? "LITELLM_API" : "LITELLM_API_OC_WORKER"
   workspace_kube_namespace       = "coder"
 
@@ -365,7 +366,7 @@ module "openhands" {
 
 module "opencode" {
   source  = "./modules/opencode"
-  enabled = !local.personal_github_token || tobool(data.coder_parameter.enable_opencode_v2.value)
+  enabled = local.opencode_enabled
   # The shared workspace key has no basic tier; agent-owned workspaces use the oc-workers key.
   models = local.personal_github_token ? {
     fast   = "claude-haiku"
@@ -406,6 +407,7 @@ resource "coder_agent" "main" {
     CODER_CONFIGURED_DOTFILES_URL        = data.coder_parameter.dotfiles_url.value
     CODER_AGENT_CLIENTS                  = join(",", jsondecode(data.coder_parameter.agent_clients.value))
     CODER_AGENT_PLUGINS                  = tobool(data.coder_parameter.agent_plugins.value) ? "1" : "0"
+    CODER_OPENCODE                       = local.opencode_enabled ? "1" : "0"
     CODER_ENABLE_OPENHANDS               = tobool(data.coder_parameter.enable_openhands.value) ? "1" : "0"
     CODER_ENABLE_DIND                    = local.enable_dind ? "1" : "0"
     CODER_MCP_URL                        = var.mcp_url

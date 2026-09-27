@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -65,6 +66,88 @@ def install(root, version):
     return True
 
 
+def tool_env():
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([str(Path.home() / ".local/bin"), env.get("PATH", "")])
+    return env
+
+
+def run(*args, env=None):
+    subprocess.run(list(args), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=900, env=env or tool_env())
+
+
+def install_rtk(tools, version):
+    arch = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}[platform.machine().lower()]
+    libc = "musl" if arch == "x86_64" else "gnu"
+    name = f"rtk-{arch}-unknown-linux-{libc}.tar.gz"
+    with urllib.request.urlopen(f"https://api.github.com/repos/rtk-ai/rtk/releases/tags/v{version}", timeout=30) as response:
+        asset = next(a for a in json.load(response)["assets"] if a["name"] == name)
+    digest = asset.get("digest") or ""
+    if not digest.startswith("sha256:"):
+        raise RuntimeError(f"{name} has no sha256 digest")
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / name
+        with urllib.request.urlopen(asset["browser_download_url"], timeout=300) as response, archive.open("wb") as out:
+            shutil.copyfileobj(response, out)
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != digest.removeprefix("sha256:"):
+            raise RuntimeError(f"{name} failed the release digest check")
+        with tarfile.open(archive) as tar:
+            tar.extractall(tmp, filter="data")
+        binary = next(Path(tmp).rglob("rtk"))
+        target = tools / "bin/rtk"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, target)
+        target.chmod(0o755)
+
+
+def install_context_mode(tools, version):
+    prefix = tools / "context-mode"
+    run("npm", "install", "--silent", "--no-fund", "--no-audit", "--prefix", str(prefix), f"context-mode@{version}")
+    link(tools / "bin/context-mode", prefix / "node_modules/.bin/context-mode")
+
+
+def install_codegraphcontext(tools, version):
+    env = tool_env()
+    env.update(UV_TOOL_DIR=str(tools / "uv"), UV_TOOL_BIN_DIR=str(tools / "bin"))
+    run("uv", "tool", "install", "--force", "--quiet", f"codegraphcontext=={version}", env=env)
+
+
+def link(path, target):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or path.exists():
+        path.unlink()
+    path.symlink_to(target)
+
+
+def ignore_globally(pattern):
+    path = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "git/ignore"
+    lines = path.read_text().splitlines() if path.exists() else []
+    if pattern not in lines:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join([*lines, pattern]) + "\n")
+
+
+def install_tools(root, versions):
+    tools = root / "tools"
+    results = []
+    for name, installer in (("rtk", install_rtk), ("context_mode", install_context_mode), ("codegraphcontext", install_codegraphcontext)):
+        marker = tools / f"{name}.version"
+        if marker.exists() and marker.read_text().strip() == versions[name]:
+            results.append(f"{name} ready")
+            continue
+        try:
+            installer(tools, versions[name])
+            marker.write_text(versions[name] + "\n")
+            results.append(f"{name} {versions[name]} installed")
+        except Exception as error:
+            # One tool failing must not keep OpenCode from starting.
+            results.append(f"{name} failed: {error}")
+    link(Path.home() / ".local/bin/rtk", tools / "bin/rtk")
+    # CodeGraphContext writes .cgcignore into every repository it indexes.
+    ignore_globally(".cgcignore")
+    return results
+
+
 def git(*args, cwd=None):
     subprocess.run(["git", *args], cwd=cwd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=120)
 
@@ -83,7 +166,7 @@ def sync_shared(root, shared):
 
 
 def link_shared(config, source):
-    for name in ("agents", "commands", "skills", "AGENTS.md"):
+    for name in ("agents", "commands", "skills", "plugins", "AGENTS.md"):
         link = config / name
         target = source / name
         if link.is_symlink():
@@ -95,8 +178,11 @@ def link_shared(config, source):
 def main():
     version, config = sys.argv[1], base64.b64decode(sys.argv[2]).decode()
     shared = json.loads(base64.b64decode(sys.argv[3]))
+    versions = json.loads(base64.b64decode(sys.argv[4]))
     root = Path.home() / ".opencode-v2"
     changed = install(root, version)
+    # Tools first: a running OpenCode reloads the config at once and connects its MCP servers.
+    tools = install_tools(root, versions)
     write(root / "config/opencode.json", config)
     write(root / "models.json", "{}\n")
     write(root / "worker.sh", WORKER, 0o755)
@@ -114,7 +200,7 @@ def main():
         state = f"sync failed ({error}), using last checkout"
         if (root / "shared" / shared["path"]).exists():
             link_shared(root / "config", root / "shared" / shared["path"])
-    print(f"OpenCode {version} {'installed' if changed else 'ready'}; shared config {state}")
+    print(f"OpenCode {version} {'installed' if changed else 'ready'}; shared config {state}; {', '.join(tools)}")
 
 
 if __name__ == "__main__":

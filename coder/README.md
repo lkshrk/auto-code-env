@@ -111,7 +111,10 @@ whenever it frees space or escalates. The image cache is cold after every stop.
   the `oc-workers` key;
 - an empty models.dev catalog, which keeps `opencode acp` from taking its model
   list before the config provider loads (anomalyco/opencode#50236);
-- shared agents, commands, skills and `AGENTS.md` from
+- pinned tools in `~/.opencode-v2/tools`: rtk (GitHub release digest
+  checked), context-mode (npm) and CodeGraphContext (`uv tool`), with
+  `CODER_OPENCODE=1` making the stack installer add the nvm and uv runtimes;
+- shared agents, commands, plugins, skills and `AGENTS.md` from
   [`opencode/config`](../opencode/config/), synced on every start.
 
 TUI, `opencode run` and `opencode acp` share one session store, so
