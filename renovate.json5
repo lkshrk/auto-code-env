@@ -16,8 +16,8 @@
   ],
   "packageRules": [
     {
-      "description": "OpenCode workspace servers must match the control plane (h-cloud) and the benchmark (coding-harness); bump all three together",
-      "matchDepNames": ["opencode-ai", "ghcr.io/anomalyco/opencode"],
+      "description": "OpenCode v2 worker releases change the ACP and config surface; review each bump",
+      "matchDepNames": ["@opencode/cli-linux-x64"],
       "automerge": false,
       "labels": ["opencode-version"],
     },
