@@ -1,4 +1,4 @@
-FROM ghcr.io/anomalyco/opencode:1.18.32@sha256:b3ce2a73474c57d19abb8c1e9d955c66066b4263e8f15167ba6e6c5ddf9a7ee0
+FROM ghcr.io/anomalyco/opencode:2.0.18@sha256:aa0e5ac93543f24c99dfcc72a6ea7df335faec131dafc16f7607a2c7d3173d28
 
 # OpenCode resolves projects through the git binary; the upstream image has none.
 RUN apk add --no-cache git
