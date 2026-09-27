@@ -353,6 +353,7 @@ locals {
     python3 "$HOME/.local/state/coder-environment/components.py" check
     ${module.openhands.startup_script}
     ${module.opencode.startup_script}
+    ${module.oc_worker.startup_script}
     python3 "$HOME/.local/state/coder-environment/components.py" check --report "$HOME/.local/state/coder-environment/readiness.json"
   SCRIPT
 }
@@ -367,6 +368,11 @@ module "opencode" {
   source   = "./modules/opencode"
   enabled  = tobool(data.coder_parameter.enable_opencode.value)
   agent_id = coder_agent.main.id
+}
+
+module "oc_worker" {
+  source  = "./modules/oc-worker"
+  enabled = !local.personal_github_token
 }
 
 # ---------------------------------------------------------------------------

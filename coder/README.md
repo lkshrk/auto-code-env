@@ -97,6 +97,15 @@ stopped containers, dangling images and build cache above 5 GB, and from 90%
 every unused image. It logs to the sidecar (`kubectl logs <pod> -c dind`)
 whenever it frees space or escalates. The image cache is cold after every stop.
 
+## OpenCode v2 worker
+
+Workspaces owned by `agent_owner` (`opencode`) get `coder/modules/oc-worker`:
+the pinned `@opencode/cli-linux-x64` binary (sha512 checked against the npm
+registry integrity), a gateway-only config (`gw/<alias>` models via LiteLLM,
+built-in providers denied), an empty models.dev catalog, and
+`~/.opencode-v2/worker.sh`. An orchestrator reaches it with
+`coder ssh <workspace> -- sh -c 'cd <repo> && exec $HOME/.opencode-v2/worker.sh acp'`.
+
 ## OpenCode workspace server
 
 `enable_opencode` turns a workspace into an execution environment for an
