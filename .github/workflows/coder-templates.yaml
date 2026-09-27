@@ -144,6 +144,15 @@ jobs:
             exit 1
           fi
 
+      - name: Test the agent config workspaces sync
+        run: |
+          set -euo pipefail
+          harness=$(mktemp -d "$RUNNER_TEMP/coding-harness.XXXXXX")
+          trap 'rm -rf "$harness"' EXIT
+          git clone --quiet --depth 1 https://github.com/lkshrk/coding-harness.git "$harness"
+          echo "coding-harness=$(git -C "$harness" rev-parse HEAD)"
+          python3 "$harness/agent/check.py"
+
       - name: Install Coder CLI
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)) && steps.selected.outputs.has_templates == 'true'
         env:
