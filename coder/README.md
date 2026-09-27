@@ -97,34 +97,19 @@ stopped containers, dangling images and build cache above 5 GB, and from 90%
 every unused image. It logs to the sidecar (`kubectl logs <pod> -c dind`)
 whenever it frees space or escalates. The image cache is cold after every stop.
 
-## OpenCode workspace server
+## OpenCode v2 worker
 
-`enable_opencode` turns a workspace into an execution environment for an
-OpenCode control plane (a separate always-on server using the `coder`
-workspace type from [`opencode/plugins`](../opencode/plugins/)). The module
-`coder/modules/opencode` installs the pinned OpenCode release binary (sha256
-checked against the GitHub release digest) and starts a spawner on
-`127.0.0.1:18002`, exposed as the hidden, owner-only `opencode` app.
+Workspaces owned by `agent_owner` (`opencode`) get `coder/modules/oc-worker`:
+the pinned `@opencode/cli-linux-x64` binary (sha512 checked against the npm
+registry integrity), a gateway-only config (`gw/<alias>` models via LiteLLM,
+built-in providers denied), an empty models.dev catalog, and
+`~/.opencode-v2/worker.sh`. An orchestrator reaches it with
+`coder ssh <workspace> -- sh -c 'cd <repo> && exec $HOME/.opencode-v2/worker.sh acp'`.
 
-For every control-plane workspace the spawner clones the repository into
-`~/src/<repo>` once, adds a worktree `~/src/<repo>/.worktrees/<id>` on branch
-`oc/<id>`, and runs one `opencode serve` on a free loopback port there, with
-the workspace's own environment plus only the variables the control plane
-passes on create (`OPENCODE_WORKSPACE_ID`, `OPENCODE_AUTH_CONTENT`,
-`OPENCODE_CONFIG_CONTENT`, `OPENCODE_EXPERIMENTAL_WORKSPACES`, OTLP settings).
-The control plane reaches each server through Coder's port URL for its owner.
-Servers that died with a workspace stop are restarted on the next request;
-removing a workspace keeps a worktree that still has uncommitted changes.
-Records under `~/.local/share/coder-opencode/state` hold the forwarded
-variables, provider credentials included, mode 0600.
-
-Workspaces owned by the Coder user named in the template variable
-`agent_owner` (default `opencode`) never receive `GH_TOKEN_PERSONAL`, so
-everything the control plane runs uses the agent account.
-
-The OpenCode version is a Renovate-tracked module default; it must match the
-control plane image in h-cloud and the coding-harness benchmark, so its
-updates carry the `opencode-version` label and are never automerged.
+Workspaces owned by `agent_owner` never receive `GH_TOKEN_PERSONAL`, so
+everything an agent runs there uses the agent account. The OpenCode version is
+a Renovate-tracked module default; its updates carry the `opencode-version`
+label and are never automerged.
 
 ## Claude Code language servers
 
