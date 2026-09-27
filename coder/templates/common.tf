@@ -371,9 +371,11 @@ module "opencode" {
   models = local.personal_github_token ? {
     fast   = "claude-haiku"
     coding = "claude-sonnet"
+    deep   = "claude-opus"
     } : {
     fast   = "basic/glm-5.3-flash"
     coding = "claude-sonnet"
+    deep   = "claude-opus"
   }
 }
 
