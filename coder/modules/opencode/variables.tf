@@ -38,6 +38,11 @@ variable "models" {
     deep   = "claude-opus"
   }
   nullable = false
+
+  validation {
+    condition     = alltrue([for alias in ["fast", "coding", "deep"] : contains(keys(var.models), alias)])
+    error_message = "models must map fast, coding and deep; the shared agents use all three."
+  }
 }
 
 variable "default_model" {
