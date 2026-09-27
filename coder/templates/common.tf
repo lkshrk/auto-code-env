@@ -144,7 +144,7 @@ data "coder_parameter" "agent_plugins" {
 data "coder_parameter" "enable_opencode_v2" {
   name         = "enable_opencode_v2"
   display_name = "OpenCode"
-  description  = "OpenCode v2 as `opencode`, with shared agents, commands and skills from auto-code-env opencode/config. Always on for agent-owned workspaces."
+  description  = "OpenCode v2 as `opencode`, with the agent config (agents, commands, plugins, skills) from coding-harness agent/. Always on for agent-owned workspaces."
   type         = "bool"
   default      = "true"
   mutable      = true

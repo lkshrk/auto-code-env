@@ -114,8 +114,10 @@ whenever it frees space or escalates. The image cache is cold after every stop.
 - pinned tools in `~/.opencode-v2/tools`: rtk (GitHub release digest
   checked), context-mode (npm) and CodeGraphContext (`uv tool`), with
   `CODER_OPENCODE=1` making the stack installer add the nvm and uv runtimes;
-- shared agents, commands, plugins, skills and `AGENTS.md` from
-  [`opencode/config`](../opencode/config/), synced on every start.
+- the agent config from [coding-harness `agent/`](https://github.com/lkshrk/coding-harness/tree/main/agent),
+  synced on every start: `AGENTS.md`, agents, commands and plugins are linked
+  in, and the skills in its `skills.json` are fetched at their pinned refs
+  (cached per ref under `~/.opencode-v2/skills-cache`).
 
 TUI, `opencode run` and `opencode acp` share one session store, so
 `opencode -s <id>` continues a session started over ACP, e.g. by an
