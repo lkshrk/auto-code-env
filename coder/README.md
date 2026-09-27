@@ -337,9 +337,10 @@ providing:
 - Service account `coder-workspace` with base-profile RBAC and the workspace
   NetworkPolicy. The generated kubeconfig targets namespace `coder`. Repository
   and tool-stack selections do not grant project-scoped Kubernetes access.
-- Secret `coder-workspace-secrets` in namespace `coder`, keys `LITELLM_API`
-  and `GH_TOKEN`. Both are read `optional = true`, so a missing key degrades
-  rather than blocks a workspace start.
+- Secret `coder-workspace-secrets` in namespace `coder`, keys `LITELLM_API`,
+  `LITELLM_API_OC_WORKER` and `GH_TOKEN`. Workspaces owned by `agent_owner`
+  (`opencode`) get `LITELLM_API_OC_WORKER` as `LITELLM_API`. All are read
+  `optional = true`, so a missing key degrades rather than blocks a workspace start.
 - Secret `dev-kubernetes-workspace-env` in namespace `coder`, consumed as an
   optional `env_from` source.
 - ConfigMap `lan-root-ca` (trust-manager Bundle target) with key `lan-root-ca.crt`, mounted at

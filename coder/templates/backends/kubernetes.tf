@@ -236,7 +236,7 @@ resource "kubernetes_pod_v1" "workspace" {
         value_from {
           secret_key_ref {
             name     = "coder-workspace-secrets"
-            key      = "LITELLM_API"
+            key      = local.litellm_key
             optional = true
           }
         }
