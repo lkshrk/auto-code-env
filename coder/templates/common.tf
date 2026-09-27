@@ -86,6 +86,12 @@ variable "mcp_url" {
   default = ""
 }
 
+variable "agent_owner" {
+  type        = string
+  default     = "opencode"
+  description = "Coder user of the OpenCode control plane; its workspaces never receive the personal GitHub token."
+}
+
 variable "omni_version" {
   type    = string
   default = "0.11.1"
@@ -139,6 +145,15 @@ data "coder_parameter" "enable_openhands" {
   name         = "enable_openhands"
   display_name = "OpenHands Agent Server"
   description  = "Private authenticated remote runtime; requires composable setup."
+  type         = "bool"
+  default      = "false"
+  mutable      = true
+}
+
+data "coder_parameter" "enable_opencode" {
+  name         = "enable_opencode"
+  display_name = "OpenCode workspace server"
+  description  = "Serves OpenCode control-plane workspaces from git worktrees; owner-only app."
   type         = "bool"
   default      = "false"
   mutable      = true
@@ -198,6 +213,7 @@ locals {
   ]) : toset([])
 
   workspace_service_account_name = "coder-workspace"
+  personal_github_token          = var.agent_owner == "" || data.coder_workspace_owner.me.name != var.agent_owner
   workspace_kube_namespace       = "coder"
 
   repo_clone_dirs = join(",", [
@@ -335,6 +351,7 @@ locals {
 
     python3 "$HOME/.local/state/coder-environment/components.py" check
     ${module.openhands.startup_script}
+    ${module.opencode.startup_script}
     python3 "$HOME/.local/state/coder-environment/components.py" check --report "$HOME/.local/state/coder-environment/readiness.json"
   SCRIPT
 }
@@ -343,6 +360,12 @@ module "openhands" {
   source            = "./modules/openhands"
   enabled           = tobool(data.coder_parameter.enable_openhands.value)
   working_directory = length(local.repos_set) == 1 ? "/home/coder/${local.repo_clone_dirs}" : ""
+}
+
+module "opencode" {
+  source   = "./modules/opencode"
+  enabled  = tobool(data.coder_parameter.enable_opencode.value)
+  agent_id = coder_agent.main.id
 }
 
 # ---------------------------------------------------------------------------
