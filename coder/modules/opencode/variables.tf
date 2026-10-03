@@ -7,7 +7,7 @@ variable "enabled" {
 variable "opencode_version" {
   type = string
   # renovate: datasource=npm depName=@opencode/cli-linux-x64
-  default  = "2.0.18"
+  default  = "2.0.22"
   nullable = false
 
   validation {
