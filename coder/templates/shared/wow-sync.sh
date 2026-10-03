@@ -458,6 +458,7 @@ local function status()
   say("%d dev copies: %s", #names, table.concat(names, ", "))
   local last = WowSyncDB.last
   if last then
+    if last.pending then say("%s; do not enable either copy by hand", last.pending) end
     for dev, why in pairs(last.blocked) do say("%s not loaded: %s; disable one of them", dev, why) end
     for dev, reason in pairs(last.failed) do say("%s failed to load: %s", dev, reason) end
   end
@@ -504,8 +505,11 @@ f:SetScript("OnEvent", function(self, event, name)
         for _, dev in ipairs(WowSyncAddons) do only[dev] = true end
       end
       reloadPending = switch(WowSyncMode, only)
+      if reloadPending then
+        WowSyncDB.last = { time = time(), loaded = {}, blocked = {}, failed = {}, pending = "new sync changed addon enablement; a reload is pending" }
+      end
     end
-    loadEnabled()
+    if not reloadPending then loadEnabled() end
   else
     status()
     if reloadPending then reloadNow("new sync switched addons to " .. WowSyncDB.mode) end

@@ -101,10 +101,13 @@ local function session_same() return session(nil) end
 check(session(synced) == 1, "first login after a sync with the release active reloads")
 check(not byName["Suite-Dev"].loaded and not byName["SuiteBags-Dev"].loaded, "dev copies never load beside the release")
 check(not byName.Suite.enabled and not byName.SuiteBags.enabled, "releases of the synced addons are disabled")
+check(WowSyncDB.last.pending ~= nil, "the incomplete handoff is recorded until the reload")
+check(log[#log]:find("reload") ~= nil, "the incomplete handoff tells the player that a reload is happening")
 check(byName.Mine.enabled and not byName["Mine-Dev"].enabled, "addons outside the sync keep their state")
 
 check(session_same() == 0, "second login needs no reload")
 check(byName["Suite-Dev"].loaded and byName["SuiteBags-Dev"].loaded, "dev copies load, dependents after their dependency")
+check(WowSyncDB.last.pending == nil, "the completed handoff clears the pending state")
 
 -- The user turns a dev copy off and the release back on in the AddOn list.
 byName["SuiteBags-Dev"].enabled, byName.SuiteBags.enabled = false, true

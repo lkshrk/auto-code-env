@@ -228,16 +228,21 @@ the released core.
 Dev copies are written with `## LoadOnDemand: 1` and `## X-WowSync-Release:
 <Name>`, so the game never starts one on its own: a dev copy and its release
 loaded together both hook the same frames, and addons such as EllesmereUI then
-freeze the client at login. Every `--dev` sync also installs `WowSync`, a small
-helper addon. At the first login after a sync it switches the addons of that
-sync (the list is in its `Mode.lua`): disables their releases for all
-characters, enables the dev copies, and reloads once if a release was active.
-On every login it loads the dev copies that are enabled and whose release is
-not, in dependency order, and records the result in `WowSyncDB.last`. It never
-changes enable states otherwise, so a dev copy turned off in the AddOn list
-stays off until the next sync of it or `/wowsync dev`. `/wowsync release` and `/wowsync dev` flip
-between the two in game, `/wowsync` prints the state, `wow-sync --off` flips to
-release at the next login. `wow-sync` refuses a `WOW_DEV_SUFFIX` that differs
+freeze the client at login. Every `--dev` sync also installs or updates
+`WowSync`, a small helper addon. At the first login after a sync it switches
+the addons of that sync (the list is in its `Mode.lua`): disables their
+releases for all characters, enables the dev copies, and reloads once if a
+release was active. That first session is a handoff only—WowSync does not load
+the dev copies before the reload. Do not manually enable either copy while it
+prints that a reload is pending. If the client does not reload automatically,
+run `/reload`; `/wowsync` reports the pending handoff and any blocked copy.
+On every later login it loads the dev copies that are enabled and whose release
+is not, in dependency order, and records the result in `WowSyncDB.last`. It
+never changes enable states otherwise, so a dev copy turned off in the AddOn
+list stays off until the next sync of it or `/wowsync dev`. `/wowsync release`
+and `/wowsync dev` flip between the two in game, `/wowsync` prints the state,
+`wow-sync --off` flips to release at the next login. `wow-sync` refuses a
+`WOW_DEV_SUFFIX` that differs
 from the workspace parameter (`WOW_DEV_SUFFIX_CONFIGURED`) unless
 `--any-suffix` is given, since two dev copies of one addon conflict the same way. Its `## Interface` follows the synced addons, so it never counts
 as out of date while they do not.
