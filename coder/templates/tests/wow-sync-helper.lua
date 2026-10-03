@@ -39,7 +39,7 @@ Enum = { AddOnEnableState = { None = 0 } }
 UnitName = function() return "Tester" end
 time = function() return clock end
 C_Timer = { After = function(_, fn) fn() end }
-ReloadUI = function() reloads = reloads + 1 end
+C_UI = { Reload = function() reloads = reloads + 1 end }
 print = function(msg) log[#log + 1] = msg end
 SlashCmdList = {}
 

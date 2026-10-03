@@ -470,7 +470,7 @@ local function reloadNow(reason)
   end
   WowSyncDB.lastReload = time()
   say("%s, reloading", reason)
-  C_Timer.After(1, ReloadUI)
+  C_Timer.After(1, C_UI.Reload)
 end
 
 SLASH_WOWSYNC1 = "/wowsync"
