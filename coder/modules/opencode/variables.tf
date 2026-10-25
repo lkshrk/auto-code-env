@@ -73,7 +73,7 @@ variable "config_path" {
 variable "rtk_version" {
   type = string
   # renovate: datasource=github-releases depName=rtk-ai/rtk
-  default  = "0.50.0"
+  default  = "1.1.0"
   nullable = false
 }
 
